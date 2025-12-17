@@ -8,35 +8,39 @@ MOORE_EXAMPLE_RE = re.compile(r"\{e\.g\.\s*(.*?)\}", flags=re.DOTALL)
 EXTRA_FIELDS = [
     (
         "variant",
-        r"var\.?:\s*(.*?)\s*(?=$|syn|Nominal|scient|Racine|catégorie|infinitif|Empr|sg)",
+        r"var\.?:\s*(.*?)\s*(?=$|syn|Nominal|scient|Racine|catégorie|infinitif|Empr|sg|Inaccompli)",
     ),
     (
         "synonym",
-        r"syn\.?:\s*(.*?)\s*(?=$|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg)",
+        r"syn\.?:\s*(.*?)\s*(?=$|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg|Inaccompli)",
     ),
     (
         "nominal",
-        r"Nominal\.?:\s*(.*?)\s*(?=$|syn|var|scient|Racine|catégorie|infinitif|Empr|sg)",
+        r"Nominal\.?:\s*(.*?)\s*(?=$|syn|var|scient|Racine|catégorie|infinitif|Empr|sg|Inaccompli)",
     ),
     (
         "scientific",
-        r"scient\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|Racine|catégorie|infinitif|Empr|sg)",
+        r"scient\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|Racine|catégorie|infinitif|Empr|sg|Inaccompli)",
     ),
     (
         "racine",
-        r"Racine\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|catégorie|infinitif|Empr|sg)",
+        r"Racine\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|catégorie|infinitif|Empr|sg|Inaccompli)",
     ),
     (
         "infinitif",
-        r"infinitif\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|Empr|sg)",
+        r"infinitif\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|Empr|sg|Inaccompli)",
     ),
     (
         "empr",
-        r"Empr\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|sg)",
+        r"Empr\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|sg|Inaccompli)",
     ),
     (
         "sg",
-        r"sg\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr)",
+        r"sg\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|Inaccompli)",
+    ),
+    (
+        "inaccompli",
+        r"Inaccompli\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg)",
     ),
     ("category", r"\(catégorie\s*:\s*(.*?)\)"),
 ]
@@ -53,31 +57,7 @@ EXTRA_FIELDS_BETTER = [
     ("category", r"\(catégorie\s*:\s*(.*?)\)"),
 ]
 
-GRAMMAR = r"""
-    part\.gram|
-    expr\.|
-    indéf\.|
-    num|
-    n\.pl|
-    interj|
-    aux|
-    \<Not Sure\>|
-    n\.propre|
-    postpos|
-    Verbe|
-    adj|
-    n|
-    v(?::Any)?|
-    dém|
-    Nom|
-    inter\.|
-    Adjectif|
-    verbe\.it|
-    v\.inacc|
-    conj|
-    pron|
-    adv
-"""
+
 GRAMMAR_PATTERN = (
     r"part\.gram|expr\.|indéf\.|num|n\.pl|interj|aux|<Not Sure>|"
     r"n\.propre|postpos|Verbe|adj|n\b|v(?::Any)?|dém|Nom|inter\.|"
@@ -90,7 +70,7 @@ ENTRY_START = rf"""
     \S+                         # entry token
     (?:\s+\[[^\]]+\])?          # optional tone
     \s+
-    (?:{GRAMMAR})\b             # grammar
+    (?:{GRAMMAR_PATTERN})\b             # grammar
 )
 """
 
@@ -102,7 +82,7 @@ entry_header = re.compile(
         (?P<entry>\S+)                   # main entry token
         (?:\s+(?P<tone>\[[^\]]+\]))?     # optional tone
         (?:\s+|[\r\n]+)                  # space OR newline before grammar
-        (?P<grammar>{GRAMMAR})\b         # grammar tag
+        (?P<grammar>{GRAMMAR_PATTERN})\b         # grammar tag
     )
     """,
     re.MULTILINE | re.VERBOSE,
@@ -340,16 +320,11 @@ def parse_page(page: str):
 
 def parse_doc(doc: pymupdf.Document):
     parsed_entries = []
-    for i, page in enumerate(doc):
-        if i <= 1:
-            pass
-        if i > 2:
-            break
+    for i, page in enumerate(doc):  # type: ignore
         blocks = page.get_text("blocks", sort = True)
         text = "\n".join([b[4] for b in blocks])
 
         text = clean_text(text)
-        print("text \nxxxx", text, "clean text\nxxxx")
         entries, valid_start = parse_page(text)
         if not valid_start:
             parsed_entries.append(entries)
@@ -371,7 +346,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_pdf", "-i", type=str, default="Dictionnaire-Moore-français-English-avec-images.pdf")
+    parser.add_argument("--input_pdf", "-i", type=str, default="data/Dictionnaire-Moore-français-English-avec-images.pdf")
     parser.add_argument("--output_json", "-o", type=str, default="output.json")
     args = parser.parse_args()
 
@@ -380,6 +355,6 @@ if __name__ == "__main__":
 
     with pymupdf.open(input_pdf) as doc:
         res = parse_doc(doc)
-        for e in res:
-            print("-" * 60)
-            print("header :", json.dumps(e, indent=2, ensure_ascii=False))
+
+        with open(output_json, "w", encoding="utf-8") as f:
+            json.dump(res, f, indent=3, ensure_ascii=False)
