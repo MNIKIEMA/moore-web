@@ -298,16 +298,35 @@ def split_dictionary_entries(content) -> list[tuple[str, str, str, str]]:
     return entries
 
 
+def strip_trailing_entry_name(body: str, entry: str) -> str:
+    """
+    Remove a repeated entry name appearing as the final line of the body.
+    Empty lines and internal formatting are preserved exactly.
+    """
+    lines = body.splitlines()
+
+    if not lines:
+        return body
+
+    if lines[-1].strip() == entry.strip():
+        lines.pop()
+        return "\n".join(lines)
+
+    return body
+
+
 def parse_page(page: str):
-    page_entries = []
+    page_entries: list[dict] = []
     unfinished_block, entries = split_first_entry(page)
     entries = split_dictionary_entries(entries)
     logger.warning(entries)
     for token, tone, grammar, rest in entries:
-        senses = analyze_body(rest)
+        cleaned_body = strip_trailing_entry_name(rest, token)
+        senses = analyze_body(cleaned_body)
         page_entries.append(
             {
-                "body": rest,
+                "body": cleaned_body,
+                "raw_body": rest,
                 "entry": token,
                 "tone": tone,
                 "grammar": grammar,
@@ -319,8 +338,8 @@ def parse_page(page: str):
 
 
 def parse_doc(doc: pymupdf.Document):
-    parsed_entries = []
-    for i, page in enumerate(doc):  # type: ignore
+    parsed_entries: list[list[dict]] = []
+    for i, page in enumerate(doc, start=1):  # type: ignore
         blocks = page.get_text("blocks", sort = True)
         text = "\n".join([b[4] for b in blocks])
 
@@ -328,15 +347,19 @@ def parse_doc(doc: pymupdf.Document):
         entries, valid_start = parse_page(text)
         if not valid_start:
             parsed_entries.append(entries)
-        else:
-            if parsed_entries:
-                parsed_entries.pop()
-            index = max(0, i - 1)
-            previous_page = doc[index]
-            previous_text = previous_page.get_text("text")
-            previous_text = clean_text(previous_text) + valid_start
-            entries, valid_start = parse_page(previous_text)  # type: ignore
+            continue
+        if not parsed_entries:
             parsed_entries.append(entries)
+        last_page_entries = parsed_entries[-1]
+        last_entry = last_page_entries.pop()
+
+        # FIXME: Page with image has the entry name repeated at the end
+        # like 
+        merged_body = last_entry["body"] + valid_start
+        last_entry["body"] = merged_body
+        last_entry["senses"] = analyze_body(merged_body)
+        last_page_entries.append(last_entry)
+        last_page_entries.extend(entries)
     return parsed_entries
 
 
