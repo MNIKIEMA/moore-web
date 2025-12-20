@@ -75,20 +75,6 @@ ENTRY_START = rf"""
 """
 
 
-entry_header = re.compile(
-    rf"""
-    (?P<header>
-        ^\s*
-        (?P<entry>\S+)                   # main entry token
-        (?:\s+(?P<tone>\[[^\]]+\]))?     # optional tone
-        (?:\s+|[\r\n]+)                  # space OR newline before grammar
-        (?P<grammar>{GRAMMAR_PATTERN})\b         # grammar tag
-    )
-    """,
-    re.MULTILINE | re.VERBOSE,
-)
-
-
 @dataclass
 class Entry:
     french: str
@@ -128,7 +114,14 @@ def clean_english_remove_examples(eng_text):
 
 def extract_extra_fields(text):
     info = {}
+    category_pattern = r"\(catégorie\s*:\s*(.*?)\)[.,\s]*"
+    category_match = re.search(category_pattern, text, flags=re.DOTALL | re.IGNORECASE)
+    if category_match:
+        info["category"] = category_match.group(1).strip()
+        text = re.sub(category_pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
     for name, pattern in EXTRA_FIELDS:
+        if name == "category":
+            continue
         m = re.search(pattern, text, flags=re.DOTALL | re.IGNORECASE)
         if m:
             value = m.group(1).strip()
@@ -161,8 +154,11 @@ def clean_english_text(eng_text):
     """
     eng_text = MOORE_EXAMPLE_RE.sub("", eng_text)
 
-    for _, pattern in EXTRA_FIELDS:
-        eng_text = re.sub(pattern, "", eng_text, flags=re.DOTALL | re.IGNORECASE)
+    eng_text = re.sub(r"\(catégorie\s*:.*?\)[.,\s]*", "", eng_text, flags=re.IGNORECASE)
+
+    for name, pattern in EXTRA_FIELDS:
+        if name != "category":
+            eng_text = re.sub(pattern, "", eng_text, flags=re.DOTALL | re.IGNORECASE)
 
     eng_text = re.sub(r"\s+", " ", eng_text)
 
