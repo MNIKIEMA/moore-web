@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pymupdf
 from loguru import logger
 
+
 SUB_SPLIT_RE = re.compile(r"\s+\d+\)\s+(?=Frn)")
 MOORE_EXAMPLE_RE = re.compile(r"\{e\.g\.\s*(.*?)\}", flags=re.DOTALL)
 EXTRA_FIELDS = [
@@ -101,11 +102,7 @@ def split_french_english(text):
 
 
 def extract_moore_examples(eng_text):
-    return (
-        MOORE_EXAMPLE_RE.findall(eng_text)[-1]
-        if MOORE_EXAMPLE_RE.search(eng_text)
-        else None
-    )
+    return MOORE_EXAMPLE_RE.findall(eng_text)[-1] if MOORE_EXAMPLE_RE.search(eng_text) else None
 
 
 def clean_english_remove_examples(eng_text):
@@ -179,7 +176,7 @@ def analyze_body(body):
 
     for block in blocks:
         fr_eng_pairs = split_french_english(block)
-        print("*"*60 + "\n", fr_eng_pairs, len(fr_eng_pairs), "*"*60 + "\n", sep="\n")
+        print("*" * 60 + "\n", fr_eng_pairs, len(fr_eng_pairs), "*" * 60 + "\n", sep="\n")
         if not fr_eng_pairs:
             continue
 
@@ -246,11 +243,11 @@ def split_first_entry(text: str):
         """,
         re.MULTILINE | re.VERBOSE,
     )
-    
+
     match = entry_start_re.search(text)
     if match:
-        before = text[:match.start()].rstrip()
-        from_entry = text[match.start():].lstrip()
+        before = text[: match.start()].rstrip()
+        from_entry = text[match.start() :].lstrip()
         return [before, from_entry]
     else:
         return [text, ""]
@@ -261,36 +258,36 @@ def split_dictionary_entries(content) -> list[tuple[str, str, str, str]]:
     Split dictionary content into individual entries.
     Each entry format:
         headword [tone]? grammar (number)? definition
-    
+
     Returns:
         list of tuples: [(token, tone, grammar, rest), ...]
     """
     entries = []
-    
-    entry_start_pattern = rf'^([^\s\n][^\n]*?)\s+(?:\[([^\]]+)\]\s+)?({GRAMMAR_PATTERN})\s+(?=Frn|\d+\))'
+
+    entry_start_pattern = rf"^([^\s\n][^\n]*?)\s+(?:\[([^\]]+)\]\s+)?({GRAMMAR_PATTERN})\s+(?=Frn|\d+\))"
     print(content)
 
     matches = list(re.finditer(entry_start_pattern, content, re.MULTILINE))
-    
+
     if not matches:
         return []
-    
+
     for i, match in enumerate(matches):
         token = match.group(1).strip()
         tone = match.group(2).strip() if match.group(2) else ""
         grammar = match.group(3).strip()
 
         start_of_rest = match.end()
-        
+
         if i + 1 < len(matches):
             end_of_rest = matches[i + 1].start()
         else:
             end_of_rest = len(content)
-        
+
         rest = content[start_of_rest:end_of_rest].strip()
-        
+
         entries.append((token, tone, grammar, rest))
-    
+
     return entries
 
 
@@ -336,7 +333,7 @@ def parse_page(page: str):
 def parse_doc(doc: pymupdf.Document):
     parsed_entries: list[list[dict]] = []
     for i, page in enumerate(doc, start=1):  # type: ignore
-        blocks = page.get_text("blocks", sort = True)
+        blocks = page.get_text("blocks", sort=True)
         text = "\n".join([b[4] for b in blocks])
 
         text = clean_text(text)
@@ -350,7 +347,7 @@ def parse_doc(doc: pymupdf.Document):
         last_entry = last_page_entries.pop()
 
         # FIXME: Page with image has the entry name repeated at the end
-        # like 
+        # like
         merged_body = last_entry["body"] + valid_start
         last_entry["body"] = merged_body
         last_entry["senses"] = analyze_body(merged_body)
@@ -359,13 +356,17 @@ def parse_doc(doc: pymupdf.Document):
     return parsed_entries
 
 
-
 if __name__ == "__main__":
     import json
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_pdf", "-i", type=str, default="data/Dictionnaire-Moore-français-English-avec-images.pdf")
+    parser.add_argument(
+        "--input_pdf",
+        "-i",
+        type=str,
+        default="data/Dictionnaire-Moore-français-English-avec-images.pdf",
+    )
     parser.add_argument("--output_json", "-o", type=str, default="output.json")
     args = parser.parse_args()
 
