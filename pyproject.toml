@@ -3,7 +3,12 @@ name = "moore-web"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0, <2.6.0",
+    "laser-encoders>=0.0.2",
+    "requests>=2.32.5",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -36,7 +41,7 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff]
 line-length = 110
-target-version = "py313"
+target-version = "py310"
 
 [tool.isort]
 profile = "black"
