@@ -16,5 +16,7 @@ install:
 
 # format with black and ruff
 format:
-    uv tool run black src
-    uv tool run ruff format
+    uv run ruff format
+
+precommit:
+	uv run pre-commit run --all-files
