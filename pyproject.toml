@@ -4,6 +4,14 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/moore_web"]
+
 dependencies = [
     "loguru>=0.7.3",
     "pdfplumber>=0.11.8",
@@ -12,7 +20,11 @@ dependencies = [
     "tqdm>=4.67.1",
 ]
 
-
+[dependency-groups]
+dev = [
+    "pre-commit>=4.5.1",
+    "ruff>=0.14.10",
+]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
@@ -25,10 +37,6 @@ select = ["E4", "E7", "E9", "F"]
 [tool.ruff]
 line-length = 110
 target-version = "py313"
-
-[tool.black]
-line-length = 110
-target-version = ['py313']
 
 [tool.isort]
 profile = "black"
