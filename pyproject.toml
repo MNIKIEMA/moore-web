@@ -8,6 +8,14 @@ dependencies = [
     "torch>=2.0.0, <2.6.0",
     "laser-encoders>=0.0.2",
     "requests>=2.32.5",
+    "loguru>=0.7.3",
+    "pdfplumber>=0.11.8",
+    "pydantic>=2.12.5",
+    "pymupdf>=1.26.6",
+    "tqdm>=4.67.1",
+    "scikit-learn>=1.3.0",
+    "numpy>=1.24.0",
+    "msgspec>=0.20.0",
 ]
 
 [build-system]
@@ -16,14 +24,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/moore_web"]
-
-dependencies = [
-    "loguru>=0.7.3",
-    "pdfplumber>=0.11.8",
-    "pydantic>=2.12.5",
-    "pymupdf>=1.26.6",
-    "tqdm>=4.67.1",
-]
 
 [dependency-groups]
 dev = [

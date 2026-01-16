@@ -20,3 +20,6 @@ format:
 
 precommit:
 	uv run pre-commit run --all-files
+
+typecheck:
+    uvx ty check
