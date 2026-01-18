@@ -2,8 +2,6 @@ import unicodedata
 import re
 import pymupdf
 
-# from moore_web.types import Chapter, ChapterPage
-
 import msgspec
 
 
@@ -33,6 +31,7 @@ class Chapter(msgspec.Struct):
     def page_count(self) -> int:
         """Total number of pages in the chapter"""
         return len(self.pages)
+
 
 def compile_robust_regex(pattern: str):
     normalized = pattern.replace(r"\s+", r"[\s-]+")
@@ -123,12 +122,12 @@ def normalize_text(text: str) -> str:
     """Complete text normalization pipeline"""
 
     text = unicodedata.normalize("NFC", text)
-    text = text.replace('\u2019', "'")  # Right single quotation mark (')
-    text = text.replace('\u2018', "'")  # Left single quotation mark (')
-    text = text.replace('\u201C', '"')  # Left double quotation mark (")
-    text = text.replace('\u201D', '"')  # Right double quotation mark (")
-    text = text.replace('\u00AB', '"')  # Left-pointing double angle quotation mark («)
-    text = text.replace('\u00BB', '"')
+    text = text.replace("\u2019", "'")  # Right single quotation mark (')
+    text = text.replace("\u2018", "'")  # Left single quotation mark (')
+    text = text.replace("\u201c", '"')  # Left double quotation mark (")
+    text = text.replace("\u201d", '"')  # Right double quotation mark (")
+    text = text.replace("\u00ab", '"')  # Left-pointing double angle quotation mark («)
+    text = text.replace("\u00bb", '"')
 
     text = text = re.sub(r"-\s*\n\s*", "", text)
 
@@ -150,8 +149,6 @@ def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
     current_chapter_pages = []
     current_chapter_num = None
     current_start_page = None
-    fp = "group_chapters.txt"
-    buffer_of = open(fp, "w", encoding="utf-8")
 
     for page_num, page in enumerate(documents, start=1):  # type: ignore
         if page_num > 47:
@@ -162,21 +159,22 @@ def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
         french_text = normalize_text("\n".join(french_text))
         moore_text = normalize_text("\n".join(moore_text))
         if page_num == 39:
-            moore_marker_pattern = r"1\.\s+SIDAwã\s+bãag\s+ya\s+boẽ\?\s+La\s+a\s+maanda\s+a\s+wãn\s+n\s+kʋʋd\s+nebã\?"
+            moore_marker_pattern = (
+                r"1\.\s+SIDAwã\s+bãag\s+ya\s+boẽ\?\s+La\s+a\s+maanda\s+a\s+wãn\s+n\s+kʋʋd\s+nebã\?"
+            )
             french_marker_pattern = r"Mais\s+quand\s+le\s+VIH\s+entre\s+dans\s+le\s+corps\s+d'une\s+personne"
 
             moore_match = re.search(moore_marker_pattern, moore_text)
             french_match = re.search(french_marker_pattern, moore_text)
-            
+
             if moore_match and french_match:
-                french_part_1 = moore_text[:moore_match.start()].strip()
-                moore_only = moore_text[moore_match.start():french_match.start()].strip()
-                french_part_2 = moore_text[french_match.start():].strip()
+                french_part_1 = moore_text[: moore_match.start()].strip()
+                moore_only = moore_text[moore_match.start() : french_match.start()].strip()
+                french_part_2 = moore_text[french_match.start() :].strip()
                 french_text = french_part_1 + "\n\n" + french_part_2 + "\n\n" + french_text
-                moore_text = moore_only = re.sub(r"Ba\s+yẽ\s+bã'abiire\s+zɩɩm\s+pʋam\.", "", moore_only).strip()
-        buffer_of.write(f"--- Page {page_num} ---\n")
-        buffer_of.write(f"French Text:\n{french_text}\n\n")
-        buffer_of.write(f"Moore Text:\n{moore_text}\n\n\n")
+                moore_text = moore_only = re.sub(
+                    r"Ba\s+yẽ\s+bã'abiire\s+zɩɩm\s+pʋam\.", "", moore_only
+                ).strip()
 
         if page_num in CHAPTER_PAGES.values():
             if current_chapter_num is not None and current_chapter_pages:
@@ -217,7 +215,7 @@ def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
                 pages=current_chapter_pages,
             )
         )
-    buffer_of.close()
+
     return chapters
 
 
