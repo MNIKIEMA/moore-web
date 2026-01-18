@@ -1,10 +1,38 @@
 import unicodedata
 import re
 import pymupdf
-import json
 
-from moore_web.types import Chapter, ChapterPage
+# from moore_web.types import Chapter, ChapterPage
 
+import msgspec
+
+
+class ChapterPage(msgspec.Struct):
+    """Represents a single page within a chapter"""
+
+    page_number: int
+    french_text: str
+    moore_text: str
+
+
+class Chapter(msgspec.Struct):
+    """Represents a complete chapter with metadata"""
+
+    chapter_number: int
+    title_french: str
+    title_moore: str
+    start_page: int
+    pages: list[ChapterPage]
+
+    @property
+    def end_page(self) -> int:
+        """Last page number of the chapter"""
+        return self.pages[-1].page_number if self.pages else self.start_page
+
+    @property
+    def page_count(self) -> int:
+        """Total number of pages in the chapter"""
+        return len(self.pages)
 
 def compile_robust_regex(pattern: str):
     normalized = pattern.replace(r"\s+", r"[\s-]+")
@@ -39,7 +67,7 @@ CHAPTERS_RAW: list[tuple[str, str]] = [
         r"Sak\s+a\s+4\s+soaba\s+A\s+Pok\s+ne\s+a\s+yaopa\s+tõog\s+n\s+gesa\s+b\s+meng\s+yelle",
     ),
     (
-        r"Chapitre\s+5\s+La\s+communauté\s+de\s+Poko\s+s'informe\s+sur\s+le\s+SIDA",
+        r"Chapitre\s+5\s+La\s+communauté\s+de\s+Poko\s+s'informe\s+sur\s+le\s+SIDA\s*\.?\s*",
         r"Sak\s+a\s+5\s+soaba\s+A\s+Pok\s+rãmb\s+tẽnga\s+rãmb\s+baome\s+n\s+na\s+n\s+bãng\s+sẽn\s+kẽed\s+SIDAwã\s+bãag\s+wɛɛngẽ",
     ),
 ]
@@ -95,6 +123,12 @@ def normalize_text(text: str) -> str:
     """Complete text normalization pipeline"""
 
     text = unicodedata.normalize("NFC", text)
+    text = text.replace('\u2019', "'")  # Right single quotation mark (')
+    text = text.replace('\u2018', "'")  # Left single quotation mark (')
+    text = text.replace('\u201C', '"')  # Left double quotation mark (")
+    text = text.replace('\u201D', '"')  # Right double quotation mark (")
+    text = text.replace('\u00AB', '"')  # Left-pointing double angle quotation mark («)
+    text = text.replace('\u00BB', '"')
 
     text = text = re.sub(r"-\s*\n\s*", "", text)
 
@@ -116,13 +150,33 @@ def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
     current_chapter_pages = []
     current_chapter_num = None
     current_start_page = None
+    fp = "group_chapters.txt"
+    buffer_of = open(fp, "w", encoding="utf-8")
 
     for page_num, page in enumerate(documents, start=1):  # type: ignore
+        if page_num > 47:
+            break
         x = find_column_separator(page)
         moore_text, french_text = process_page_blocks(page=page, middle_x=x)
 
         french_text = normalize_text("\n".join(french_text))
         moore_text = normalize_text("\n".join(moore_text))
+        if page_num == 39:
+            moore_marker_pattern = r"1\.\s+SIDAwã\s+bãag\s+ya\s+boẽ\?\s+La\s+a\s+maanda\s+a\s+wãn\s+n\s+kʋʋd\s+nebã\?"
+            french_marker_pattern = r"Mais\s+quand\s+le\s+VIH\s+entre\s+dans\s+le\s+corps\s+d'une\s+personne"
+
+            moore_match = re.search(moore_marker_pattern, moore_text)
+            french_match = re.search(french_marker_pattern, moore_text)
+            
+            if moore_match and french_match:
+                french_part_1 = moore_text[:moore_match.start()].strip()
+                moore_only = moore_text[moore_match.start():french_match.start()].strip()
+                french_part_2 = moore_text[french_match.start():].strip()
+                french_text = french_part_1 + "\n\n" + french_part_2 + "\n\n" + french_text
+                moore_text = moore_only = re.sub(r"Ba\s+yẽ\s+bã'abiire\s+zɩɩm\s+pʋam\.", "", moore_only).strip()
+        buffer_of.write(f"--- Page {page_num} ---\n")
+        buffer_of.write(f"French Text:\n{french_text}\n\n")
+        buffer_of.write(f"Moore Text:\n{moore_text}\n\n\n")
 
         if page_num in CHAPTER_PAGES.values():
             if current_chapter_num is not None and current_chapter_pages:
@@ -145,6 +199,8 @@ def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
 
             french_text = re.sub(regex_fr, "", french_text, count=1).strip()
             moore_text = re.sub(regex_mo, "", moore_text, count=1).strip()
+            if current_chapter_num == 5:
+                moore_text = re.sub(regex_fr, "", moore_text, count=1).strip()
 
         current_chapter_pages.append(
             ChapterPage(page_number=page_num, french_text=french_text, moore_text=moore_text)
@@ -161,7 +217,7 @@ def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
                 pages=current_chapter_pages,
             )
         )
-
+    buffer_of.close()
     return chapters
 
 
@@ -169,8 +225,8 @@ def parse_pdf_to_json(input_pdf: str, output_path: str):
     with pymupdf.open(input_pdf) as doc:
         chapters = group_chapters(doc)
 
-    with open(output_path, "w") as f:
-        json.dump(chapters, f, indent=2)
+    with open(output_path, "wb") as f:
+        f.write(msgspec.json.encode(chapters))
 
 
 if __name__ == "__main__":
