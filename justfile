@@ -18,8 +18,10 @@ install:
 format:
     uv run ruff format
 
+# perform pre-commit checks with prek
 precommit:
-	uv run pre-commit run --all-files
+	uv run prek run
 
+# run type checking with ty
 typecheck:
     uvx ty check
