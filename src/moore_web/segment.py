@@ -6,6 +6,19 @@ import msgspec
 
 from moore_web.book_enum_parser import group_chapter5_enums, ENUM_RAW
 
+PAGE = {
+    7: "Juste avant le commence-",
+    8: "Quelques mois plus tard, Poko et sa mère   ramas-",
+    45: """Même Jésus, lorsqu'Il  était sur la croix a crié à 
+son Père en disant : 
+"Père, pourquoi m'as-tu 
+abandonné ?" Les 
+gens enlèvent la douleur 
+contenue dans leur 
+cœur en parlant à Dieu 
+ou à d'autres per-""",
+}
+
 
 class SentencePair(msgspec.Struct):
     french: str
@@ -22,22 +35,23 @@ def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
     fixed_pages = pages.copy()
 
     for i, page in enumerate(fixed_pages[:-1]):
-        french_text = page.french_text.rstrip()
+        current_text = page.french_text.rstrip()
+        page_number = page.page_number
 
-        if not french_text.endswith("-"):
+        if page_number not in PAGE:
             continue
-
         next_page = fixed_pages[i + 1]
         next_text = next_page.french_text.lstrip()
 
-        parts = next_text.split(None, 1)
-        if not parts:
-            continue
+        incomplete_text = PAGE[page_number]
+        escaped_fragment = re.escape(incomplete_text)
 
-        completing_word = parts[0]
-        remainder = parts[1] if len(parts) > 1 else ""
+        remainder = re.sub(rf"\s*{escaped_fragment}\s*$", "", current_text)
+        print(f"Remainder of Page {page_number}:\n{remainder}")
 
-        merged_french = french_text[:-1] + completing_word
+        merged_french = incomplete_text[:-1] + next_text
+
+        print(f"Merged Page {page_number}:\n{merged_french}")
 
         fixed_pages[i] = ChapterPage(
             page_number=page.page_number,
