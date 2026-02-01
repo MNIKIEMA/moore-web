@@ -6,66 +6,12 @@ import msgspec
 
 from moore_web.book_enum_parser import group_chapter5_enums, ENUM_RAW
 
-PAGE = {
-    7: "Juste avant le commence-",
-    8: "Quelques mois plus tard, Poko et sa mère   ramas-",
-    45: """Même Jésus, lorsqu'Il  était sur la croix a crié à 
-son Père en disant : 
-"Père, pourquoi m'as-tu 
-abandonné ?" Les 
-gens enlèvent la douleur 
-contenue dans leur 
-cœur en parlant à Dieu 
-ou à d'autres per-""",
-}
-
 
 class SentencePair(msgspec.Struct):
     french: str
     moore: str
     source: str
     index: int
-
-
-def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
-    """
-    Fix sentences that end with hyphen and continue on next page.
-    Removes duplicated text from the next page.
-    """
-    fixed_pages = pages.copy()
-
-    for i, page in enumerate(fixed_pages[:-1]):
-        current_text = page.french_text.rstrip()
-        page_number = page.page_number
-
-        if page_number not in PAGE:
-            continue
-        next_page = fixed_pages[i + 1]
-        next_text = next_page.french_text.lstrip()
-
-        incomplete_text = PAGE[page_number]
-        escaped_fragment = re.escape(incomplete_text)
-
-        remainder = re.sub(rf"\s*{escaped_fragment}\s*$", "", current_text)
-        print(f"Remainder of Page {page_number}:\n{remainder}")
-
-        merged_french = incomplete_text[:-1] + next_text
-
-        print(f"Merged Page {page_number}:\n{merged_french}")
-
-        fixed_pages[i] = ChapterPage(
-            page_number=page.page_number,
-            french_text=merged_french,
-            moore_text=page.moore_text,
-        )
-
-        fixed_pages[i + 1] = ChapterPage(
-            page_number=next_page.page_number,
-            french_text=remainder,
-            moore_text=next_page.moore_text,
-        )
-
-    return fixed_pages
 
 
 def remove_newlines(text: str) -> str:
@@ -153,8 +99,6 @@ def segment_pages(
         filtered_pages = [p for p in filtered_pages if p.page_number >= start_page]
     if end_page is not None:
         filtered_pages = [p for p in filtered_pages if p.page_number < end_page]
-
-    filtered_pages = fix_hyphenated_sentences(filtered_pages)
 
     all_french = " ".join([p.french_text for p in filtered_pages])
     all_moore = " ".join([p.moore_text for p in filtered_pages])
