@@ -124,7 +124,6 @@ def group_chapter5_enums(
     """
 
     filtered_pages: list[ChapterPage] = [p for p in chapter5_pages if p.page_number >= enum_start_page]
-    print(f"Filtered to {len(filtered_pages)} pages starting from page {enum_start_page}.")
 
     if not filtered_pages:
         return []
@@ -152,9 +151,6 @@ def group_chapter5_enums(
 
     split_fr = tok_regex_fr.split(all_french_text)
     split_mo = tok_regex_mo.split(all_moore_text)
-
-    print(f"French split into {len(split_fr)} parts")
-    print(f"Moore split into {len(split_mo)} parts")
 
     fr_pairs = []
     for i in range(1, len(split_fr), 2):
@@ -200,6 +196,7 @@ EnumPattern: TypeAlias = tuple[re.Pattern, re.Pattern, re.Pattern | None]
 
 if __name__ == "__main__":
     import pymupdf
+    import msgspec
     from moore_web.book_parser import group_chapters
 
     input_pdf = "data/2 SIDA mooré - français.pdf"
@@ -210,10 +207,5 @@ if __name__ == "__main__":
 
     enum_items = group_chapter5_enums(chapter5.pages, ENUM_RAW, enum_start_page=39)
 
-    print(f"\nFound {len(enum_items)} enumeration items in Chapter 5:")
-    for item in enum_items:
-        print(f"\n{'=' * 80}")
-        print(f"Enum {item.enum_number}: Pages {item.start_page}-{item.end_page}")
-        print(f"\nFrench: {item.french_text}")
-        print(f"\nMoore: {item.moore_text}")
-    pass
+    with open("enum_output.json", "wb") as out:
+        out.write(msgspec.json.encode(enum_items))
