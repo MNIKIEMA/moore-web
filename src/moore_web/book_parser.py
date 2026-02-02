@@ -87,6 +87,20 @@ cœur en parlant à Dieu
 ou à d'autres per-""",
 }
 
+PAGE_RE = {
+    7: r"Juste\s+avant\s+le\s+commence-",
+    8: r"Quelques\s+mois\s+plus\s+tard,\s+Poko\s+et\s+sa\s+mère\s+ramas-",
+    45: r"Même\s+Jésus,\s+lorsqu'Il\s+"
+    r"était\s+sur\s+la\s+croix\s+a\s+crié\s+à\s+"
+    r"son\s+Père\s+en\s+disant\s+:\s+"
+    r"\"\s*Père,\s+pourquoi\s+m'as-tu\s+"
+    r"abandonné\s+\?\s+\"\s+Les\s+"
+    r"gens\s+enlèvent\s+la\s+douleur\s+"
+    r"contenue\s+dans\s+leur\s+"
+    r"cœur\s+en\s+parlant\s+à\s+Dieu\s+"
+    r"ou\s+à\s+d'autres\s+per-",
+}
+
 
 def find_column_separator(page: pymupdf.Page):
     page_center = page.rect.width / 2
@@ -245,26 +259,18 @@ def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
 
         if page_number not in PAGE:
             continue
-
-        print(f"Page ************* {page_number}: {current_text[-100:]}...\n")
         next_page = fixed_pages[i + 1]
         next_text = next_page.french_text.lstrip()
 
         incomplete_text = PAGE[page_number]
-        escaped_fragment = re.escape(incomplete_text)
+        pattern = PAGE_RE[page_number]
 
-        remainder = re.sub(rf"\s*{escaped_fragment}\s*$", "", current_text)
-
-        # print(f"Remainder \n{remainder} Page {page.page_number}\n")
-
-        merged_french = incomplete_text[:-1] + next_text
-        # print(f"Merged \n{merged_french} Page {page.page_number}\n")
-        if incomplete_text not in current_text:
-            print(f"❌ Fragment not found on page {page_number}")
+        if not re.search(pattern, current_text):
             continue
 
-        print(f"Incomplete text: '{incomplete_text}'")
-        print(f"Next text starts: '{next_text[:50]}'")
+        remainder = remainder = re.sub(rf"\s*{pattern}\s*$", "", current_text)
+
+        merged_french = incomplete_text[:-1] + next_text
 
         fixed_pages[i] = ChapterPage(
             page_number=page.page_number,
