@@ -4,120 +4,52 @@ import json
 import re
 
 
-def split_dictionary_entries(text) -> list[str]:
+def parse_dictionary_entries(entries: list[str]) -> list[dict]:
     """
-    Split dictionary text into individual lemma entries.
+    Parses a list of split strings into structured dictionary data.
+    Expected format: [Lemma, POS, Text+Lemma, POS, Text+Lemma...]
     """
-    lines = text.split("\n")
+    if not entries:
+        return []
+    pos_tags = entries[1::2]
+    text_blocks = entries[2::2]
+    current_lemma = entries[0].strip()
 
-    pos_pattern = r"(?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préposition|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant)\.|(?:\s|^)[vn]\.(?=\s|$)"
+    all_data: list[dict] = []
 
-    entries: list[str] = []
-    current_entry_lines = []
-
-    for i, line in enumerate(lines):
-        if re.match(r"^[a-zA-Z0-9\-ã].+?\s{2,}", line) and not line.startswith(" "):
-            if current_entry_lines:
-                entry_text = "\n".join(current_entry_lines).strip()
-                if re.search(pos_pattern, entry_text):
-                    entries.append(entry_text)
-            current_entry_lines = [line]
+    for pos, text in zip(pos_tags, text_blocks):
+        current_pos = pos.strip()
+        current_content = text.strip()
+        dots = re.findall(r"\.", current_content)
+        if len(dots) > 1:
+            current_definition, raw_next_lemma = split_entry(current_content)
+        elif len(dots) == 1:
+            parts = current_content.rsplit(".", 1)
+            current_definition = parts[0].strip()
+            raw_next_lemma = parts[1].strip() if len(parts) > 1 else ""
         else:
-            current_entry_lines.append(line)
-    if current_entry_lines:
-        entry_text = "\n".join(current_entry_lines).strip()
-        if re.search(pos_pattern, entry_text):
-            entries.append(entry_text)
+            current_definition = current_content
+            raw_next_lemma = ""
 
-    return entries
+        if has_multiple_senses(current_definition):
+            senses = split_senses(current_definition)
+        else:
+            senses = [("1", current_definition)]
 
+        all_data.append(
+            {"lemma": current_lemma, "pos": current_pos, "definition": current_definition, "senses": senses}
+        )
 
-def split_at_pos(entry: str) -> tuple[str, str]:
-    """
-    Split a dictionary entry at the end of the POS tag.
+        clean_lemma = re.sub(r"\d{2}/\d{2}/\d{4}|\b\d+\b", "", raw_next_lemma)
+        current_lemma = clean_lemma.strip()
 
-    Returns the metadata (lemma + IPA + variants + POS) and the definition part.
-
-    Args:
-        entry (str): A single dictionary entry
-
-    Returns:
-        tuple: (metadata_part, definition_part)
-
-    Example:
-        >>> entry = "a1 [à] Varinat: yẽ. Pronom.\\n1 • il, elle"
-        >>> meta, defn = split_at_pos(entry)
-        >>> "Pronom." in meta
-        True
-    """
-    pos_tags = r"(?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préposition|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant|v|n)\."
-    m = re.search(pos_tags, entry)
-
-    if m:
-        split_pos = m.end()
-        metadata = entry[:split_pos].strip()
-        definition = entry[split_pos:].strip()
-        return metadata, definition
-
-    return entry.strip(), ""
+    return all_data
 
 
 def has_multiple_senses(entry: str) -> bool:
-    """
-    Check if a dictionary entry has multiple numbered senses.
-
-    Senses are marked with numbers followed by bullet: "1 •", "2 •", etc.
-
-    Args:
-        entry (str): A single dictionary entry
-
-    Returns:
-        bool: True if entry has 2 or more senses, False otherwise
-
-    Example:
-        >>> entry = "a1 [à] Pronom.\\n1 • first sense\\n2 • second sense"
-        >>> has_multiple_senses(entry)
-        True
-    """
-    sense_pattern = r"(?:^|\s)\d+\s*•"
-
-    senses = re.findall(sense_pattern, entry, flags=re.MULTILINE)
-
+    sense_pattern = r"\b\d+\s*•"
+    senses = re.findall(sense_pattern, entry)
     return len(senses) >= 2
-
-
-def remove_duplicate_lemma_lines(entry):
-    """
-    Remove duplicate lemma lines at the start of an entry.
-
-    Some entries have format:
-    lemma1
-    lemma2
-    lemma1
-    [IPA] ...
-
-    This keeps only the lemma line that has IPA/variants/POS.
-
-    Args:
-        entry (str): A single dictionary entry
-
-    Returns:
-        str: Entry with duplicate lemma lines removed
-    """
-    lines = entry.strip().split("\n")
-
-    if len(lines) < 3:
-        return entry
-
-    first_line = lines[0].strip()
-    second_line = lines[1].strip()
-
-    has_metadata = r"\[.*\]|(?:Plural|singulier|Varinat|Comparez|Inaccompli|nominal|racine|emprunt):|(?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préposition|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant|v|n)\."
-
-    if not re.search(has_metadata, first_line) and not re.search(has_metadata, second_line):
-        return "\n".join(lines[2:]).strip()
-
-    return entry
 
 
 def remove_section_header(text: str) -> str:
@@ -157,16 +89,25 @@ def extract_page_numbers(text):
     return page_numbers
 
 
-def split_senses(entry):
-    sense_pattern = r"((?:^|\s)\d+\s*•)"
+def split_senses(entry: str) -> list[tuple[str, str]]:
+    sense_pattern = r"\b(\d+)\s*•"
+    matches = list(re.finditer(sense_pattern, entry))
 
-    parts = re.split(sense_pattern, entry)
+    if not matches:
+        return []
 
-    metadata = parts[0].strip()
-    it = iter(parts[1:])
-    senses = [f"{m.strip()} {t.strip()}" for m, t in zip(it, it)]
+    results = []
+    for i in range(len(matches)):
+        sense_num = matches[i].group(1)
+        start_index = matches[i].end()
+        if i + 1 < len(matches):
+            end_index = matches[i + 1].start()
+        else:
+            end_index = len(entry)
 
-    return metadata, senses
+        sense_text = entry[start_index:end_index].strip().rstrip(".")
+        results.append((sense_num, sense_text))
+    return results
 
 
 def extract_metadata_components(metadata_str):
@@ -189,10 +130,39 @@ def extract_metadata_components(metadata_str):
     return {"lemma": lemma, "variants": variants, "pos": pos}
 
 
-def parse_complex_definition(text: str):
-    gloss, remaining = text.split(".", 1)
+def split_entry(text: str) -> list[str]:
+    """
+    Split definition from lemma+variants.
+    Find the last ". " before a lemma (not before field keywords)
+    """
+    dot_positions = [m.start() for m in re.finditer(r"\.\s+", text)]
 
-    french_gloss, english_gloss = gloss.split(";", 1)
+    if not dot_positions:
+        return [text, ""]
+    field_keywords = (
+        r"^(Comparez|Varinat|Variant|racine|emprunt|Plural|infinitif|Inaccompli|nominal|Category):"
+    )
+
+    for pos in reversed(dot_positions):
+        after_dot = text[pos + 2 :].lstrip()
+        if after_dot and not re.match(field_keywords, after_dot, re.IGNORECASE):
+            definition = text[: pos + 1].strip()
+            lemma_part = text[pos + 1 :].strip()
+            return [definition, lemma_part]
+    last_dot = dot_positions[-1]
+    return [text[: last_dot + 1].strip(), text[last_dot + 1 :].strip()]
+
+
+def parse_complex_definition(text: str):
+    pattern = r"^(?P<french>[^;]+;)\s*(?P<english>[^.]+?\.)\s*(?P<remaining>.*)"
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        french_gloss = match.group("french").strip()
+        english_gloss = match.group("english").strip()
+        remaining = match.group("remaining").strip()
+    else:
+        print(text)
+        gloss, remaining = text.split(".", 1)
     if not remaining:
         return {"french": french_gloss, "english": english_gloss}
     cat_sci_pattern = r"Category:\s*([^.]+?)(?:\.\s*([A-Z][a-z]+ [a-z]+))?\."
@@ -269,41 +239,24 @@ def merge_page(page: pymupdf.Page, num_columns: int = 2) -> str:
 
 def parse_doc(doc: pymupdf.Document):
     all_parsed = []
+    pos_pattern = r"((?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préposition|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant)\.)"
     num_columns = 2
     for i, page in enumerate(doc, start=1):
         text = merge_page(page, num_columns)
         if i == 1:
             _, text = re.split(r"A\s*-\s*a", text)
+        else:
+            text = "\n".join(text.split("\n")[2:])
         page_number = extract_page_numbers(text)
+        print(page_number)
         text = remove_date(text)
         text = remove_page_number(text)
-
-        entries = split_dictionary_entries(text)
-        for entry in entries:
-            try:
-                metadata, definition = split_at_pos(entry)
-            except Exception as e:
-                print(e)
-                continue
-            has_sense = has_multiple_senses(entry)
-            if has_sense:
-                metadata, definition = split_senses(entry)
-            metadata_components = extract_metadata_components(metadata)
-            if isinstance(definition, list):
-                for d in definition:
-                    def_struct = parse_complex_definition(d)
-                    print("Definition structure:", def_struct)
-            else:
-                def_struct = parse_complex_definition(definition)
-
-            all_parsed.append(
-                {
-                    "page_number": page_number,
-                    "metadata": metadata_components,
-                    "definition": def_struct,
-                }
-            )
-
+        text = re.sub(r"\n+", " ", text)
+        entries = re.split(pos_pattern, text)
+        parsed_entries = parse_dictionary_entries(entries)
+        all_parsed.extend(parsed_entries)
+    # TODO: parse lemma to get variant and IPA
+    # TODO: parse sense to get gloss and examples,category, scientific name, synonyms and antonyms
     return all_parsed
 
 
