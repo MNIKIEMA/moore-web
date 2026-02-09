@@ -2,6 +2,7 @@ import pymupdf
 from argparse import ArgumentParser
 import json
 import re
+from loguru import logger
 
 
 def parse_dictionary_entries(entries: list[str]) -> list[dict]:
@@ -96,7 +97,7 @@ def split_senses(entry: str) -> list[tuple[str, str]]:
     if not matches:
         return []
 
-    results = []
+    results: list[tuple[str, str]] = []
     for i in range(len(matches)):
         sense_num = matches[i].group(1)
         start_index = matches[i].end()
@@ -104,8 +105,8 @@ def split_senses(entry: str) -> list[tuple[str, str]]:
             end_index = matches[i + 1].start()
         else:
             end_index = len(entry)
-
-        sense_text = entry[start_index:end_index].strip().rstrip(".")
+        first, sep, _ = entry[start_index:end_index].strip().rpartition(".")
+        sense_text = first + sep
         results.append((sense_num, sense_text))
     return results
 
@@ -161,23 +162,25 @@ def parse_complex_definition(text: str):
         english_gloss = match.group("english").strip()
         remaining = match.group("remaining").strip()
     else:
-        print(text)
+        logger.warning(f"Failed to match pattern: {text}\n English gloss will be empty")
         gloss, remaining = text.split(".", 1)
+        french_gloss = gloss.strip()
+        english_gloss = ""
     if not remaining:
         return {"french": french_gloss, "english": english_gloss}
-    cat_sci_pattern = r"Category:\s*([^.]+?)(?:\.\s*([A-Z][a-z]+ [a-z]+))?\."
+    cat_sci_pattern = r"Category:\s*([^.]+?)\.\s*(?:([A-Za-z][a-z]+(?:\s+[a-z]+){1,2}))?"
     cat_sci_match = re.search(cat_sci_pattern, remaining)
     category = None
     scientific_name = None
-
+    print("\nRemaining", remaining, "\n\n")
     if cat_sci_match:
         category = cat_sci_match.group(1).strip()
         scientific_name = cat_sci_match.group(2)
+        remaining = remaining.replace(cat_sci_match.group(0), "")
     syn_match = re.search(r"synonyme:\s*([^.]+)\.", remaining)
     ant_match = re.search(r"antonyme:\s*([^.]+)\.", remaining)
 
-    clean_text = re.sub(r"Category:.*?\.(?:\s*[A-Z][a-z]+ [a-z]+\.)?", "", remaining, flags=re.DOTALL)
-    clean_text = re.sub(r"(synonyme|antonyme):.*?\.", "", clean_text, flags=re.DOTALL)
+    clean_text = re.sub(r"(synonyme|antonyme):.*?\.", "", remaining, flags=re.DOTALL)
 
     definition_part = ""
     examples = []
@@ -189,7 +192,6 @@ def parse_complex_definition(text: str):
     return {
         "french": french_gloss,
         "english": english_gloss,
-        "definition": definition_part,
         "examples": examples,
         "category": category,
         "scientific_name": scientific_name,
@@ -207,14 +209,29 @@ def extract_examples(text: str):
 
     num_segments = len(segments)
     results = []
-    if num_segments >= 3 and num_segments % 3 == 0:
-        per_lang = num_segments // 3
-
-        moore = " ".join(segments[0:per_lang])
-        french = " ".join(segments[per_lang : per_lang * 2])
-        english = " ".join(segments[per_lang * 2 : per_lang * 3])
-
+    if num_segments >= 2:
+        if num_segments % 3 == 0:
+            per_lang = num_segments // 3
+            moore = " ".join(segments[0:per_lang])
+            french = " ".join(segments[per_lang : per_lang * 2])
+            english = " ".join(segments[per_lang * 2 : per_lang * 3])
+        elif num_segments == 5:
+            per_lang = num_segments // 3
+            moore = " ".join(segments[0:per_lang])
+            french = " ".join(segments[per_lang : per_lang * 2 + 1])
+            english = " ".join(segments[per_lang * 2 + 1 : per_lang * 3 + 2])
+        elif num_segments % 2 == 0:
+            per_lang = num_segments // 2
+            moore = " ".join(segments[0:per_lang])
+            french = " ".join(segments[per_lang : per_lang * 2])
+            english = None
+        else:
+            logger.warning(f"Failed to parse example: {text}")
+            return []
         results.append({"moore": moore, "french": french, "english": english})
+    else:
+        logger.warning(f"Failed to parse example: {text} ({segments} segments)")
+        return []
 
     return results
 
@@ -238,8 +255,9 @@ def merge_page(page: pymupdf.Page, num_columns: int = 2) -> str:
 
 
 def parse_doc(doc: pymupdf.Document):
+    # TODO: page 509: Take into account some variation like postposition.
     all_parsed = []
-    pos_pattern = r"((?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préposition|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant)\.)"
+    pos_pattern = r"((?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant)\.)"
     num_columns = 2
     for i, page in enumerate(doc, start=1):
         text = merge_page(page, num_columns)
