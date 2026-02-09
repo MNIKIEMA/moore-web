@@ -12,19 +12,29 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
     """
     if not entries:
         return []
+
     pos_tags = entries[1::2]
     text_blocks = entries[2::2]
     current_lemma = entries[0].strip()
 
-    all_data: list[dict] = []
+    lemma_match = re.match(r"^(.*?)\s*\[([^\]]+)\]", current_lemma)
+    if lemma_match:
+        lemma_name = lemma_match.group(1).strip()
+        ipa = lemma_match.group(2).strip()
+    else:
+        lemma_name = re.split(r"\s+", current_lemma)[0].strip()
+        ipa = ""
+
+    all_data = []
 
     for pos, text in zip(pos_tags, text_blocks):
         current_pos = pos.strip()
         current_content = text.strip()
-        dots = re.findall(r"\.", current_content)
-        if len(dots) > 1:
+
+        dots = current_content.count(".")
+        if dots > 1:
             current_definition, raw_next_lemma = split_entry(current_content)
-        elif len(dots) == 1:
+        elif dots == 1:
             parts = current_content.rsplit(".", 1)
             current_definition = parts[0].strip()
             raw_next_lemma = parts[1].strip() if len(parts) > 1 else ""
@@ -38,11 +48,28 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
             senses = [("1", current_definition)]
 
         all_data.append(
-            {"lemma": current_lemma, "pos": current_pos, "definition": current_definition, "senses": senses}
+            {
+                "lemma": lemma_name,
+                "ipa": ipa,
+                "pos": current_pos,
+                "definition": current_definition,
+                "senses": senses,
+            }
         )
 
-        clean_lemma = re.sub(r"\d{2}/\d{2}/\d{4}|\b\d+\b", "", raw_next_lemma)
-        current_lemma = clean_lemma.strip()
+        if raw_next_lemma:
+            next_lemma_match = re.match(r"^(.*?)\s*\[([^\]]+)\]", raw_next_lemma)
+            if next_lemma_match:
+                next_lemma_name = next_lemma_match.group(1).strip()
+                next_ipa = next_lemma_match.group(2).strip()
+            else:
+                next_lemma_name = re.split(r"\s+", raw_next_lemma)[0].strip()
+                next_ipa = ""
+            if re.match(r"^\d+$", next_lemma_name):
+                pass
+            else:
+                lemma_name = next_lemma_name
+                ipa = next_ipa
 
     return all_data
 
