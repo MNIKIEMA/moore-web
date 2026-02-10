@@ -1,3 +1,4 @@
+from pathlib import Path
 import pymupdf
 from argparse import ArgumentParser
 import json
@@ -9,6 +10,7 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
     """
     Parses a list of split strings into structured dictionary data.
     Expected format: [Lemma, POS, Text+Lemma, POS, Text+Lemma...]
+    Can include multiple variants: Lemma [IPA] Type1: word1. Type2: word2, word3. POS definition.
     """
     if not entries:
         return []
@@ -31,31 +33,69 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
         current_pos = pos.strip()
         current_content = text.strip()
 
+        variants = {}
+
+        variant_pattern = (
+            r"(Comparez|Varinat|Variant|racine|emprunt|Plural|infinitif|Inaccompli|nominal):\s*([^.]+)\."
+        )
+        matches = list(re.finditer(variant_pattern, current_content))
+
+        for match in matches:
+            variant_type = match.group(1).strip()
+            variant_words = match.group(2).strip()
+            variant_list = [v.strip() for v in variant_words.split(",")]
+            variants[variant_type] = variant_list
+
+        if matches:
+            current_content = re.sub(variant_pattern, "", current_content).strip()
+
         dots = current_content.count(".")
         if dots > 1:
             current_definition, raw_next_lemma = split_entry(current_content)
         elif dots == 1:
             parts = current_content.rsplit(".", 1)
-            current_definition = parts[0].strip()
+            current_definition = parts[0].strip() + "."
             raw_next_lemma = parts[1].strip() if len(parts) > 1 else ""
         else:
             current_definition = current_content
             raw_next_lemma = ""
-
         if has_multiple_senses(current_definition):
-            senses = split_senses(current_definition)
+            raw_senses = split_senses(current_definition)
         else:
-            senses = [("1", current_definition)]
+            raw_senses = [("1", current_definition)]
 
-        all_data.append(
-            {
-                "lemma": lemma_name,
-                "ipa": ipa,
-                "pos": current_pos,
-                "definition": current_definition,
-                "senses": senses,
+        senses = []
+        for sense_id, sense_text in raw_senses:
+            parsed = parse_complex_definition(sense_text)
+
+            sense_obj = {
+                "id": sense_id,
+                "french": parsed.get("french"),
+                "english": parsed.get("english"),
+                "examples": parsed.get("examples", []),
             }
-        )
+
+            if parsed.get("category"):
+                sense_obj["category"] = parsed["category"]
+            if parsed.get("scientific_name"):
+                sense_obj["scientific_name"] = parsed["scientific_name"]
+            if parsed.get("synonym"):
+                sense_obj["synonym"] = parsed["synonym"]
+            if parsed.get("antonym"):
+                sense_obj["antonym"] = parsed["antonym"]
+
+            senses.append(sense_obj)
+        entry_data = {
+            "lemma": lemma_name,
+            "ipa": ipa,
+            "pos": current_pos,
+            "senses": senses,
+        }
+
+        if variants:
+            entry_data["variants"] = variants
+
+        all_data.append(entry_data)
 
         if raw_next_lemma:
             next_lemma_match = re.match(r"^(.*?)\s*\[([^\]]+)\]", raw_next_lemma)
@@ -65,9 +105,7 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
             else:
                 next_lemma_name = re.split(r"\s+", raw_next_lemma)[0].strip()
                 next_ipa = ""
-            if re.match(r"^\d+$", next_lemma_name):
-                pass
-            else:
+            if not re.match(r"^\d+$", next_lemma_name):
                 lemma_name = next_lemma_name
                 ipa = next_ipa
 
@@ -138,26 +176,6 @@ def split_senses(entry: str) -> list[tuple[str, str]]:
     return results
 
 
-def extract_metadata_components(metadata_str):
-    pos_tags = r"(Verbe|Pronom|Nom|expression|interj|particule grammaticale|préposition|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant|v|n)"
-    pos_match = re.search(rf"{pos_tags}\.", metadata_str)
-    pos = pos_match.group(0) if pos_match else None
-    pre_pos = metadata_str
-    if pos_match:
-        pre_pos = metadata_str[: pos_match.start()].strip()
-
-    if "[" in pre_pos:
-        lemma = pre_pos.split("[")[0].strip()
-    else:
-        parts = re.split(r"(?:Varinat|Comparez):", pre_pos)
-        lemma = parts[0].strip()
-
-    variant_match = re.search(r"(?:Varinat|Comparez):\s*([^.]+)", metadata_str)
-    variants = variant_match.group(1).strip() if variant_match else None
-
-    return {"lemma": lemma, "variants": variants, "pos": pos}
-
-
 def split_entry(text: str) -> list[str]:
     """
     Split definition from lemma+variants.
@@ -199,7 +217,7 @@ def parse_complex_definition(text: str):
     cat_sci_match = re.search(cat_sci_pattern, remaining)
     category = None
     scientific_name = None
-    print("\nRemaining", remaining, "\n\n")
+
     if cat_sci_match:
         category = cat_sci_match.group(1).strip()
         scientific_name = cat_sci_match.group(2)
@@ -230,6 +248,7 @@ def parse_complex_definition(text: str):
 def extract_examples(text: str):
     text = re.sub(r"\s+", " ", text).strip()
     text = text.replace("- ", "-")
+    text = re.sub(r"\.\s+\.", ".", text)
 
     segments = re.findall(r"[^.?!]+[.?!](?:\s*»\s*\.\s*\.)?", text)
     segments = [s.strip() for s in segments]
@@ -282,9 +301,8 @@ def merge_page(page: pymupdf.Page, num_columns: int = 2) -> str:
 
 
 def parse_doc(doc: pymupdf.Document):
-    # TODO: page 509: Take into account some variation like postposition.
     all_parsed = []
-    pos_pattern = r"((?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant)\.)"
+    pos_pattern = r"((?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant|postposition)\.)"
     num_columns = 2
     for i, page in enumerate(doc, start=1):
         text = merge_page(page, num_columns)
@@ -298,27 +316,72 @@ def parse_doc(doc: pymupdf.Document):
         text = remove_page_number(text)
         text = re.sub(r"\n+", " ", text)
         entries = re.split(pos_pattern, text)
-        parsed_entries = parse_dictionary_entries(entries)
-        all_parsed.extend(parsed_entries)
-    # TODO: parse lemma to get variant and IPA
-    # TODO: parse sense to get gloss and examples,category, scientific name, synonyms and antonyms
+        if len(entries) > 1:
+            try:
+                parsed_entries = parse_dictionary_entries(entries)
+                all_parsed.extend(parsed_entries)
+            except Exception as e:
+                logger.error(f"Error processing page {i}: {e}")
+                continue
+        else:
+            logger.warning(f"Failed to parse page {i}: {text}")
+
     return all_parsed
+
+
+def print_statistics(data: list[dict]):
+    """Print summary statistics about parsed data."""
+    total_entries = len(data)
+    total_senses = sum(len(entry.get("senses", [])) for entry in data)
+    total_examples = sum(
+        len(sense.get("examples", [])) for entry in data for sense in entry.get("senses", [])
+    )
+    entries_with_variants = sum(1 for entry in data if "variants" in entry)
+    entries_with_ipa = sum(1 for entry in data if entry.get("ipa"))
+
+    pos_counts = {}
+    for entry in data:
+        pos = entry.get("pos", "Unknown")
+        pos_counts[pos] = pos_counts.get(pos, 0) + 1
+
+    logger.info("=" * 60)
+    logger.info("PARSING STATISTICS")
+    logger.info("=" * 60)
+    logger.info(f"Total entries: {total_entries}")
+    logger.info(f"Total senses: {total_senses}")
+    logger.info(f"Total examples: {total_examples}")
+    logger.info(f"Entries with variants: {entries_with_variants}")
+    logger.info(f"Entries with IPA: {entries_with_ipa}")
+    logger.info("\nPart of Speech distribution:")
+    for pos, count in sorted(pos_counts.items(), key=lambda x: x[1], reverse=True):
+        logger.info(f"  {pos}: {count}")
+    logger.info("=" * 60)
 
 
 def main():
     parser = ArgumentParser(description="Parse dictionary entries from a PDF file.")
     parser.add_argument("--input-path", "-i", type=str, required=True, help="Path to the PDF file")
     parser.add_argument("--output-path", "-o", type=str, required=True, help="Path to the output JSONL file")
+    parser.add_argument("--pretty", action="store_true", help="Pretty print JSON output")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     args = parser.parse_args()
-
-    pdf_path = args.input_path
+    if args.verbose:
+        logger.remove()
+        logger.add(lambda msg: print(msg, end=""), level="DEBUG")
+    pdf_path = Path(args.input_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+    if not pdf_path.suffix == ".pdf":
+        raise ValueError(f"Input file must be a PDF file: {pdf_path}")
     out_path = args.output_path
     doc = pymupdf.open(pdf_path)
     parsed = parse_doc(doc)
+    print_statistics(parsed)
+    doc.close()
 
     with open(out_path, "w", encoding="utf-8") as f:
         for p in parsed:
-            f.write(json.dumps(p) + "\n")
+            f.write(json.dumps(p, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":
