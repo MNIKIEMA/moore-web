@@ -1,245 +1,301 @@
+import unicodedata
 import re
 import pymupdf
-import json
 
-from moore_web.constants import CHAPTERS, CHAPTER_FIVE_ENUM
-
-
-def normalize(text):
-    """Normalize whitespace in text."""
-    return re.sub(r"\s+", " ", text).strip()
+import msgspec
 
 
-def normalize_for_matching(text):
-    """Normalize text for chapter matching."""
-    return re.sub(r"\s+", " ", text.lower()).strip()
+class ChapterPage(msgspec.Struct):
+    """Represents a single page within a chapter"""
+
+    page_number: int
+    french_text: str
+    moore_text: str
 
 
-def is_incomplete_sentence(text):
-    """Check if text ends with incomplete sentence (no proper ending punctuation)."""
-    if not text:
-        return False
-    text = text.rstrip()
-    return not text.endswith((".", "!", "?", "»", '"', '"'))
+class Chapter(msgspec.Struct):
+    """Represents a complete chapter with metadata"""
+
+    chapter_number: int
+    title_french: str
+    title_moore: str
+    start_page: int
+    pages: list[ChapterPage]
+
+    @property
+    def end_page(self) -> int:
+        """Last page number of the chapter"""
+        return self.pages[-1].page_number if self.pages else self.start_page
+
+    @property
+    def page_count(self) -> int:
+        """Total number of pages in the chapter"""
+        return len(self.pages)
 
 
-def split_sentences(text):
-    """Split text into sentences, handling French and Mooré punctuation."""
-    sentences = re.split(r'(?<=[.!?»""])\s+(?=[A-ZÀÂÄÇÈÉÊËÏÎÔÙÛÜŸŒÆ«""A-Z])', text)
-    return [s.strip() for s in sentences if s.strip()]
+def compile_robust_regex(pattern: str):
+    normalized = pattern.replace(r"\s+", r"[\s-]+")
+    return re.compile(normalized, re.IGNORECASE | re.MULTILINE)
 
 
-def align_sentences(fr_text, mo_text):
+CHAPTER_TITLES: dict[int, tuple[str, str]] = {
+    1: ("Les secrets de Maman", "M ma solga bũmbu"),
+    2: ("Davantage de problèmes dans la famille de Poko", "Yɛla ket n paasda a Pok rãmb zak n wã"),
+    3: ("Des dangers pour la famille de Poko", "A Pok rãmb zaka zu-loeese"),
+    4: ("Poko retrouve espoir", "A Pok ne a yaopa tõog n gesa b meng yelle"),
+    5: (
+        "La communauté de Poko s'informe sur le SIDA",
+        "A Pok rãmb tẽnga rãmb baome n na n bãng sẽn kẽed SIDAwã bãag wɛɛngẽ",
+    ),
+}
+
+CHAPTER_PAGES: dict[int, int] = {1: 3, 2: 10, 3: 17, 4: 25, 5: 32}
+
+CHAPTERS_RAW: list[tuple[str, str]] = [
+    (r"Chapitre\s+1\s+Les\s+secrets\s+de\s+Maman", r"Sak\s+a\s+1\s+soaba\s+M\s+ma\s+solga\s+bũmbu"),
+    (
+        r"Chapitre\s+2\s+Davantage\s+de\s+problèmes\s+dans\s+la\s+famille\s+de\s+Poko",
+        r"Sak\s+a\s+2\s+soaba\s+Yɛla\s+ket\s+n\s+paasda\s+a\s+Pok\s+rãmb\s+zak\s+n\s+wã",
+    ),
+    (
+        r"Chapitre\s+3\s+Des\s+dangers\s+pour\s+la\s+famille\s+de\s+Poko",
+        r"Sak\s+a\s+3\s+soaba\s+A\s+Pok\s+rãmb\s+zaka\s+zu-loeese",
+    ),
+    (
+        r"Chapitre\s+4\s+Poko\s+retrouve\s+espoir",
+        r"Sak\s+a\s+4\s+soaba\s+A\s+Pok\s+ne\s+a\s+yaopa\s+tõog\s+n\s+gesa\s+b\s+meng\s+yelle",
+    ),
+    (
+        r"Chapitre\s+5\s+La\s+communauté\s+de\s+Poko\s+s'informe\s+sur\s+le\s+SIDA\s*\.?\s*",
+        r"Sak\s+a\s+5\s+soaba\s+A\s+Pok\s+rãmb\s+tẽnga\s+rãmb\s+baome\s+n\s+na\s+n\s+bãng\s+sẽn\s+kẽed\s+SIDAwã\s+bãag\s+wɛɛngẽ",
+    ),
+]
+
+
+CHAPTERS_RE = [(compile_robust_regex(fr), compile_robust_regex(mo)) for fr, mo in CHAPTERS_RAW]
+
+PAGE = {
+    7: "Juste avant le commence-",
+    8: "Quelques mois plus tard, Poko et sa mère   ramas-",
+    45: """Même Jésus, lorsqu'Il  était sur la croix a crié à 
+son Père en disant : 
+"Père, pourquoi m'as-tu 
+abandonné ?" Les 
+gens enlèvent la douleur 
+contenue dans leur 
+cœur en parlant à Dieu 
+ou à d'autres per-""",
+}
+
+PAGE_RE = {
+    7: r"Juste\s+avant\s+le\s+commence-",
+    8: r"Quelques\s+mois\s+plus\s+tard,\s+Poko\s+et\s+sa\s+mère\s+ramas-",
+    45: r"Même\s+Jésus,\s+lorsqu'Il\s+"
+    r"était\s+sur\s+la\s+croix\s+a\s+crié\s+à\s+"
+    r"son\s+Père\s+en\s+disant\s+:\s+"
+    r"\"\s*Père,\s+pourquoi\s+m'as-tu\s+"
+    r"abandonné\s+\?\s+\"\s+Les\s+"
+    r"gens\s+enlèvent\s+la\s+douleur\s+"
+    r"contenue\s+dans\s+leur\s+"
+    r"cœur\s+en\s+parlant\s+à\s+Dieu\s+"
+    r"ou\s+à\s+d'autres\s+per-",
+}
+
+
+def find_column_separator(page: pymupdf.Page):
+    page_center = page.rect.width / 2
+    candidates = []
+
+    for d in page.get_drawings():
+        for item in d["items"]:
+            if item[0] == "l":
+                _, (x0, y0), (x1, y1) = item
+                if abs(x0 - x1) < 1 and abs(y1 - y0) > 200:
+                    candidates.append(x0)
+
+    if not candidates:
+        return page_center
+
+    return min(candidates, key=lambda x: abs(x - page_center))
+
+
+def process_page_blocks(page: pymupdf.Page, middle_x: float) -> tuple[list[str], list[str]]:
     """
-    Align French and Mooré sentences intelligently.
+    Extracts text blocks and identifies if this page triggers a chapter start.
+
+    Returns:
+        tuple[list[str], list[str]]
     """
-    fr_sents = split_sentences(fr_text)
-    mo_sents = split_sentences(mo_text)
-
-    aligned = []
-
-    if len(fr_sents) == len(mo_sents):
-        for f, m in zip(fr_sents, mo_sents):
-            aligned.append({"fr": f, "mo": m})
-
-    elif abs(len(fr_sents) - len(mo_sents)) <= 2 and min(len(fr_sents), len(mo_sents)) > 0:
-        min_len = min(len(fr_sents), len(mo_sents))
-
-        for i in range(min_len):
-            aligned.append({"fr": fr_sents[i], "mo": mo_sents[i]})
-
-        if len(fr_sents) > min_len:
-            remaining_fr = " ".join(fr_sents[min_len:])
-            aligned.append({"fr": remaining_fr, "mo": ""})
-        elif len(mo_sents) > min_len:
-            remaining_mo = " ".join(mo_sents[min_len:])
-            aligned.append({"fr": "", "mo": remaining_mo})
-
-    else:
-        if fr_text.strip() or mo_text.strip():
-            aligned.append({"fr": fr_text.strip(), "mo": mo_text.strip()})
-
-    return aligned
-
-
-def split_page(page):
-    """Extract text from left (Mooré) and right (French) columns."""
-    middle_x = page.rect.width / 2
-    moore_blocks = []
-    french_blocks = []
+    moore_parts: list[str] = []
+    french_parts: list[str] = []
 
     blocks = page.get_text("blocks", sort=True)
 
-    for block in blocks:
-        x0, y0, x1, y1, text, *_ = block
+    for b in blocks:
+        x0, y0, x1, y1, text = b[:5]
         text = text.strip()
 
-        if not text or (text.isdigit() and len(text) <= 3):
+        if not text or text.isdigit():
             continue
-
         if x0 < middle_x:
-            moore_blocks.append(text)
+            moore_parts.append(text)
         else:
-            french_blocks.append(text)
+            french_parts.append(text)
 
-    return "\n".join(moore_blocks), "\n".join(french_blocks)
-
-
-def detect_chapter(fr_text, mo_text):
-    """Detect chapter heading on page."""
-    fr_norm = normalize_for_matching(fr_text)
-    mo_norm = normalize_for_matching(mo_text)
-
-    for idx, (fr_pattern, mo_pattern) in enumerate(CHAPTERS, start=1):
-        fr_pat_norm = normalize_for_matching(fr_pattern)
-        mo_pat_norm = normalize_for_matching(mo_pattern)
-
-        if fr_pat_norm in fr_norm or mo_pat_norm in mo_norm:
-            return idx, fr_pattern, mo_pattern
-
-    return None, None, None
+    return moore_parts, french_parts
 
 
-def remove_heading(text, heading):
-    """Remove chapter heading from text."""
-    if not heading or not text:
-        return text
-    heading_norm = normalize_for_matching(heading)
-    text_norm = normalize_for_matching(text)
+def normalize_text(text: str) -> str:
+    """Complete text normalization pipeline"""
 
-    if heading_norm in text_norm:
-        idx = text_norm.index(heading_norm)
+    text = unicodedata.normalize("NFC", text)
+    text = text.replace("\u2019", "'")  # Right single quotation mark (')
+    text = text.replace("\u2018", "'")  # Left single quotation mark (')
+    text = text.replace("\u201c", '"')  # Left double quotation mark (")
+    text = text.replace("\u201d", '"')  # Right double quotation mark (")
+    text = text.replace("\u00ab", '"')  # Left-pointing double angle quotation mark («)
+    text = text.replace("\u00bb", '"')
 
-        return text[idx + len(heading) :].strip()
+    text = text = re.sub(r"-\s*\n\s*", "", text)
 
-    return text
+    text = re.sub(r" +", " ", text)
 
+    text = re.sub(r"\n\n+", "\n\n", text)
 
-def create_chapter_5_enumerations():
-    """Create enumeration items for Chapter 5."""
-    items = []
-    for i, (fr1, mo, fr2) in enumerate(CHAPTER_FIVE_ENUM, start=1):
-        fr_complete = normalize(fr1 + " " + fr2)
-        mo_normalized = normalize(mo)
-
-        items.append({"item_id": f"5.{i}", "type": "enumeration", "fr": fr_complete, "mo": mo_normalized})
-    return items
+    return text.strip()
 
 
-def parse_pdf_to_json(pdf_path, out_path):
+def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
     """
-    Parse bilingual PDF with proper handling of text continuation across pages.
+    Group document pages into chapters based on chapter start pages.
+
+    Returns:
+        List of Chapter objects with metadata and page content
     """
-    corpus = []
+    chapters: list[Chapter] = []
+    current_chapter_pages = []
+    current_chapter_num = None
+    current_start_page = None
 
-    with pymupdf.open(pdf_path) as doc:
-        current_chapter_id = None
-        current_chapter_data = None
+    for page_num, page in enumerate(documents, start=1):  # type: ignore
+        if page_num > 47:
+            break
+        x = find_column_separator(page)
+        moore_text, french_text = process_page_blocks(page=page, middle_x=x)
 
-        carry_fr = ""
-        carry_mo = ""
+        french_text = normalize_text("\n".join(french_text))
+        moore_text = normalize_text("\n".join(moore_text))
+        if page_num == 39:
+            moore_marker_pattern = (
+                r"1\.\s+SIDAwã\s+bãag\s+ya\s+boẽ\?\s+La\s+a\s+maanda\s+a\s+wãn\s+n\s+kʋʋd\s+nebã\?"
+            )
+            french_marker_pattern = r"Mais\s+quand\s+le\s+VIH\s+entre\s+dans\s+le\s+corps\s+d'une\s+personne"
 
-        chapter_5_enum_added = False
+            moore_match = re.search(moore_marker_pattern, moore_text)
+            french_match = re.search(french_marker_pattern, moore_text)
 
-        print(f"Processing {len(doc)} pages...\n")
+            if moore_match and french_match:
+                french_part_1 = moore_text[: moore_match.start()].strip()
+                moore_only = moore_text[moore_match.start() : french_match.start()].strip()
+                french_part_2 = moore_text[french_match.start() :].strip()
+                french_text = french_part_1 + "\n\n" + french_part_2 + "\n\n" + french_text
+                moore_text = moore_only = re.sub(
+                    r"Ba\s+yẽ\s+bã'abiire\s+zɩɩm\s+pʋam\.", "", moore_only
+                ).strip()
 
-        for page_num, page in enumerate(doc, start=1):
-            mo_text, fr_text = split_page(page)
-
-            chap_id, fr_heading, mo_heading = detect_chapter(fr_text, mo_text)
-
-            if chap_id is not None:
-                print(f"Page {page_num}: *** CHAPTER {chap_id} DETECTED ***")
-
-                if carry_fr or carry_mo:
-                    if current_chapter_data is not None:
-                        alignment = align_sentences(carry_fr, carry_mo)
-                        if alignment:
-                            current_chapter_data["pages"].append(
-                                {
-                                    "page_num": page_num - 1,
-                                    "alignment": alignment,
-                                    "note": "carried_from_previous",
-                                }
-                            )
-                    carry_fr, carry_mo = "", ""
-
-                if current_chapter_data is not None:
-                    corpus.append(current_chapter_data)
-
-                current_chapter_id = chap_id
-                current_chapter_data = {"chapter_id": chap_id, "pages": []}
-
-                if chap_id == 5 and not chapter_5_enum_added:
-                    current_chapter_data["enumerations"] = create_chapter_5_enumerations()
-                    chapter_5_enum_added = True
-                    print(f"  -> Added {len(CHAPTER_FIVE_ENUM)} enumeration items")
-
-                fr_text = remove_heading(fr_text, fr_heading)
-                mo_text = remove_heading(mo_text, mo_heading)
-
-            if current_chapter_id is None:
-                continue
-
-            fr_text = normalize(fr_text)
-            mo_text = normalize(mo_text)
-
-            if carry_fr:
-                fr_text = carry_fr + " " + fr_text
-                carry_fr = ""
-            if carry_mo:
-                mo_text = carry_mo + " " + mo_text
-                carry_mo = ""
-
-            fr_incomplete = is_incomplete_sentence(fr_text)
-            mo_incomplete = is_incomplete_sentence(mo_text)
-
-            if fr_incomplete or mo_incomplete:
-                print(
-                    f"Page {page_num}: Text continues to next page (FR: {fr_incomplete}, MO: {mo_incomplete})"
+        if page_num in CHAPTER_PAGES.values():
+            if current_chapter_num is not None and current_chapter_pages:
+                title_fr, title_mo = CHAPTER_TITLES[current_chapter_num]
+                chapters.append(
+                    Chapter(
+                        chapter_number=current_chapter_num,
+                        title_french=title_fr,
+                        title_moore=title_mo,
+                        start_page=current_start_page,
+                        pages=current_chapter_pages,
+                    )
                 )
 
-                carry_fr = fr_text
-                carry_mo = mo_text
-                continue
+            current_chapter_num = [k for k, v in CHAPTER_PAGES.items() if v == page_num][0]
+            current_start_page = page_num
+            current_chapter_pages = []
+            chapter_idx = list(CHAPTER_PAGES.values()).index(page_num)
+            regex_fr, regex_mo = CHAPTERS_RE[chapter_idx]
 
-            if fr_text or mo_text:
-                alignment = align_sentences(fr_text, mo_text)
+            french_text = re.sub(regex_fr, "", french_text, count=1).strip()
+            moore_text = re.sub(regex_mo, "", moore_text, count=1).strip()
+            if current_chapter_num == 5:
+                moore_text = re.sub(regex_fr, "", moore_text, count=1).strip()
 
-                if alignment:
-                    current_chapter_data["pages"].append({"page_num": page_num, "alignment": alignment})
-                    print(f"Page {page_num}: Added {len(alignment)} segment(s)")
+        current_chapter_pages.append(
+            ChapterPage(page_number=page_num, french_text=french_text, moore_text=moore_text)
+        )
 
-        if carry_fr or carry_mo:
-            if current_chapter_data is not None:
-                alignment = align_sentences(carry_fr, carry_mo)
-                if alignment:
-                    current_chapter_data["pages"].append(
-                        {"page_num": page_num, "alignment": alignment, "note": "final_carry"}
-                    )
+    if current_chapter_num is not None and current_chapter_pages:
+        title_fr, title_mo = CHAPTER_TITLES[current_chapter_num]
+        chapters.append(
+            Chapter(
+                chapter_number=current_chapter_num,
+                title_french=title_fr,
+                title_moore=title_mo,
+                start_page=current_start_page,  # type: ignore
+                pages=current_chapter_pages,
+            )
+        )
 
-        if current_chapter_data is not None:
-            corpus.append(current_chapter_data)
+    return chapters
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(corpus, f, ensure_ascii=False, indent=2)
 
-    print(f"\n{'=' * 60}")
-    print(f"✓ Parsed {len(corpus)} chapters")
-    print(f"✓ Output: {out_path}")
-    print(f"{'=' * 60}\n")
+def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
+    """
+    Fix sentences that end with hyphen and continue on next page.
+    Removes duplicated text from the next page.
+    """
+    fixed_pages = pages.copy()
 
-    for chapter in corpus:
-        chap_id = chapter["chapter_id"]
-        num_pages = len(chapter.get("pages", []))
-        num_segments = sum(len(p["alignment"]) for p in chapter.get("pages", []))
-        num_enums = len(chapter.get("enumerations", []))
+    for i, page in enumerate(fixed_pages[:-1]):
+        current_text = page.french_text.rstrip()
+        page_number = page.page_number
 
-        print(f"Chapter {chap_id}:")
-        print(f"  - {num_pages} pages")
-        print(f"  - {num_segments} alignment segments")
-        if num_enums > 0:
-            print(f"  - {num_enums} enumeration items")
+        if page_number not in PAGE:
+            continue
+        next_page = fixed_pages[i + 1]
+        next_text = next_page.french_text.lstrip()
+
+        incomplete_text = PAGE[page_number]
+        pattern = PAGE_RE[page_number]
+
+        if not re.search(pattern, current_text):
+            continue
+
+        remainder = remainder = re.sub(rf"\s*{pattern}\s*$", "", current_text)
+
+        merged_french = incomplete_text[:-1] + next_text
+
+        fixed_pages[i] = ChapterPage(
+            page_number=page.page_number,
+            french_text=remainder,
+            moore_text=page.moore_text,
+        )
+
+        fixed_pages[i + 1] = ChapterPage(
+            page_number=next_page.page_number,
+            french_text=merged_french,
+            moore_text=next_page.moore_text,
+        )
+
+    return fixed_pages
+
+
+def parse_pdf_to_json(input_pdf: str, output_path: str):
+    with pymupdf.open(input_pdf) as doc:
+        chapters = group_chapters(doc)
+
+    for chapter in chapters:
+        chapter.pages = fix_hyphenated_sentences(chapter.pages)
+
+    with open(output_path, "wb") as f:
+        f.write(msgspec.json.encode(chapters))
 
 
 if __name__ == "__main__":
