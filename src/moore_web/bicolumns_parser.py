@@ -373,15 +373,23 @@ def main():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
     if not pdf_path.suffix == ".pdf":
         raise ValueError(f"Input file must be a PDF file: {pdf_path}")
-    out_path = args.output_path
+    out_path = Path(args.output_path)
     doc = pymupdf.open(pdf_path)
     parsed = parse_doc(doc)
     print_statistics(parsed)
     doc.close()
-
+    logger.info(f"Writing output to: {args.output}")
     with open(out_path, "w", encoding="utf-8") as f:
-        for p in parsed:
-            f.write(json.dumps(p, ensure_ascii=False) + "\n")
+        if out_path.suffix != ".jsonl":
+            if args.pretty:
+                json.dump(parsed, f, ensure_ascii=False, indent=2)
+            else:
+                json.dump(parsed, f, ensure_ascii=False)
+        else:
+            for p in parsed:
+                f.write(json.dumps(p, ensure_ascii=False) + "\n")
+
+    logger.info("Parsing complete!")
 
 
 if __name__ == "__main__":
