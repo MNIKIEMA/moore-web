@@ -16,7 +16,7 @@ Structure per chapter:
   - Ce que dit la Bible
   - Prier et agir
 """
-
+import unicodedata
 import re
 import json
 import sys
@@ -92,6 +92,13 @@ LISEZ_RE = re.compile(r"^Lisez\s+.+", re.IGNORECASE)
 
 
 def normalize(text: str) -> str:
+    text = unicodedata.normalize("NFC", text)
+    text = text.replace("\u2019", "'")  # Right single quotation mark (')
+    text = text.replace("\u2018", "'")  # Left single quotation mark (')
+    text = text.replace("\u201c", '"')  # Left double quotation mark (")
+    text = text.replace("\u201d", '"')  # Right double quotation mark (")
+    text = text.replace("\u00ab", '"')  # Left-pointing double angle quotation mark («)
+    text = text.replace("\u00bb", '"')
     return re.sub(r"\s+", " ", text).strip()
 
 
