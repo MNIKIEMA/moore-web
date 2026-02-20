@@ -18,6 +18,7 @@ dependencies = [
     "msgspec>=0.20.0",
     "lingtrain-aligner>=1.0.3",
     "sentence-splitter>=1.4",
+    "syntok>=1.4.4",
 ]
 
 [build-system]
