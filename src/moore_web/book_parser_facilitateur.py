@@ -3,9 +3,14 @@ Parser for the French AIDS church manual (pymupdf txt output).
 
 Pipeline:
     raw text
-      → split_into_chapters()     # by "Chapitre N" headings
-          → split_into_sections() # by known section titles
-              → parse_section()   # numbered items, subsections, body
+      → split_into_chapters()           # by "Chapitre N" headings
+          → split_into_sections()       # by known section titles
+              → parse_section()         # numbered items, subsections, body
+
+Alternative flexible pipeline:
+    raw text
+      → split_and_parse_by_sections()   # by custom section regex patterns
+                                        # Returns all text + enums
 
 Structure per chapter:
   - L'histoire de Kadé
@@ -15,7 +20,18 @@ Structure per chapter:
   - Sketch et chant
   - Ce que dit la Bible
   - Prier et agir
+
+Usage:
+    # Using the new flexible function
+    import re
+    section_regexes = [
+        re.compile(r"^Chapitre \\d+", re.IGNORECASE),
+        re.compile(r"^Questions à discuter", re.IGNORECASE),
+    ]
+    sections = split_and_parse_by_sections(text, section_regexes)
+    # Each section now contains both body text and enumerated items
 """
+
 import unicodedata
 import re
 import json
@@ -49,6 +65,7 @@ class Section:
     subsections: list[Subsection] = field(default_factory=list)
     items: list[NumberedItem] = field(default_factory=list)
     body: str = ""
+    raw_text: str = ""
 
 
 @dataclass
@@ -56,6 +73,7 @@ class Chapter:
     number: int
     title: str
     sections: list[Section] = field(default_factory=list)
+    raw_text: str = ""
 
 
 @dataclass
@@ -68,9 +86,8 @@ class Book:
 # Constants & regexes
 # ---------------------------------------------------------------------------
 
-# Order matters: "Sketch et chant" must come before "Sketch"
 SECTION_TITLES = [
-    "L'histoire de Kad",
+    "L'histoire de Kadé",
     "Questions à discuter",
     "Choses à apprendre",
     "Sketch et chant",
@@ -79,7 +96,21 @@ SECTION_TITLES = [
     "Prier et agir",
 ]
 
-CHAPTER_RE = re.compile(r"^chapitre\s+(\d+)\s*[:\-–]?\s*(.+)$", re.IGNORECASE)
+MOORE_SECTIION_TITLES = [
+    "Karem-y kibarã",
+    "Kibarã",
+    "Sõaseg sokdse",
+    "D sẽn segd n zãms bũmb niisi",
+    "Reem",
+    "Reem la yɩɩlle",
+    "Reem la yɩɩla",
+    "Wẽnnaam sebra sẽn yet bũmb ningã",
+    "Pʋʋsg la tʋʋmde",
+    "Pʋʋsog la tʋʋma",
+]
+
+MOORE_SUBSECTION_TITLES = []
+CHAPTER_RE = re.compile(r"^(?:chapitre|sak\s+a)\s+(\d+)(?:\s+soaba)?\s*[:\-–]?\s*(.*)$", re.IGNORECASE)
 
 NUMBERED_ITEM_RE = re.compile(r"^\s*(\d+)\.\s+(.+)")
 
@@ -112,8 +143,9 @@ def is_chapter_heading(line: str) -> Optional[tuple[int, str]]:
 def match_section_title(line: str) -> Optional[str]:
     """Return canonical section title if line matches, else None."""
     norm = normalize(line)
-    for title in SECTION_TITLES:
-        if norm.lower().startswith(title.lower()):
+    match_norm = re.sub(r"^\d+\.?\s+", "", norm)
+    for title in SECTION_TITLES + MOORE_SECTIION_TITLES:
+        if match_norm.lower().startswith(title.lower()):
             return title
     return None
 
@@ -128,65 +160,83 @@ def looks_like_subsection_heading(line: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 — split raw text into chapters
+# Parser functions
 # ---------------------------------------------------------------------------
 
 
-def split_into_chapters(text: str) -> list[tuple[int, str, list[str]]]:
+def split_text_by_regex(text: str, regex: re.Pattern) -> list[tuple[Optional[str], str]]:
     """
-    Returns list of (chapter_number, chapter_title, lines).
-    Lines before the first chapter heading are discarded (front matter).
+    Splits text by a regex that identifies headings.
+    Returns a list of (heading_line, content_text) pairs.
+    Text before the first heading is returned with heading=None.
     """
-    chapters: list[tuple[int, str, list[str]]] = []
-    current: Optional[tuple[int, str, list[str]]] = None
+    parts = []
+    lines = text.splitlines()
 
-    for raw_line in text.splitlines():
-        result = is_chapter_heading(raw_line)
-        if result:
-            if current:
-                chapters.append(current)
-            num, title = result
-            current = (num, title, [])
-        elif current is not None:
-            current[2].append(raw_line)
+    current_heading = None
+    current_lines = []
 
-    if current:
-        chapters.append(current)
+    for line in lines:
+        norm_line = normalize(line)
+        if regex.match(norm_line):
+            if current_heading is not None or current_lines:
+                parts.append((current_heading, "\n".join(current_lines)))
+            current_heading = line
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_heading is not None or current_lines:
+        parts.append((current_heading, "\n".join(current_lines)))
+
+    return parts
+
+
+def split_into_chapters(text: str) -> list[Chapter]:
+    """
+    Returns list of Chapter objects.
+    """
+    chapters: list[Chapter] = []
+    blocks = split_text_by_regex(text, CHAPTER_RE)
+
+    for heading, content in blocks:
+        if heading is None:
+            continue
+
+        res = is_chapter_heading(heading)
+        if res:
+            num, title = res
+            chapters.append(
+                Chapter(number=num, title=title, raw_text=heading + ("\n" + content if content else ""))
+            )
 
     return chapters
 
 
-# ---------------------------------------------------------------------------
-# Stage 2 — split chapter lines into sections
-# ---------------------------------------------------------------------------
-
-
-def split_into_sections(lines: list[str]) -> list[tuple[str, list[str]]]:
+def split_into_sections(text: str) -> list[Section]:
     """
-    Returns list of (section_title, lines) for a single chapter's lines.
-    Lines before the first known section heading are discarded.
+    Returns list of Section objects for single chapter's raw text.
     """
-    sections: list[tuple[str, list[str]]] = []
-    current: Optional[tuple[str, list[str]]] = None
+    sections: list[Section] = []
 
-    for line in lines:
-        title = match_section_title(line)
-        if title:
-            if current:
-                sections.append(current)
-            current = (title, [])
-        elif current is not None:
-            current[1].append(line)
+    all_titles = SECTION_TITLES + MOORE_SECTIION_TITLES
+    escaped_titles = [re.escape(t) for t in all_titles]
 
-    if current:
-        sections.append(current)
+    section_regex = re.compile(r"^(?:\d+\.?\s+)?(" + "|".join(escaped_titles) + r").*", re.IGNORECASE)
+
+    blocks = split_text_by_regex(text, section_regex)
+
+    for heading, content in blocks:
+        if heading is None:
+            if content.strip():
+                sections.append(Section(title="Intro", raw_text=content))
+            continue
+
+        title = match_section_title(heading) or heading
+
+        sections.append(Section(title=title, raw_text=heading + ("\n" + content if content else "")))
 
     return sections
-
-
-# ---------------------------------------------------------------------------
-# Stage 3 — parse individual sections
-# ---------------------------------------------------------------------------
 
 
 def collect_numbered_items(lines: list[str]) -> list[NumberedItem]:
@@ -210,9 +260,7 @@ def collect_numbered_items(lines: list[str]) -> list[NumberedItem]:
             current_num = int(m.group(1))
             current_parts = [m.group(2).strip()]
         elif current_num is not None and line:
-            # continuation line of the current item
             current_parts.append(line)
-        # blank lines between items — just skip
 
     flush()
     return items
@@ -221,6 +269,12 @@ def collect_numbered_items(lines: list[str]) -> list[NumberedItem]:
 def parse_questions_section(lines: list[str]) -> Section:
     sec = Section(title="Questions à discuter")
     sec.items = collect_numbered_items(lines)
+
+    body_text = normalize(
+        " ".join(normalize(line) for line in lines if normalize(line) and not NUMBERED_ITEM_RE.match(line))
+    )
+    if body_text:
+        sec.body = body_text
     return sec
 
 
@@ -231,7 +285,6 @@ def parse_choses_section(lines: list[str]) -> Section:
     """
     sec = Section(title="Choses à apprendre")
 
-    # Split lines into subsection blocks by heading detection
     blocks: list[tuple[str, list[str]]] = []
     current_title: Optional[str] = None
     current_block: list[str] = []
@@ -252,7 +305,6 @@ def parse_choses_section(lines: list[str]) -> Section:
             if current_title is not None:
                 current_block.append(raw)
             else:
-                # text before first heading — attach to section body
                 sec.body += (" " + line) if sec.body else line
 
     if current_title is not None:
@@ -290,7 +342,6 @@ def parse_bible_section(lines: list[str]) -> Section:
             current_block = []
         elif current_ref is not None:
             current_block.append(raw)
-        # lines before first Lisez are discarded
 
     if current_ref is not None:
         blocks.append((current_ref, current_block))
@@ -313,8 +364,9 @@ def parse_generic_section(title: str, lines: list[str]) -> Section:
     items = collect_numbered_items(lines)
     if items:
         sec.items = items
-    else:
-        sec.body = normalize(" ".join(normalize(line) for line in lines if normalize(line)))
+    body = normalize(" ".join(normalize(line) for line in lines if normalize(line)))
+    if body:
+        sec.body = body
     return sec
 
 
@@ -332,20 +384,90 @@ def parse_section(title: str, lines: list[str]) -> Section:
     return parse_generic_section(title, lines)
 
 
-# ---------------------------------------------------------------------------
-# Top-level parse
-# ---------------------------------------------------------------------------
+def split_and_parse_by_sections(
+    text: str, section_regexes: list[re.Pattern], section_titles: list[str] = None
+) -> list[Section]:
+    """
+    Splits text by provided section regex patterns and returns all text content + any enums.
+
+    Args:
+        text: Raw text to parse
+        section_regexes: List of compiled regex patterns to identify section headers
+        section_titles: Optional list of canonical section titles (must match length of regexes)
+
+    Returns:
+        List of Section objects with both body text and enumerated items preserved
+    """
+    if section_titles is None:
+        section_titles = [None] * len(section_regexes)
+
+    if len(section_regexes) != len(section_titles):
+        raise ValueError("section_regexes and section_titles must have the same length")
+
+    sections: list[Section] = []
+    lines = text.splitlines()
+
+    current_title: Optional[str] = None
+    current_heading: Optional[str] = None
+    current_lines: list[str] = []
+
+    for line in lines:
+        norm_line = normalize(line)
+
+        matched = False
+        for regex, canonical_title in zip(section_regexes, section_titles):
+            if regex.match(norm_line):
+                if current_heading is not None or current_lines:
+                    title = current_title or "Intro"
+                    sec = Section(title=title, raw_text="\n".join(current_lines))
+
+                    sec.items = collect_numbered_items(current_lines)
+
+                    body_text = normalize(
+                        " ".join(
+                            normalize(ln)
+                            for ln in current_lines
+                            if normalize(ln) and not NUMBERED_ITEM_RE.match(ln)
+                        )
+                    )
+                    if body_text:
+                        sec.body = body_text
+
+                    sections.append(sec)
+
+                current_heading = line
+                current_title = canonical_title or match_section_title(line) or line
+                current_lines = []
+                matched = True
+                break
+
+        if not matched:
+            current_lines.append(line)
+
+    if current_heading is not None or current_lines:
+        title = current_title or "Intro"
+        sec = Section(title=title, raw_text="\n".join(current_lines))
+        sec.items = collect_numbered_items(current_lines)
+        body_text = normalize(
+            " ".join(
+                normalize(ln) for ln in current_lines if normalize(ln) and not NUMBERED_ITEM_RE.match(ln)
+            )
+        )
+        if body_text:
+            sec.body = body_text
+        sections.append(sec)
+
+    return sections
 
 
 def parse(text: str) -> Book:
     book = Book()
 
-    for num, title, chapter_lines in split_into_chapters(text):
-        chapter = Chapter(number=num, title=title)
-
-        for sec_title, sec_lines in split_into_sections(chapter_lines):
-            section = parse_section(sec_title, sec_lines)
-            chapter.sections.append(section)
+    for chapter in split_into_chapters(text):
+        for section in split_into_sections(chapter.raw_text):
+            parsed_section = parse_section(section.title, section.raw_text.splitlines())
+            parsed_section.raw_text = section.raw_text
+            chapter.sections.append(parsed_section)
 
         book.chapters.append(chapter)
 
@@ -355,11 +477,6 @@ def parse(text: str) -> Book:
 def parse_file(txt_path: str) -> Book:
     text = Path(txt_path).read_text(encoding="utf-8")
     return parse(text)
-
-
-# ---------------------------------------------------------------------------
-# Serialisation
-# ---------------------------------------------------------------------------
 
 
 def book_to_dict(book: Book) -> dict:
@@ -382,17 +499,46 @@ def book_to_dict(book: Book) -> dict:
             d["items"] = [item_d(i) for i in s.items]
         if s.body:
             d["body"] = s.body
+        if s.raw_text:
+            d["raw_text"] = s.raw_text
         return d
 
     def chap_d(c: Chapter):
-        return {"number": c.number, "title": c.title, "sections": [sec_d(s) for s in c.sections]}
+        return {
+            "number": c.number,
+            "title": c.title,
+            "sections": [sec_d(s) for s in c.sections],
+            "raw_text": c.raw_text,
+        }
 
     return {"title": book.title, "chapters": [chap_d(c) for c in book.chapters]}
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
+def example_split_and_parse():
+    """
+    Example: using split_and_parse_by_sections with custom section regex patterns.
+    This function demonstrates how to split text and preserve all text + enums.
+    """
+    french_section_patterns = [
+        re.compile(r"^L'histoire de Kadé", re.IGNORECASE),
+        re.compile(r"^Questions à discuter", re.IGNORECASE),
+        re.compile(r"^Choses à apprendre", re.IGNORECASE),
+    ]
+
+    section_titles = [
+        "L'histoire de Kadé",
+        "Questions à discuter",
+        "Choses à apprendre",
+    ]
+    text = "Your parsed text here..."
+
+    sections = split_and_parse_by_sections(text, french_section_patterns, section_titles)
+
+    for section in sections:
+        print(f"Section: {section.title}")
+        print(f"  Items: {len(section.items)}")
+        print(f"  Body text: {section.body[:100]}..." if section.body else "  Body text: (empty)")
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
