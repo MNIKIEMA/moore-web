@@ -53,9 +53,15 @@ class NumberedItem:
 
 
 @dataclass
+class BulletItem:
+    text: str
+
+
+@dataclass
 class Subsection:
     title: str
     items: list[NumberedItem] = field(default_factory=list)
+    bullet_items: list[BulletItem] = field(default_factory=list)
     body: str = ""
 
 
@@ -64,6 +70,7 @@ class Section:
     title: str
     subsections: list[Subsection] = field(default_factory=list)
     items: list[NumberedItem] = field(default_factory=list)
+    bullet_items: list[BulletItem] = field(default_factory=list)
     body: str = ""
     raw_text: str = ""
 
@@ -113,6 +120,7 @@ MOORE_SUBSECTION_TITLES = []
 CHAPTER_RE = re.compile(r"^(?:chapitre|sak\s+a)\s+(\d+)(?:\s+soaba)?\s*[:\-–]?\s*(.*)$", re.IGNORECASE)
 
 NUMBERED_ITEM_RE = re.compile(r"^\s*(\d+)\.\s+(.+)")
+BULLET_ITEM_RE = re.compile(r"^\s*•\s+(.+)")
 
 LISEZ_RE = re.compile(r"^Lisez\s+.+", re.IGNORECASE)
 
@@ -266,12 +274,58 @@ def collect_numbered_items(lines: list[str]) -> list[NumberedItem]:
     return items
 
 
+def collect_bullet_items(lines: list[str]) -> list[BulletItem]:
+    """
+    Collect bullet items (possibly multi-line) from a flat list of lines.
+    Handles bullets that may be on their own line followed by text on next line(s).
+    Lines that don't belong to any item are ignored.
+    """
+    items: list[BulletItem] = []
+    current_parts: list[str] = []
+    in_bullet_item = False
+
+    def flush():
+        if in_bullet_item and current_parts:
+            items.append(BulletItem(normalize(" ".join(current_parts))))
+
+    for raw in lines:
+        line = normalize(raw)
+        if re.match(r"^\s*•\s*$", raw):
+            flush()
+            in_bullet_item = True
+            current_parts = []
+        elif re.match(r"^\s*•\s+(.+)", raw):
+            flush()
+            in_bullet_item = True
+            m = re.match(r"^\s*•\s+(.+)", raw)
+            current_parts = [m.group(1).strip()]
+        elif in_bullet_item and line:
+            current_parts.append(line)
+
+    flush()
+    return items
+
+
+def collect_items(lines: list[str]) -> tuple[list[NumberedItem], list[BulletItem]]:
+    """
+    Collect both numbered and bullet items from lines.
+    Returns (numbered_items, bullet_items).
+    """
+    return collect_numbered_items(lines), collect_bullet_items(lines)
+
+
 def parse_questions_section(lines: list[str]) -> Section:
     sec = Section(title="Questions à discuter")
-    sec.items = collect_numbered_items(lines)
+    numbered_items, bullet_items = collect_items(lines)
+    sec.items = numbered_items
+    sec.bullet_items = bullet_items
 
     body_text = normalize(
-        " ".join(normalize(line) for line in lines if normalize(line) and not NUMBERED_ITEM_RE.match(line))
+        " ".join(
+            normalize(line)
+            for line in lines
+            if normalize(line) and not NUMBERED_ITEM_RE.match(line) and not BULLET_ITEM_RE.match(line)
+        )
     )
     if body_text:
         sec.body = body_text
@@ -281,7 +335,7 @@ def parse_questions_section(lines: list[str]) -> Section:
 def parse_choses_section(lines: list[str]) -> Section:
     """
     Choses à apprendre contains subsection headings (questions ending in '?'
-    or descriptive headings) each followed by body text or numbered items.
+    or descriptive headings) each followed by body text, numbered items, or bullet items.
     """
     sec = Section(title="Choses à apprendre")
 
@@ -312,10 +366,12 @@ def parse_choses_section(lines: list[str]) -> Section:
 
     for title, block_lines in blocks:
         sub = Subsection(title=title)
-        items = collect_numbered_items(block_lines)
-        if items:
-            sub.items = items
-        else:
+        numbered_items, bullet_items = collect_items(block_lines)
+        if numbered_items:
+            sub.items = numbered_items
+        if bullet_items:
+            sub.bullet_items = bullet_items
+        if not numbered_items and not bullet_items:
             sub.body = normalize(" ".join(normalize(line) for line in block_lines if normalize(line)))
         sec.subsections.append(sub)
 
@@ -325,7 +381,7 @@ def parse_choses_section(lines: list[str]) -> Section:
 def parse_bible_section(lines: list[str]) -> Section:
     """
     Ce que dit la Bible contains subsections headed by 'Lisez X.Y-Z'
-    each followed by numbered discussion questions.
+    each followed by numbered or bullet discussion items.
     """
     sec = Section(title="Ce que dit la Bible")
 
@@ -348,10 +404,12 @@ def parse_bible_section(lines: list[str]) -> Section:
 
     for ref, block_lines in blocks:
         sub = Subsection(title=ref)
-        items = collect_numbered_items(block_lines)
-        if items:
-            sub.items = items
-        else:
+        numbered_items, bullet_items = collect_items(block_lines)
+        if numbered_items:
+            sub.items = numbered_items
+        if bullet_items:
+            sub.bullet_items = bullet_items
+        if not numbered_items and not bullet_items:
             sub.body = normalize(" ".join(normalize(line) for line in block_lines if normalize(line)))
         sec.subsections.append(sub)
 
@@ -359,12 +417,18 @@ def parse_bible_section(lines: list[str]) -> Section:
 
 
 def parse_generic_section(title: str, lines: list[str]) -> Section:
-    """Fallback: collect body text and any numbered items."""
+    """Fallback: collect body text, numbered items, and bullet items."""
     sec = Section(title=title)
-    items = collect_numbered_items(lines)
-    if items:
-        sec.items = items
-    body = normalize(" ".join(normalize(line) for line in lines if normalize(line)))
+    numbered_items, bullet_items = collect_items(lines)
+    if numbered_items:
+        sec.items = numbered_items
+    if bullet_items:
+        sec.bullet_items = bullet_items
+    
+    body = normalize(" ".join(
+        normalize(line) for line in lines 
+        if normalize(line) and not NUMBERED_ITEM_RE.match(line) and not BULLET_ITEM_RE.match(line)
+    ))
     if body:
         sec.body = body
     return sec
@@ -421,13 +485,15 @@ def split_and_parse_by_sections(
                     title = current_title or "Intro"
                     sec = Section(title=title, raw_text="\n".join(current_lines))
 
-                    sec.items = collect_numbered_items(current_lines)
+                    numbered_items, bullet_items = collect_items(current_lines)
+                    sec.items = numbered_items
+                    sec.bullet_items = bullet_items
 
                     body_text = normalize(
                         " ".join(
                             normalize(ln)
                             for ln in current_lines
-                            if normalize(ln) and not NUMBERED_ITEM_RE.match(ln)
+                            if normalize(ln) and not NUMBERED_ITEM_RE.match(ln) and not BULLET_ITEM_RE.match(ln)
                         )
                     )
                     if body_text:
@@ -447,10 +513,14 @@ def split_and_parse_by_sections(
     if current_heading is not None or current_lines:
         title = current_title or "Intro"
         sec = Section(title=title, raw_text="\n".join(current_lines))
-        sec.items = collect_numbered_items(current_lines)
+        numbered_items, bullet_items = collect_items(current_lines)
+        sec.items = numbered_items
+        sec.bullet_items = bullet_items
+        
         body_text = normalize(
             " ".join(
-                normalize(ln) for ln in current_lines if normalize(ln) and not NUMBERED_ITEM_RE.match(ln)
+                normalize(ln) for ln in current_lines 
+                if normalize(ln) and not NUMBERED_ITEM_RE.match(ln) and not BULLET_ITEM_RE.match(ln)
             )
         )
         if body_text:
@@ -483,10 +553,15 @@ def book_to_dict(book: Book) -> dict:
     def item_d(i: NumberedItem):
         return {"number": i.number, "text": i.text}
 
+    def bullet_item_d(b: BulletItem):
+        return {"text": b.text}
+
     def sub_d(s: Subsection):
         d: dict = {"title": s.title}
         if s.items:
             d["items"] = [item_d(i) for i in s.items]
+        if s.bullet_items:
+            d["bullet_items"] = [bullet_item_d(b) for b in s.bullet_items]
         if s.body:
             d["body"] = s.body
         return d
@@ -497,6 +572,8 @@ def book_to_dict(book: Book) -> dict:
             d["subsections"] = [sub_d(sub) for sub in s.subsections]
         if s.items:
             d["items"] = [item_d(i) for i in s.items]
+        if s.bullet_items:
+            d["bullet_items"] = [bullet_item_d(b) for b in s.bullet_items]
         if s.body:
             d["body"] = s.body
         if s.raw_text:
