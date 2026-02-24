@@ -36,6 +36,7 @@ import unicodedata
 import re
 import json
 import sys
+import argparse
 from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
@@ -424,11 +425,14 @@ def parse_generic_section(title: str, lines: list[str]) -> Section:
         sec.items = numbered_items
     if bullet_items:
         sec.bullet_items = bullet_items
-    
-    body = normalize(" ".join(
-        normalize(line) for line in lines 
-        if normalize(line) and not NUMBERED_ITEM_RE.match(line) and not BULLET_ITEM_RE.match(line)
-    ))
+
+    body = normalize(
+        " ".join(
+            normalize(line)
+            for line in lines
+            if normalize(line) and not NUMBERED_ITEM_RE.match(line) and not BULLET_ITEM_RE.match(line)
+        )
+    )
     if body:
         sec.body = body
     return sec
@@ -493,7 +497,9 @@ def split_and_parse_by_sections(
                         " ".join(
                             normalize(ln)
                             for ln in current_lines
-                            if normalize(ln) and not NUMBERED_ITEM_RE.match(ln) and not BULLET_ITEM_RE.match(ln)
+                            if normalize(ln)
+                            and not NUMBERED_ITEM_RE.match(ln)
+                            and not BULLET_ITEM_RE.match(ln)
                         )
                     )
                     if body_text:
@@ -516,10 +522,11 @@ def split_and_parse_by_sections(
         numbered_items, bullet_items = collect_items(current_lines)
         sec.items = numbered_items
         sec.bullet_items = bullet_items
-        
+
         body_text = normalize(
             " ".join(
-                normalize(ln) for ln in current_lines 
+                normalize(ln)
+                for ln in current_lines
                 if normalize(ln) and not NUMBERED_ITEM_RE.match(ln) and not BULLET_ITEM_RE.match(ln)
             )
         )
@@ -617,22 +624,66 @@ def example_split_and_parse():
         print(f"  Body text: {section.body[:100]}..." if section.body else "  Body text: (empty)")
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python parser.py <extracted.txt> [output.json]")
+def main():
+    """Main entry point for the book parser."""
+    parser = argparse.ArgumentParser(
+        description="Parse educational manual from extracted text and output JSON",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s kadé_fr.txt                              # Parse and save to output.json
+  %(prog)s kadé_mos.txt parser_output.json          # Parse and save to custom file
+        """,
+    )
+
+    parser.add_argument(
+        "--input_file",
+        "-i",
+        type=str,
+        help="Path to the extracted text file to parse",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="output.json",
+        help="Output JSON file path (default: %(default)s)",
+    )
+
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output with chapter and section details",
+    )
+
+    args = parser.parse_args()
+
+    input_path = Path(args.input_file)
+    if not input_path.is_file():
+        print(f"Error: Input file '{args.input_file}' not found", file=sys.stderr)
         sys.exit(1)
 
-    txt_path = sys.argv[1]
-    out_path = sys.argv[2] if len(sys.argv) > 2 else "output.json"
-
-    book = parse_file(txt_path)
+    book = parse_file(str(input_path))
     result = book_to_dict(book)
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+    output_path = Path(args.output)
+    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"Parsed {len(book.chapters)} chapters → {out_path}")
-    for ch in book.chapters:
-        print(f"\n  Chapter {ch.number}: {ch.title}")
-        for sec in ch.sections:
-            print(f"    [{sec.title}]  subsections={len(sec.subsections)}  items={len(sec.items)}")
+    print(f"Parsed {len(book.chapters)} chapters → {args.output}")
+
+    if args.verbose:
+        for ch in book.chapters:
+            print(f"\n  Chapter {ch.number}: {ch.title}")
+            for sec in ch.sections:
+                print(
+                    f"    [{sec.title}]  "
+                    f"subsections={len(sec.subsections)}  "
+                    f"items={len(sec.items)}  "
+                    f"bullet_items={len(sec.bullet_items)}"
+                )
+
+
+if __name__ == "__main__":
+    main()
