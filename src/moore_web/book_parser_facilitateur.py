@@ -453,7 +453,7 @@ def parse_section(title: str, lines: list[str]) -> Section:
 
 
 def split_and_parse_by_sections(
-    text: str, section_regexes: list[re.Pattern], section_titles: list[str] = None
+    text: str, section_regexes: list[re.Pattern], section_titles: list[str] | None = None
 ) -> list[Section]:
     """
     Splits text by provided section regex patterns and returns all text content + any enums.
