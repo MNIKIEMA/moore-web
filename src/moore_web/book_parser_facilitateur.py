@@ -620,66 +620,113 @@ def example_split_and_parse():
         print(f"  Body text: {section.body[:100]}..." if section.body else "  Body text: (empty)")
 
 
+def clean(s: str) -> str:
+    s = re.sub(r"\n+", "\n", s)
+    s = re.sub(r"[ \t]+", " ", s)
+    return s.strip()
+
+
+def flatten_content(
+    items: list[NumberedItem],
+    bullet_items: list[BulletItem],
+    body: str,
+) -> list[str]:
+    """
+    Flattens numbered items, bullet items, and body text into a single list of strings.
+    Numbered items are prefixed with their number, body is split into sentences.
+    """
+    result: list[str] = []
+
+    if body:
+        body = clean(body)
+        result.append(body)
+
+    for item in items:
+        text = clean(item.text)
+        result.append(text)
+
+    for bullet in bullet_items:
+        result.append(clean(bullet.text))
+
+    return result
+
+
+def flatten_book_to_list(book: Book) -> list[str]:
+    result: list[str] = []
+
+    for chapter in book.chapters:
+        for section in chapter.sections:
+            result.extend(flatten_section_content(section))
+            for sub in section.subsections:
+                result.extend(flatten_section_content(sub))
+
+    return result
+
+
+def flatten_section_content(sec: Section | Subsection) -> list[str]:
+    """Flatten a Section or Subsection's body, items, and bullet_items into a list of strings."""
+    return flatten_content(sec.items, sec.bullet_items, sec.body)
+
+
+def parse_book_from_json(json_path: str) -> Book:
+    json_data = Path(json_path).read_text(encoding="utf-8")
+    book = msgspec.json.decode(json_data, type=Book)
+    return book
+
+
 def main():
-    """Main entry point for the book parser."""
     parser = argparse.ArgumentParser(
-        description="Parse educational manual from extracted text and output JSON",
+        description="Parse and flatten educational manuals.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s kadé_fr.txt                              # Parse and save to output.json
-  %(prog)s kadé_mos.txt parser_output.json          # Parse and save to custom file
-        """,
     )
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    parser.add_argument(
-        "--input_file",
-        "-i",
-        type=str,
-        help="Path to the extracted text file to parse",
+    parse_parser = subparsers.add_parser("parse", help="Parse a text file into a structured JSON book.")
+    parse_parser.add_argument("--input", "-i", required=True, help="Path to the extracted text file.")
+    parse_parser.add_argument(
+        "--output", "-o", default="output.json", help="Output JSON file path (default: %(default)s)."
     )
+    parse_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output.")
 
-    parser.add_argument(
-        "-o",
-        "--output",
-        type=str,
-        default="output.json",
-        help="Output JSON file path (default: %(default)s)",
-    )
-
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output with chapter and section details",
-    )
+    flatten_parser = subparsers.add_parser("flatten", help="Flatten a book JSON into a list of strings.")
+    flatten_parser.add_argument("--input", "-i", required=True, help="Path to the input book JSON file.")
+    flatten_parser.add_argument("--output", "-o", required=True, help="Path to the output text file.")
 
     args = parser.parse_args()
 
-    input_path = Path(args.input_file)
-    if not input_path.is_file():
-        print(f"Error: Input file '{args.input_file}' not found", file=sys.stderr)
-        sys.exit(1)
+    if args.command == "parse":
+        input_path = Path(args.input)
+        if not input_path.is_file():
+            print(f"Error: Input file '{args.input}' not found", file=sys.stderr)
+            sys.exit(1)
 
-    book = parse_file(str(input_path))
+        book = parse_file(str(input_path))
 
-    output_path = Path(args.output)
-    output_path.write_text(
-        json.dumps(msgspec.structs.asdict(book), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+        output_path = Path(args.output)
+        output_path.write_text(
+            json.dumps(msgspec.structs.asdict(book), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"Parsed {len(book.chapters)} chapters → {args.output}")
 
-    print(f"Parsed {len(book.chapters)} chapters → {args.output}")
+        if args.verbose:
+            for ch in book.chapters:
+                print(f"\n  Chapter {ch.number}: {ch.title}")
+                for sec in ch.sections:
+                    print(
+                        f"    [{sec.title}]  "
+                        f"subsections={len(sec.subsections)}  "
+                        f"items={len(sec.items)}  "
+                        f"bullet_items={len(sec.bullet_items)}"
+                    )
 
-    if args.verbose:
-        for ch in book.chapters:
-            print(f"\n  Chapter {ch.number}: {ch.title}")
-            for sec in ch.sections:
-                print(
-                    f"    [{sec.title}]  "
-                    f"subsections={len(sec.subsections)}  "
-                    f"items={len(sec.items)}  "
-                    f"bullet_items={len(sec.bullet_items)}"
-                )
+    elif args.command == "flatten":
+        book = parse_book_from_json(args.input)
+        flattened = flatten_book_to_list(book)
+
+        output_path = Path(args.output)
+        output_path.write_text("\n".join(flattened), encoding="utf-8")
+        print(f"Flattened {len(flattened)} items → {args.output}")
 
 
 if __name__ == "__main__":
