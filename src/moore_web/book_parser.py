@@ -287,15 +287,17 @@ def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
     return fixed_pages
 
 
-def parse_pdf_to_json(input_pdf: str, output_path: str):
+def parse_pdf_to_json(input_pdf: str, output_path: str | None = None) -> list[Chapter]:
     with pymupdf.open(input_pdf) as doc:
         chapters = group_chapters(doc)
 
     for chapter in chapters:
         chapter.pages = fix_hyphenated_sentences(chapter.pages)
 
-    with open(output_path, "wb") as f:
-        f.write(msgspec.json.encode(chapters))
+    if output_path:
+        with open(output_path, "wb") as f:
+            f.write(msgspec.json.encode(chapters))
+    return chapters
 
 
 if __name__ == "__main__":
