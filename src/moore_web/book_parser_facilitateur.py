@@ -32,12 +32,14 @@ Usage:
     # Each section now contains both body text and enumerated items
 """
 
+import msgspec
+
 import unicodedata
 import re
 import json
 import sys
 import argparse
-from dataclasses import dataclass, field
+from msgspec import field, Struct
 from typing import Optional
 from pathlib import Path
 
@@ -47,27 +49,23 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class NumberedItem:
+class NumberedItem(Struct):
     number: int
     text: str
 
 
-@dataclass
-class BulletItem:
+class BulletItem(Struct):
     text: str
 
 
-@dataclass
-class Subsection:
+class Subsection(Struct):
     title: str
     items: list[NumberedItem] = field(default_factory=list)
     bullet_items: list[BulletItem] = field(default_factory=list)
     body: str = ""
 
 
-@dataclass
-class Section:
+class Section(Struct):
     title: str
     subsections: list[Subsection] = field(default_factory=list)
     items: list[NumberedItem] = field(default_factory=list)
@@ -76,16 +74,14 @@ class Section:
     raw_text: str = ""
 
 
-@dataclass
-class Chapter:
+class Chapter(Struct):
     number: int
     title: str
     sections: list[Section] = field(default_factory=list)
     raw_text: str = ""
 
 
-@dataclass
-class Book:
+class Book(Struct):
     title: str = ""
     chapters: list[Chapter] = field(default_factory=list)
 
@@ -666,10 +662,11 @@ Examples:
         sys.exit(1)
 
     book = parse_file(str(input_path))
-    result = book_to_dict(book)
 
     output_path = Path(args.output)
-    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(msgspec.structs.asdict(book), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     print(f"Parsed {len(book.chapters)} chapters → {args.output}")
 
