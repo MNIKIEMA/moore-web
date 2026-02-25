@@ -4,7 +4,11 @@ from argparse import ArgumentParser
 from pathlib import Path
 import re
 import msgspec
+from sacremoses import MosesTokenizer, MosesDetokenizer
 
+
+mt = MosesTokenizer(lang="fr")
+md = MosesDetokenizer(lang="fr")
 
 def clean(s: str) -> str:
     s = re.sub(r"\n+", " ", s)
@@ -27,7 +31,6 @@ def flatten_content(
             enums_fr.append(clean(item.french_text))
         if item.moore_text:
             enums_mo.append(clean(item.moore_text))
-    print(enums_fr)
     return enums_fr, enums_mo
 
 
@@ -42,6 +45,8 @@ def flatten_book_to_list(chapters: list[Chapter], enum_start_page: int = 39) -> 
             french = page.french_text
             mos = page.moore_text
             if french:
+                french_tokens = mt.tokenize(french)
+                french = md.detokenize(french_tokens)
                 result_fr.append(clean(french))
             if mos:
                 result_mo.append(clean(mos))
