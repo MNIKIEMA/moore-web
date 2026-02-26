@@ -10,6 +10,7 @@ from sacremoses import MosesTokenizer, MosesDetokenizer
 mt = MosesTokenizer(lang="fr")
 md = MosesDetokenizer(lang="fr")
 
+
 def clean(s: str) -> str:
     s = re.sub(r"\n+", " ", s)
     s = re.sub(r"[ \t]+", " ", s)

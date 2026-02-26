@@ -181,7 +181,7 @@ def normalize_fr_text(text: str) -> str:
     text = re.sub(rf"(\w)-\s*\n\s*({FRENCH_CLITICS})\b", r"\1-\2", text)
     text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)
     text = re.sub(r" +", " ", text)
-    text = re.sub(r'\s*([!?:;])', r' \1', text)
+    text = re.sub(r"\s*([!?:;])", r" \1", text)
 
     text = re.sub(r"\n\n+", "\n\n", text)
 
@@ -329,12 +329,11 @@ if __name__ == "__main__":
 
     chapters = parse_pdf_to_json(input_pdf, out_path)
     chapter_lines = []
-    for chapter in  chapters:
+    for chapter in chapters:
         for page in chapter.pages:
             text = page.french_text.replace("\n", "").strip()
             if text:
                 chapter_lines.append(text)
-    
+
     with open("french_lines.txt", "w") as f:
         f.write("\n".join(chapter_lines))
-
