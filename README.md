@@ -19,7 +19,6 @@ pip install uv
 
 On Linux run the following command
 
-
 ```bash
 apt install just
 ```
@@ -38,10 +37,9 @@ Read more on [Just](https://github.com/casey/just)
 just install
 ```
 
-
 ## TODO List
 
 - [ ] Add Dioula data and clean it
 - [ ] Add Fulfulde data and clean it
-- [ ]  Add Gulimancema data and clean it
-- [ ]  Add Bissa data and clean it
+- [ ] Add Gulimancema data and clean it
+- [ ] Add Bissa data and clean it
