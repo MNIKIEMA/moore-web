@@ -313,9 +313,7 @@ def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
     return fixed_pages
 
 
-def parse_pdf_to_json(
-    input_pdf: str, output_path: str | None = None
-) -> list[Chapter]:
+def parse_pdf_to_json(input_pdf: str, output_path: str | None = None) -> list[Chapter]:
     with pymupdf.open(input_pdf) as doc:
         chapters = group_chapters(doc)
 

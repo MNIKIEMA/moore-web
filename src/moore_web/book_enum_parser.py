@@ -66,10 +66,7 @@ def compile_robust_enum_regex(pattern: str) -> re.Pattern:
 
 def compile_enum_patterns(enum_raw: list[tuple[str, str]]) -> list[tuple[re.Pattern, re.Pattern]]:
     """Compile robust regex patterns for each enum definition."""
-    return [
-        (compile_robust_enum_regex(fr), compile_robust_enum_regex(mo))
-        for fr, mo in enum_raw
-    ]
+    return [(compile_robust_enum_regex(fr), compile_robust_enum_regex(mo)) for fr, mo in enum_raw]
 
 
 def extract_enum_number(text: str) -> Optional[int]:
@@ -111,11 +108,19 @@ def group_chapter5_enums(
     split_mo = tok_regex_mo.split(all_moore_text)
 
     fr_pairs = [
-        (extract_enum_number(split_fr[i].strip()), split_fr[i].strip(), split_fr[i + 1].strip() if i + 1 < len(split_fr) else "")
+        (
+            extract_enum_number(split_fr[i].strip()),
+            split_fr[i].strip(),
+            split_fr[i + 1].strip() if i + 1 < len(split_fr) else "",
+        )
         for i in range(1, len(split_fr), 2)
     ]
     mo_pairs = [
-        (extract_enum_number(split_mo[i].strip()), split_mo[i].strip(), split_mo[i + 1].strip() if i + 1 < len(split_mo) else "")
+        (
+            extract_enum_number(split_mo[i].strip()),
+            split_mo[i].strip(),
+            split_mo[i + 1].strip() if i + 1 < len(split_mo) else "",
+        )
         for i in range(1, len(split_mo), 2)
     ]
     mo_by_num = {num: (title, text) for num, title, text in mo_pairs if num is not None}
