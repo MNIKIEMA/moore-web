@@ -4,6 +4,8 @@ import pymupdf
 
 import msgspec
 
+from moore_web.book_enum_parser import group_chapter5_enums, EnumItem, ENUM_RAW
+
 
 class ChapterPage(msgspec.Struct):
     """Represents a single page within a chapter"""
@@ -21,6 +23,7 @@ class Chapter(msgspec.Struct):
     title_moore: str
     start_page: int
     pages: list[ChapterPage]
+    enums: list[EnumItem] = msgspec.field(default_factory=list)
 
     @property
     def end_page(self) -> int:
@@ -310,16 +313,23 @@ def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
     return fixed_pages
 
 
-def parse_pdf_to_json(input_pdf: str, output_path: str | None = None) -> list[Chapter]:
+def parse_pdf_to_json(
+    input_pdf: str, output_path: str | None = None
+) -> list[Chapter]:
     with pymupdf.open(input_pdf) as doc:
         chapters = group_chapters(doc)
 
     for chapter in chapters:
         chapter.pages = fix_hyphenated_sentences(chapter.pages)
 
+    chapter5 = next((ch for ch in chapters if ch.chapter_number == 5), None)
+    if chapter5:
+        chapter5.enums = group_chapter5_enums(chapter5.pages, ENUM_RAW, enum_start_page=39)
+
     if output_path:
         with open(output_path, "wb") as f:
             f.write(msgspec.json.encode(chapters))
+
     return chapters
 
 
@@ -328,6 +338,10 @@ if __name__ == "__main__":
     out_path = "aligned_parsed.json"
 
     chapters = parse_pdf_to_json(input_pdf, out_path)
+    chapter5 = next((ch for ch in chapters if ch.chapter_number == 5), None)
+    enum_count = len(chapter5.enums) if chapter5 else 0
+    print(f"Parsed {len(chapters)} chapters, {enum_count} Chapter-5 enum items → {out_path}")
+
     chapter_lines = []
     for chapter in chapters:
         for page in chapter.pages:
@@ -337,3 +351,4 @@ if __name__ == "__main__":
 
     with open("french_lines.txt", "w") as f:
         f.write("\n".join(chapter_lines))
+    print(f"Wrote {len(chapter_lines)} French lines → french_lines.txt")
