@@ -32,16 +32,18 @@ Usage:
     # Each section now contains both body text and enumerated items
 """
 
+import json
 import msgspec
 
 import unicodedata
 import re
-import json
 import sys
 import argparse
 from msgspec import field, Struct
 from typing import Optional
 from pathlib import Path
+
+from moore_web.pdf_extractor import extract_pdf_blocks
 
 
 # ---------------------------------------------------------------------------
@@ -547,8 +549,12 @@ def parse(text: str) -> Book:
     return book
 
 
-def parse_file(txt_path: str) -> Book:
-    text = Path(txt_path).read_text(encoding="utf-8")
+def parse_file(path: str) -> Book:
+    p = Path(path)
+    if p.suffix.lower() == ".pdf":
+        text = extract_pdf_blocks(str(p))
+    else:
+        text = p.read_text(encoding="utf-8")
     return parse(text)
 
 
@@ -704,7 +710,7 @@ def main():
 
         output_path = Path(args.output)
         output_path.write_text(
-            json.dumps(msgspec.structs.asdict(book), ensure_ascii=False, indent=2),
+            json.dumps(msgspec.to_builtins(book), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         print(f"Parsed {len(book.chapters)} chapters → {args.output}")
