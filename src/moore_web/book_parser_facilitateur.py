@@ -686,7 +686,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-
+    # -s 3 -e 56 for French and -s 3 -e 54
+    # We can have some text but we need to make some preprocessing to make it work
     parse_parser = subparsers.add_parser("parse", help="Parse a text file into a structured JSON book.")
     parse_parser.add_argument("--input", "-i", required=True, help="Path to the extracted text file.")
     parse_parser.add_argument(
