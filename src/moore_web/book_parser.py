@@ -4,6 +4,8 @@ import pymupdf
 
 import msgspec
 
+from moore_web.book_enum_parser import group_chapter5_enums, EnumItem, ENUM_RAW
+
 
 class ChapterPage(msgspec.Struct):
     """Represents a single page within a chapter"""
@@ -21,6 +23,7 @@ class Chapter(msgspec.Struct):
     title_moore: str
     start_page: int
     pages: list[ChapterPage]
+    enums: list[EnumItem] = msgspec.field(default_factory=list)
 
     @property
     def end_page(self) -> int:
@@ -101,6 +104,8 @@ PAGE_RE = {
     r"ou\s+à\s+d'autres\s+per-",
 }
 
+FRENCH_CLITICS = r"(?:ce|il|ils|elle|elles|on|je|tu|nous|vous|le|la|les|lui|y|en|t|ci|là|moi|toi|soi)"
+
 
 def find_column_separator(page: pymupdf.Page):
     page_center = page.rect.width / 2
@@ -145,7 +150,7 @@ def process_page_blocks(page: pymupdf.Page, middle_x: float) -> tuple[list[str],
     return moore_parts, french_parts
 
 
-def normalize_text(text: str) -> str:
+def normalize_mos_text(text: str) -> str:
     """Complete text normalization pipeline"""
 
     text = unicodedata.normalize("NFC", text)
@@ -159,6 +164,27 @@ def normalize_text(text: str) -> str:
     text = text = re.sub(r"-\s*\n\s*", "", text)
 
     text = re.sub(r" +", " ", text)
+
+    text = re.sub(r"\n\n+", "\n\n", text)
+
+    return text.strip()
+
+
+def normalize_fr_text(text: str) -> str:
+    """Complete text normalization pipeline"""
+
+    text = unicodedata.normalize("NFC", text)
+    text = text.replace("\u2019", "'")  # Right single quotation mark (')
+    text = text.replace("\u2018", "'")  # Left single quotation mark (')
+    text = text.replace("\u201c", '"')  # Left double quotation mark (")
+    text = text.replace("\u201d", '"')  # Right double quotation mark (")
+    text = text.replace("\u00ab", '"')  # Left-pointing double angle quotation mark («)
+    text = text.replace("\u00bb", '"')
+
+    text = re.sub(rf"(\w)-\s*\n\s*({FRENCH_CLITICS})\b", r"\1-\2", text)
+    text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)
+    text = re.sub(r" +", " ", text)
+    text = re.sub(r"\s*([!?:;])", r" \1", text)
 
     text = re.sub(r"\n\n+", "\n\n", text)
 
@@ -183,8 +209,8 @@ def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
         x = find_column_separator(page)
         moore_text, french_text = process_page_blocks(page=page, middle_x=x)
 
-        french_text = normalize_text("\n".join(french_text))
-        moore_text = normalize_text("\n".join(moore_text))
+        french_text = normalize_fr_text("\n".join(french_text))
+        moore_text = normalize_mos_text("\n".join(moore_text))
         if page_num == 39:
             moore_marker_pattern = (
                 r"1\.\s+SIDAwã\s+bãag\s+ya\s+boẽ\?\s+La\s+a\s+maanda\s+a\s+wãn\s+n\s+kʋʋd\s+nebã\?"
@@ -287,19 +313,40 @@ def fix_hyphenated_sentences(pages: list[ChapterPage]) -> list[ChapterPage]:
     return fixed_pages
 
 
-def parse_pdf_to_json(input_pdf: str, output_path: str):
+def parse_pdf_to_json(input_pdf: str, output_path: str | None = None) -> list[Chapter]:
     with pymupdf.open(input_pdf) as doc:
         chapters = group_chapters(doc)
 
     for chapter in chapters:
         chapter.pages = fix_hyphenated_sentences(chapter.pages)
 
-    with open(output_path, "wb") as f:
-        f.write(msgspec.json.encode(chapters))
+    chapter5 = next((ch for ch in chapters if ch.chapter_number == 5), None)
+    if chapter5:
+        chapter5.enums = group_chapter5_enums(chapter5.pages, ENUM_RAW, enum_start_page=39)
+
+    if output_path:
+        with open(output_path, "wb") as f:
+            f.write(msgspec.json.encode(chapters))
+
+    return chapters
 
 
 if __name__ == "__main__":
     input_pdf = "data/2 SIDA mooré - français.pdf"
     out_path = "aligned_parsed.json"
 
-    parse_pdf_to_json(input_pdf, out_path)
+    chapters = parse_pdf_to_json(input_pdf, out_path)
+    chapter5 = next((ch for ch in chapters if ch.chapter_number == 5), None)
+    enum_count = len(chapter5.enums) if chapter5 else 0
+    print(f"Parsed {len(chapters)} chapters, {enum_count} Chapter-5 enum items → {out_path}")
+
+    chapter_lines = []
+    for chapter in chapters:
+        for page in chapter.pages:
+            text = page.french_text.replace("\n", "").strip()
+            if text:
+                chapter_lines.append(text)
+
+    with open("french_lines.txt", "w") as f:
+        f.write("\n".join(chapter_lines))
+    print(f"Wrote {len(chapter_lines)} French lines → french_lines.txt")

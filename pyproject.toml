@@ -19,7 +19,16 @@ dependencies = [
     "lingtrain-aligner>=1.0.3",
     "sentence-splitter>=1.4",
     "syntok>=1.4.4",
+    "pandas>=2.3.3",
+    "seaborn>=0.13.2",
+    "fastdtw>=0.3.4",
+    "sacremoses>=0.1.0",
+    "beautifulsoup4>=4.14.3",
+    "typer>=0.12.0",
 ]
+
+[project.scripts]
+moore-web = "moore_web.cli:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -32,6 +41,7 @@ packages = ["src/moore_web"]
 dev = [
     "prek>=0.3.0",
     "ruff>=0.14.10",
+    "marimo>=0.10.0",
 ]
 [tool.ruff.format]
 quote-style = "double"
