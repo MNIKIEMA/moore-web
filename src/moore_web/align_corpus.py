@@ -31,9 +31,21 @@ from __future__ import annotations
 import statistics
 
 import msgspec
+import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-
+from scipy.spatial.distance import cosine
 from moore_web.flatten import AlignedCorpus, ParallelText
+
+
+def dtw_align(src_embeddings: np.ndarray | list, tgt_embeddings: np.ndarray | list):
+    from fastdtw import fastdtw
+
+    alignments = []
+
+    distance, path = fastdtw(src_embeddings, tgt_embeddings, dist=cosine)
+    alignments.append(path)
+
+    return alignments
 
 
 def align(
@@ -49,7 +61,7 @@ def align(
     Returns:
         :class:`~moore_web.flatten.AlignedCorpus` with equal-length lists.
     """
-    from fastdtw import fastdtw
+
     from laser_encoders import LaserEncoderPipeline
 
     print("Loading LASER models…")
@@ -62,11 +74,9 @@ def align(
     print(f"Encoding {len(parallel.moore)} Mooré sentences…")
     mo_embs = laser_mo.encode_sentences(parallel.moore, normalize_embeddings=True)
 
-    def _cosine_dist(x, y) -> float:
-        return float(1 - cosine_similarity(x.reshape(1, -1), y.reshape(1, -1))[0][0])
-
     print("Running FastDTW alignment…")
-    _, path = fastdtw(fr_embs, mo_embs, dist=_cosine_dist)
+    alignments = dtw_align(src_embeddings=fr_embs, tgt_embeddings=mo_embs)
+    path = alignments[0]
 
     fr_out, mo_out, scores_out = [], [], []
     for fr_idx, mo_idx in path:
