@@ -99,6 +99,27 @@ def _join_lines(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _merge_open_quotes(sentences: list[str]) -> list[str]:
+    """Merge syntok fragments produced by splitting inside quoted speech.
+
+    Tracks `"` balance across segments: if a segment leaves an unclosed quote,
+    the next segment is merged into it until the quote is closed.
+    A lone closing `"` is also merged back unconditionally.
+    """
+    result: list[str] = []
+    in_quote = False
+
+    for s in sentences:
+        is_lone_quote = s.strip() == '"'
+        if result and (in_quote or is_lone_quote):
+            result[-1] += " " + s
+        else:
+            result.append(s)
+        in_quote = result[-1].count('"') % 2 == 1
+
+    return result
+
+
 def segment_fr(text: str) -> list[str]:
     """Segment French text into sentences using syntok."""
     import syntok.segmenter as segmenter
@@ -110,7 +131,7 @@ def segment_fr(text: str) -> list[str]:
             s = "".join(str(t) for t in sentence).strip()
             if s:
                 sentences.append(s)
-    return sentences or ([text] if text else [])
+    return _merge_open_quotes(sentences) or ([text] if text else [])
 
 
 def segment_mo(text: str) -> list[str]:
@@ -119,9 +140,7 @@ def segment_mo(text: str) -> list[str]:
     syntok does not support Mooré, so we split on sentence-ending punctuation
     followed by whitespace.  Newlines are collapsed beforehand.
     """
-    text = _join_lines(text)
-    parts = [s.strip() for s in _SENT_BOUNDARY_RE.split(text) if s.strip()]
-    return parts or ([text] if text else [])
+    return segment_fr(text=text)
 
 
 # ---------------------------------------------------------------------------
@@ -130,20 +149,16 @@ def segment_mo(text: str) -> list[str]:
 
 
 def normalize_fr(sentence: str) -> str:
-    """Normalise French spacing.
+    """Normalise French spacing without tokenising.
 
-    Uses ``sacremoses.MosesTokenizer`` when available; falls back to regex
-    rules that fix spaces before punctuation and inside guillemets.
+    Only fixes erroneous spaces before punctuation and inside guillemets,
+    then collapses runs of spaces.  Using MosesTokenizer here is wrong because
+    it splits contractions (``Qu'`` → ``Qu' ``) and adds spaces before
+    sentence-ending punctuation, which corrupts the text for alignment.
     """
-    try:
-        from sacremoses import MosesTokenizer
-
-        tok = MosesTokenizer(lang="fr")
-        return tok.tokenize(sentence, return_str=True, escape=False)
-    except ImportError:
-        sentence = re.sub(r" +([!?:;»])", r"\1", sentence)
-        sentence = re.sub(r"([«]) +", r"\1", sentence)
-        return _MULTI_SPACE_RE.sub(" ", sentence).strip()
+    sentence = re.sub(r" +([!?:;».,])", r"\1", sentence)
+    sentence = re.sub(r"([«]) +", r"\1", sentence)
+    return _MULTI_SPACE_RE.sub(" ", sentence).strip()
 
 
 def normalize_mo(sentence: str) -> str:
