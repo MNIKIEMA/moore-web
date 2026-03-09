@@ -45,6 +45,7 @@ class ParallelText(msgspec.Struct):
 
     french: list[str] = msgspec.field(default_factory=list)
     moore: list[str] = msgspec.field(default_factory=list)
+    english: list[str] = msgspec.field(default_factory=list)
     source: str = ""
 
     def to_json(self) -> str:
@@ -169,6 +170,7 @@ def flatten_sida_book(
         segment:  If True, run sentence segmentation on each text block.
     """
     result = ParallelText(source="sida")
+    # FIXME: normalization add extra spaces.@critical
 
     for chapter in chapters:
         for page in chapter.pages:
@@ -186,6 +188,7 @@ def flatten_sida_book(
                     result.moore.append(normalize_mo(mo_raw))
 
         # Chapter 5 enum items: title + body as a single text unit
+        # TODO: maybe segment?
         for enum in chapter.enums:
             fr = _join_lines(f"{enum.french_title} {enum.french_text}")
             mo = _join_lines(f"{enum.moore_title} {enum.moore_text}")
@@ -246,6 +249,57 @@ def flatten_facilitateur_pair(
     else:
         result.french.extend(normalize_fr(s) for s in fr_list if s.strip())
         result.moore.extend(normalize_mo(s) for s in mo_list if s.strip())
+
+    return result
+
+
+def flatten_simple_parser(
+    pages: list[list[dict]],
+    include_examples: bool = True,
+    include_entries: bool = False,
+) -> ParallelText:
+    """Flatten output of :func:`moore_web.simple_parser.parse_doc` into parallel text.
+
+    Each dictionary entry has:
+    - ``entry``      — Mooré headword
+    - ``senses``     — list of sub-entry blocks, each a list of sense dicts with
+                       ``fr_entry``, ``eng_entry``, ``moore_example``,
+                       ``french_example``, ``english_example``
+
+    Args:
+        pages:            Output of ``parse_doc`` — list of pages, each a list of
+                          entry dicts.
+        include_examples: Add pre-aligned example triplets
+                          (moore_example, french_example, english_example).
+                          All three must be non-null for a triplet to be included.
+        include_entries:  Add definition pairs: moore headword (``entry``),
+                          French definition (``fr_entry``), English definition
+                          (``eng_entry``).
+    """
+    result = ParallelText(source="simple")
+
+    for page in pages:
+        for entry_dict in page:
+            moore_headword = (entry_dict.get("entry") or "").strip()
+
+            for sub_entry in entry_dict.get("senses") or []:
+                for sense in sub_entry:
+                    if include_entries:
+                        fr = (sense.get("fr_entry") or "").strip()
+                        en = (sense.get("eng_entry") or "").strip()
+                        if fr or en or moore_headword:
+                            result.french.append(normalize_fr(fr) if fr else "")
+                            result.moore.append(normalize_mo(moore_headword) if moore_headword else "")
+                            result.english.append(en)
+
+                    if include_examples:
+                        mo_ex = (sense.get("moore_example") or "").strip()
+                        fr_ex = (sense.get("french_example") or "").strip()
+                        en_ex = (sense.get("english_example") or "").strip()
+                        if mo_ex and fr_ex and en_ex:
+                            result.moore.append(normalize_mo(_join_lines(mo_ex)))
+                            result.french.append(normalize_fr(_join_lines(fr_ex)))
+                            result.english.append(_join_lines(en_ex))
 
     return result
 
