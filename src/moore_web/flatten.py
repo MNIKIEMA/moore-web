@@ -278,28 +278,34 @@ def flatten_simple_parser(
     """
     result = ParallelText(source="simple")
 
+    def _clean(text: str | None) -> str:
+        text = text or ""
+        text = re.sub(r"\n+", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
     for page in pages:
         for entry_dict in page:
-            moore_headword = (entry_dict.get("entry") or "").strip()
+            moore_headword = _clean(entry_dict.get("entry"))
 
             for sub_entry in entry_dict.get("senses") or []:
                 for sense in sub_entry:
                     if include_entries:
-                        fr = (sense.get("fr_entry") or "").strip()
-                        en = (sense.get("eng_entry") or "").strip()
+                        fr = _clean(sense.get("fr_entry"))
+                        en = _clean(sense.get("eng_entry"))
                         if fr or en or moore_headword:
                             result.french.append(normalize_fr(fr) if fr else "")
                             result.moore.append(normalize_mo(moore_headword) if moore_headword else "")
                             result.english.append(en)
 
                     if include_examples:
-                        mo_ex = (sense.get("moore_example") or "").strip()
-                        fr_ex = (sense.get("french_example") or "").strip()
-                        en_ex = (sense.get("english_example") or "").strip()
+                        mo_ex = _clean(sense.get("moore_example"))
+                        fr_ex = _clean(sense.get("french_example"))
+                        en_ex = _clean(sense.get("english_example"))
                         if mo_ex and fr_ex and en_ex:
-                            result.moore.append(normalize_mo(_join_lines(mo_ex)))
-                            result.french.append(normalize_fr(_join_lines(fr_ex)))
-                            result.english.append(_join_lines(en_ex))
+                            result.moore.append(mo_ex if mo_ex else mo_ex)
+                            result.french.append(fr_ex)
+                            result.english.append(en_ex)
 
     return result
 
