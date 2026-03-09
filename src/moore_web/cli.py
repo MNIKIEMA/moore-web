@@ -632,19 +632,33 @@ def e2e(
             raise typer.Exit(1)
         import pymupdf
 
-        from moore_web.flatten import flatten_simple_parser
+        from moore_web.flatten import AlignedCorpus, flatten_simple_parser
         from moore_web.simple_parser import parse_doc
 
-        typer.echo(f"[1/3] Parsing simple dictionary: {input}")
+        typer.echo(f"[1/2] Parsing simple dictionary: {input}")
         with pymupdf.open(str(input)) as doc:
             pages = parse_doc(doc)
-        typer.echo("[2/3] Flattening…")
+        typer.echo("[2/2] Flattening…")
         parallel = flatten_simple_parser(pages, include_examples=examples, include_entries=entries)
         out = output or _default_output(input, "_aligned.json")
 
+        typer.echo(
+            f"      FR: {len(parallel.french)}  MO: {len(parallel.moore)}  EN: {len(parallel.english)}"
+        )
+        # Data is pre-aligned by construction — no LASER needed.
+        aligned = AlignedCorpus(
+            french=parallel.french,
+            moore=parallel.moore,
+            english=parallel.english,
+            scores=[1.0] * len(parallel.french),
+            source=parallel.source,
+        )
+        out.write_bytes(msgspec.json.encode(aligned))
+        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        return
+
     typer.echo(
         f"      FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences"
-        + (f"  EN: {len(parallel.english)}" if parallel.english else "")
     )
 
     # ── align ────────────────────────────────────────────────────────────────
