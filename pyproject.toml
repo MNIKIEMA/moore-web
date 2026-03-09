@@ -41,6 +41,7 @@ packages = ["src/moore_web"]
 dev = [
     "prek>=0.3.0",
     "ruff>=0.14.10",
+    "marimo>=0.10.0",
 ]
 [tool.ruff.format]
 quote-style = "double"
