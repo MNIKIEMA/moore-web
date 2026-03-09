@@ -325,6 +325,62 @@ def flatten_simple_parser(
     return result
 
 
+def flatten_conseils(
+    corpus: list[dict],
+    segment: bool = True,
+) -> list[tuple[str, "ParallelText"]]:
+    """Flatten conseil-des-ministres corpus into per-date ParallelText lists.
+
+    Each entry in *corpus* represents one council session.  Only entries that
+    have non-empty ``fr`` **and** ``mos`` lists are included.  French and Mooré
+    section texts are collected independently; the aligner handles many-to-many
+    alignment within each date.
+
+    Args:
+        corpus:  List of session dicts with ``date``, ``fr``, ``mos`` keys.
+                 Each language value is a list of ``{section, subsection,
+                 index, text}`` dicts (output of the conseil-ministres parser).
+        segment: If True, run sentence segmentation on each section text.
+
+    Returns:
+        List of ``(date, ParallelText)`` pairs, one per bilingual session.
+    """
+    results: list[tuple[str, ParallelText]] = []
+
+    for entry in corpus:
+        date = entry.get("date", "")
+        fr_sections = entry.get("fr") or []
+        mo_sections = entry.get("mos") or []
+
+        if not fr_sections or not mo_sections:
+            continue
+
+        parallel = ParallelText(source=f"conseils/{date}")
+
+        for sec in fr_sections:
+            text = _join_lines(sec.get("text", ""))
+            if not text:
+                continue
+            if segment:
+                parallel.french.extend(normalize_fr(s) for s in segment_fr(text))
+            else:
+                parallel.french.append(normalize_fr(text))
+
+        for sec in mo_sections:
+            text = _join_lines(sec.get("text", ""))
+            if not text:
+                continue
+            if segment:
+                parallel.moore.extend(normalize_mo(s) for s in segment_mo(text))
+            else:
+                parallel.moore.append(normalize_mo(text))
+
+        if parallel.french and parallel.moore:
+            results.append((date, parallel))
+
+    return results
+
+
 def flatten_news_entries(
     entries: list[dict],
     segment: bool = True,

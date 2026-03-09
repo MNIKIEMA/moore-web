@@ -41,6 +41,7 @@ class Source(str, Enum):
     kade = "kade"
     news = "news"
     simple = "simple"
+    conseils = "conseils"
 
 
 class KadeLang(str, Enum):
@@ -344,6 +345,22 @@ def flatten(
         pages = json.loads(input.read_text(encoding="utf-8"))
         parallel = flatten_simple_parser(pages, include_examples=examples, include_entries=entries)
         out = output or _default_output(input, "_parallel.json")
+
+    elif source == Source.conseils:
+        if input is None:
+            _err("--input is required for source 'conseils'.")
+            raise typer.Exit(1)
+        from moore_web.flatten import ParallelText, flatten_conseils
+
+        corpus = json.loads(input.read_text(encoding="utf-8"))
+        date_parallels = flatten_conseils(corpus, segment=segment)
+        # Merge all dates into one ParallelText for the flatten command
+        parallel = ParallelText(source="conseils")
+        for _date, dp in date_parallels:
+            parallel.french.extend(dp.french)
+            parallel.moore.extend(dp.moore)
+        out = output or _default_output(input, "_parallel.json")
+        typer.echo(f"Flattened {len(date_parallels)} sessions.")
 
     out.write_bytes(msgspec.json.encode(parallel))
     typer.echo(
@@ -657,9 +674,39 @@ def e2e(
         typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
         return
 
-    typer.echo(
-        f"      FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences"
-    )
+    elif source == Source.conseils:
+        if input is None:
+            _err("--input is required for source 'conseils'.")
+            raise typer.Exit(1)
+        from moore_web.flatten import AlignedCorpus, flatten_conseils
+
+        typer.echo(f"[1/2] Flattening conseil-des-ministres corpus: {input}")
+        corpus = json.loads(input.read_text(encoding="utf-8"))
+        date_parallels = flatten_conseils(corpus, segment=segment)
+        out = output or _default_output(input, "_aligned.json")
+        typer.echo(f"      {len(date_parallels)} bilingual sessions found.")
+
+        # Align each date independently, then concatenate.
+        typer.echo("[2/2] Aligning per date with LASER + FastDTW…")
+        all_fr, all_mo, all_scores = [], [], []
+        for date, dp in date_parallels:
+            typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
+            aligned_dp = _align(dp, min_score=min_score)
+            all_fr.extend(aligned_dp.french)
+            all_mo.extend(aligned_dp.moore)
+            all_scores.extend(aligned_dp.scores)
+
+        aligned = AlignedCorpus(
+            french=all_fr,
+            moore=all_mo,
+            scores=all_scores,
+            source="conseils",
+        )
+        out.write_bytes(msgspec.json.encode(aligned))
+        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        return
+
+    typer.echo(f"      FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences")
 
     # ── align ────────────────────────────────────────────────────────────────
     typer.echo("[3/3] Aligning with LASER + FastDTW…")
