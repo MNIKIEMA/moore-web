@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 _NEWLINE_RE = re.compile(r"\n+")
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SENT_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+_NUMBER_ONLY_RE = re.compile(r"^\d+\.+$")
 
 
 # ---------------------------------------------------------------------------
@@ -332,15 +333,19 @@ def flatten_conseils(
     """Flatten conseil-des-ministres corpus into per-date ParallelText lists.
 
     Each entry in *corpus* represents one council session.  Only entries that
-    have non-empty ``fr`` **and** ``mos`` lists are included.  French and Mooré
-    section texts are collected independently; the aligner handles many-to-many
-    alignment within each date.
+    have non-empty ``src_sections`` **and** ``tgt_sections`` are included.
+    ``src_lang`` / ``tgt_lang`` identify which side is French vs Mooré.
+
+    Each section has a ``title`` string and a ``sentences`` list (already
+    sentence-split by the parser).  Titles are optionally re-segmented;
+    individual sentences are added directly.
 
     Args:
-        corpus:  List of session dicts with ``date``, ``fr``, ``mos`` keys.
-                 Each language value is a list of ``{section, subsection,
-                 index, text}`` dicts (output of the conseil-ministres parser).
-        segment: If True, run sentence segmentation on each section text.
+        corpus:  List of session dicts with ``date``, ``src_lang``,
+                 ``tgt_lang``, ``src_sections``, ``tgt_sections`` keys.
+                 Each section dict has ``number``, ``title``, ``sentences``,
+                 and ``subsections`` fields.
+        segment: If True, run sentence segmentation on section titles.
 
     Returns:
         List of ``(date, ParallelText)`` pairs, one per bilingual session.
@@ -349,31 +354,36 @@ def flatten_conseils(
 
     for entry in corpus:
         date = entry.get("date", "")
-        fr_sections = entry.get("fr") or []
-        mo_sections = entry.get("mos") or []
+        src_lang = entry.get("src_lang", "fr")
+        src_sections = entry.get("src_sections") or []
+        tgt_sections = entry.get("tgt_sections") or []
 
-        if not fr_sections or not mo_sections:
+        if not src_sections or not tgt_sections:
             continue
+
+        # Map src/tgt to french/moore based on declared language codes
+        if src_lang == "fr":
+            fr_sections, mo_sections = src_sections, tgt_sections
+        else:
+            mo_sections, fr_sections = src_sections, tgt_sections
 
         parallel = ParallelText(source=f"conseils/{date}")
 
-        for sec in fr_sections:
-            text = _join_lines(sec.get("text", ""))
-            if not text:
-                continue
-            if segment:
-                parallel.french.extend(normalize_fr(s) for s in segment_fr(text))
-            else:
-                parallel.french.append(normalize_fr(text))
+        def _add_section(sections: list[dict], target: list[str], normalize_fn, segment_fn) -> None:
+            for sec in sections:
+                title = _join_lines(sec.get("title", ""))
+                if title and not _NUMBER_ONLY_RE.match(title):
+                    if segment:
+                        target.extend(normalize_fn(s) for s in segment_fn(title))
+                    else:
+                        target.append(normalize_fn(title))
+                for sent in sec.get("sentences") or []:
+                    s = _join_lines(sent)
+                    if s and not _NUMBER_ONLY_RE.match(s):
+                        target.append(normalize_fn(s))
 
-        for sec in mo_sections:
-            text = _join_lines(sec.get("text", ""))
-            if not text:
-                continue
-            if segment:
-                parallel.moore.extend(normalize_mo(s) for s in segment_mo(text))
-            else:
-                parallel.moore.append(normalize_mo(text))
+        _add_section(fr_sections, parallel.french, normalize_fr, segment_fr)
+        _add_section(mo_sections, parallel.moore, normalize_mo, segment_mo)
 
         if parallel.french and parallel.moore:
             results.append((date, parallel))
