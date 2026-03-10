@@ -40,6 +40,8 @@ class Source(str, Enum):
     sida = "sida"
     kade = "kade"
     news = "news"
+    simple = "simple"
+    conseils = "conseils"
 
 
 class KadeLang(str, Enum):
@@ -92,6 +94,22 @@ def _load_kade_book(path: Path):
     from moore_web.book_parser_facilitateur import parse_book_from_json
 
     return parse_book_from_json(str(path))
+
+
+def _dedup_aligned(aligned):
+    """Deduplicate an AlignedCorpus using COMET-QE and return a new one."""
+    from moore_web.dedup_aligned_comet import deduplicate_by_comet
+    from moore_web.flatten import AlignedCorpus
+
+    pairs = [{"fr": f, "mo": m, "score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)]
+    typer.echo("      Running COMET-QE deduplication…")
+    pairs = deduplicate_by_comet(pairs)
+    return AlignedCorpus(
+        french=[p["fr"] for p in pairs],
+        moore=[p["mo"] for p in pairs],
+        scores=[p["score"] for p in pairs],
+        source=aligned.source,
+    )
 
 
 def _parse_kade_file(input_path: Path, lang: KadeLang):
@@ -155,7 +173,9 @@ def parse(
     # sida / news
     input: Annotated[
         Optional[Path],
-        typer.Option("--input", "-i", exists=True, dir_okay=False, help="Input file (sida PDF or news JSON)."),
+        typer.Option(
+            "--input", "-i", exists=True, dir_okay=False, help="Input file (sida PDF or news JSON)."
+        ),
     ] = None,
     # kade only
     kade_input: Annotated[
@@ -183,9 +203,10 @@ def parse(
 ) -> None:
     """Parse source document(s) to structured JSON.
 
-    [bold]sida:[/bold]  moore-web parse -s sida -i book.pdf -o parsed.json
-    [bold]kade:[/bold]  moore-web parse -s kade --kade-input fr.pdf -l french -o fr.json
-    [bold]news:[/bold]  moore-web parse -s news -i corpus.json -o segmented.json
+    [bold]sida:[/bold]    moore-web parse -s sida -i book.pdf -o parsed.json
+    [bold]kade:[/bold]    moore-web parse -s kade --kade-input fr.pdf -l french -o fr.json
+    [bold]news:[/bold]    moore-web parse -s news -i corpus.json -o segmented.json
+    [bold]simple:[/bold]  moore-web parse -s simple -i dict.pdf -o parsed.json
     """
     if source == Source.sida:
         if input is None:
@@ -230,6 +251,22 @@ def parse(
         out.write_text(json.dumps(corpus, ensure_ascii=False, indent=2), encoding="utf-8")
         typer.echo(f"Wrote {len(corpus)} entries → {out}")
 
+    elif source == Source.simple:
+        if input is None:
+            _err("--input is required for source 'simple'.")
+            raise typer.Exit(1)
+        import pymupdf
+
+        from moore_web.simple_parser import parse_doc
+
+        out = output or _default_output(input, "_parsed.json")
+        typer.echo(f"Parsing simple dictionary: {input}")
+        with pymupdf.open(str(input)) as doc:
+            pages = parse_doc(doc)
+        out.write_text(json.dumps(pages, ensure_ascii=False, indent=2), encoding="utf-8")
+        n = sum(len(p) for p in pages)
+        typer.echo(f"Wrote {n} entries across {len(pages)} pages → {out}")
+
 
 # ---------------------------------------------------------------------------
 # flatten
@@ -239,10 +276,12 @@ def parse(
 @app.command()
 def flatten(
     source: Annotated[Source, typer.Option("--source", "-s", help="Source type.")] = Source.sida,
-    # sida / news
+    # sida / news / simple
     input: Annotated[
         Optional[Path],
-        typer.Option("--input", "-i", exists=True, dir_okay=False, help="Parsed JSON (sida or news)."),
+        typer.Option(
+            "--input", "-i", exists=True, dir_okay=False, help="Parsed JSON (sida, news, or simple)."
+        ),
     ] = None,
     # kade only
     fr_input: Annotated[
@@ -261,12 +300,24 @@ def flatten(
         bool,
         typer.Option("--segment/--no-segment", help="Sentence-segment each text block."),
     ] = True,
+    # simple only
+    examples: Annotated[
+        bool,
+        typer.Option("--examples/--no-examples", help="Include pre-aligned example triplets (simple only)."),
+    ] = True,
+    entries: Annotated[
+        bool,
+        typer.Option(
+            "--entries/--no-entries", help="Include definition entries as moore/fr/en rows (simple only)."
+        ),
+    ] = False,
 ) -> None:
     """Flatten parsed JSON to a ParallelText sentence list.
 
-    [bold]sida:[/bold]  moore-web flatten -s sida -i parsed.json -o parallel.json
-    [bold]kade:[/bold]  moore-web flatten -s kade --fr-input fr.json --mo-input mo.json -o parallel.json
-    [bold]news:[/bold]  moore-web flatten -s news -i segmented.json -o parallel.json
+    [bold]sida:[/bold]    moore-web flatten -s sida -i parsed.json -o parallel.json
+    [bold]kade:[/bold]    moore-web flatten -s kade --fr-input fr.json --mo-input mo.json -o parallel.json
+    [bold]news:[/bold]    moore-web flatten -s news -i segmented.json -o parallel.json
+    [bold]simple:[/bold]  moore-web flatten -s simple -i parsed.json -o parallel.json
     """
     from moore_web.flatten import (
         flatten_facilitateur_pair,
@@ -301,8 +352,38 @@ def flatten(
         parallel = flatten_news_entries(entries, segment=segment)
         out = output or _default_output(input, "_parallel.json")
 
+    elif source == Source.simple:
+        if input is None:
+            _err("--input is required for source 'simple'.")
+            raise typer.Exit(1)
+        from moore_web.flatten import flatten_simple_parser
+
+        pages = json.loads(input.read_text(encoding="utf-8"))
+        parallel = flatten_simple_parser(pages, include_examples=examples, include_entries=entries)
+        out = output or _default_output(input, "_parallel.json")
+
+    elif source == Source.conseils:
+        if input is None:
+            _err("--input is required for source 'conseils'.")
+            raise typer.Exit(1)
+        from moore_web.flatten import ParallelText, flatten_conseils
+
+        corpus = json.loads(input.read_text(encoding="utf-8"))
+        date_parallels = flatten_conseils(corpus, segment=segment)
+        # Merge all dates into one ParallelText for the flatten command
+        parallel = ParallelText(source="conseils")
+        for _date, dp in date_parallels:
+            parallel.french.extend(dp.french)
+            parallel.moore.extend(dp.moore)
+        out = output or _default_output(input, "_parallel.json")
+        typer.echo(f"Flattened {len(date_parallels)} sessions.")
+
     out.write_bytes(msgspec.json.encode(parallel))
-    typer.echo(f"FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences → {out}")
+    typer.echo(
+        f"FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences"
+        + (f"  EN: {len(parallel.english)}" if parallel.english else "")
+        + f" → {out}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +396,13 @@ def parse_flat(
     source: Annotated[Source, typer.Option("--source", "-s", help="Source type.")] = Source.sida,
     input: Annotated[
         Optional[Path],
-        typer.Option("--input", "-i", exists=True, dir_okay=False, help="Input file (sida PDF or news JSON)."),
+        typer.Option(
+            "--input",
+            "-i",
+            exists=True,
+            dir_okay=False,
+            help="Input file (sida PDF, news JSON, or simple PDF).",
+        ),
     ] = None,
     fr_input: Annotated[
         Optional[Path],
@@ -337,12 +424,23 @@ def parse_flat(
         bool,
         typer.Option("--lang-id/--no-lang-id", help="Run language ID annotation (news only)."),
     ] = True,
+    examples: Annotated[
+        bool,
+        typer.Option("--examples/--no-examples", help="Include pre-aligned example triplets (simple only)."),
+    ] = True,
+    entries: Annotated[
+        bool,
+        typer.Option(
+            "--entries/--no-entries", help="Include definition entries as moore/fr/en rows (simple only)."
+        ),
+    ] = False,
 ) -> None:
     """Parse and flatten in one step.
 
-    [bold]sida:[/bold]  moore-web parse-flat -s sida -i book.pdf -o parallel.json
-    [bold]kade:[/bold]  moore-web parse-flat -s kade --fr-input fr.pdf --mo-input mo.pdf -o parallel.json
-    [bold]news:[/bold]  moore-web parse-flat -s news -i corpus.json -o parallel.json
+    [bold]sida:[/bold]    moore-web parse-flat -s sida -i book.pdf -o parallel.json
+    [bold]kade:[/bold]    moore-web parse-flat -s kade --fr-input fr.pdf --mo-input mo.pdf -o parallel.json
+    [bold]news:[/bold]    moore-web parse-flat -s news -i corpus.json -o parallel.json
+    [bold]simple:[/bold]  moore-web parse-flat -s simple -i dict.pdf -o parallel.json
     """
     from moore_web.flatten import (
         flatten_facilitateur_pair,
@@ -391,8 +489,27 @@ def parse_flat(
         parallel = flatten_news_entries(corpus, segment=segment)
         out = output or _default_output(input, "_parallel.json")
 
+    elif source == Source.simple:
+        if input is None:
+            _err("--input is required for source 'simple'.")
+            raise typer.Exit(1)
+        import pymupdf
+
+        from moore_web.flatten import flatten_simple_parser
+        from moore_web.simple_parser import parse_doc
+
+        typer.echo(f"Parsing simple dictionary: {input}")
+        with pymupdf.open(str(input)) as doc:
+            pages = parse_doc(doc)
+        parallel = flatten_simple_parser(pages, include_examples=examples, include_entries=entries)
+        out = output or _default_output(input, "_parallel.json")
+
     out.write_bytes(msgspec.json.encode(parallel))
-    typer.echo(f"FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences → {out}")
+    typer.echo(
+        f"FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences"
+        + (f"  EN: {len(parallel.english)}" if parallel.english else "")
+        + f" → {out}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +557,13 @@ def e2e(
     source: Annotated[Source, typer.Option("--source", "-s", help="Source type.")] = Source.sida,
     input: Annotated[
         Optional[Path],
-        typer.Option("--input", "-i", exists=True, dir_okay=False, help="Input file (sida PDF or news JSON)."),
+        typer.Option(
+            "--input",
+            "-i",
+            exists=True,
+            dir_okay=False,
+            help="Input file (sida PDF, news JSON, or simple PDF).",
+        ),
     ] = None,
     fr_input: Annotated[
         Optional[Path],
@@ -466,12 +589,30 @@ def e2e(
         bool,
         typer.Option("--lang-id/--no-lang-id", help="Run language ID annotation (news only)."),
     ] = True,
+    examples: Annotated[
+        bool,
+        typer.Option("--examples/--no-examples", help="Include pre-aligned example triplets (simple only)."),
+    ] = True,
+    entries: Annotated[
+        bool,
+        typer.Option(
+            "--entries/--no-entries", help="Include definition entries as moore/fr/en rows (simple only)."
+        ),
+    ] = False,
+    drop_duplicate: Annotated[
+        bool,
+        typer.Option(
+            "--drop-duplicate/--no-drop-duplicate",
+            help="Deduplicate aligned pairs with COMET-QE, keeping highest score per group (not available for simple).",
+        ),
+    ] = False,
 ) -> None:
     """End-to-end pipeline: parse → flatten → align.
 
-    [bold]sida:[/bold]  moore-web e2e -s sida -i book.pdf -o aligned.json
-    [bold]kade:[/bold]  moore-web e2e -s kade --fr-input fr.pdf --mo-input mo.pdf -o aligned.json
-    [bold]news:[/bold]  moore-web e2e -s news -i corpus.json -o aligned.json
+    [bold]sida:[/bold]    moore-web e2e -s sida -i book.pdf -o aligned.json
+    [bold]kade:[/bold]    moore-web e2e -s kade --fr-input fr.pdf --mo-input mo.pdf -o aligned.json
+    [bold]news:[/bold]    moore-web e2e -s news -i corpus.json -o aligned.json
+    [bold]simple:[/bold]  moore-web e2e -s simple -i dict.pdf -o aligned.json
     """
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import (
@@ -525,11 +666,79 @@ def e2e(
         parallel = flatten_news_entries(corpus, segment=segment)
         out = output or _default_output(input, "_aligned.json")
 
+    elif source == Source.simple:
+        if input is None:
+            _err("--input is required for source 'simple'.")
+            raise typer.Exit(1)
+        import pymupdf
+
+        from moore_web.flatten import AlignedCorpus, flatten_simple_parser
+        from moore_web.simple_parser import parse_doc
+
+        typer.echo(f"[1/2] Parsing simple dictionary: {input}")
+        with pymupdf.open(str(input)) as doc:
+            pages = parse_doc(doc)
+        typer.echo("[2/2] Flattening…")
+        parallel = flatten_simple_parser(pages, include_examples=examples, include_entries=entries)
+        out = output or _default_output(input, "_aligned.json")
+
+        typer.echo(
+            f"      FR: {len(parallel.french)}  MO: {len(parallel.moore)}  EN: {len(parallel.english)}"
+        )
+        # Data is pre-aligned by construction — no LASER needed.
+        aligned = AlignedCorpus(
+            french=parallel.french,
+            moore=parallel.moore,
+            english=parallel.english,
+            scores=[1.0] * len(parallel.french),
+            source=parallel.source,
+        )
+        out.write_bytes(msgspec.json.encode(aligned))
+        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        return
+
+    elif source == Source.conseils:
+        if input is None:
+            _err("--input is required for source 'conseils'.")
+            raise typer.Exit(1)
+        from moore_web.flatten import AlignedCorpus, flatten_conseils
+
+        typer.echo(f"[1/2] Flattening conseil-des-ministres corpus: {input}")
+        corpus = json.loads(input.read_text(encoding="utf-8"))
+        date_parallels = flatten_conseils(corpus, segment=segment)
+        out = output or _default_output(input, "_aligned.json")
+        typer.echo(f"      {len(date_parallels)} bilingual sessions found.")
+
+        # Align each date independently, then concatenate.
+        typer.echo("[2/2] Aligning per date with LASER + FastDTW…")
+        all_fr, all_mo, all_scores = [], [], []
+        for date, dp in date_parallels:
+            typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
+            aligned_dp = _align(dp, min_score=min_score)
+            all_fr.extend(aligned_dp.french)
+            all_mo.extend(aligned_dp.moore)
+            all_scores.extend(aligned_dp.scores)
+
+        aligned = AlignedCorpus(
+            french=all_fr,
+            moore=all_mo,
+            scores=all_scores,
+            source="conseils",
+        )
+        if drop_duplicate:
+            aligned = _dedup_aligned(aligned)
+        out.write_bytes(msgspec.json.encode(aligned))
+        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        return
+
     typer.echo(f"      FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences")
 
     # ── align ────────────────────────────────────────────────────────────────
     typer.echo("[3/3] Aligning with LASER + FastDTW…")
     aligned = _align(parallel, min_score=min_score)
+
+    if drop_duplicate:
+        aligned = _dedup_aligned(aligned)
 
     out.write_bytes(msgspec.json.encode(aligned))
     typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")

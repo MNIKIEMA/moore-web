@@ -192,6 +192,7 @@ def normalize_fr_text(text: str) -> str:
 
 
 def group_chapters(documents: pymupdf.Document) -> list[Chapter]:
+    # TODO: Fix those cases. 5. Y a-t-il des médicaments qu'une personne atteinte du SIDA peut prendre pour se sentir", "mieux?"
     """
     Group document pages into chapters based on chapter start pages.
 

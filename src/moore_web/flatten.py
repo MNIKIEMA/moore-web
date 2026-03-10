@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 _NEWLINE_RE = re.compile(r"\n+")
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SENT_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+_NUMBER_ONLY_RE = re.compile(r"^\d+\.+$")
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ class ParallelText(msgspec.Struct):
 
     french: list[str] = msgspec.field(default_factory=list)
     moore: list[str] = msgspec.field(default_factory=list)
+    english: list[str] = msgspec.field(default_factory=list)
     source: str = ""
 
     def to_json(self) -> str:
@@ -98,6 +100,27 @@ def _join_lines(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _merge_open_quotes(sentences: list[str]) -> list[str]:
+    """Merge syntok fragments produced by splitting inside quoted speech.
+
+    Tracks `"` balance across segments: if a segment leaves an unclosed quote,
+    the next segment is merged into it until the quote is closed.
+    A lone closing `"` is also merged back unconditionally.
+    """
+    result: list[str] = []
+    in_quote = False
+
+    for s in sentences:
+        is_lone_quote = s.strip() == '"'
+        if result and (in_quote or is_lone_quote):
+            result[-1] += " " + s
+        else:
+            result.append(s)
+        in_quote = result[-1].count('"') % 2 == 1
+
+    return result
+
+
 def segment_fr(text: str) -> list[str]:
     """Segment French text into sentences using syntok."""
     import syntok.segmenter as segmenter
@@ -109,7 +132,7 @@ def segment_fr(text: str) -> list[str]:
             s = "".join(str(t) for t in sentence).strip()
             if s:
                 sentences.append(s)
-    return sentences or ([text] if text else [])
+    return _merge_open_quotes(sentences) or ([text] if text else [])
 
 
 def segment_mo(text: str) -> list[str]:
@@ -118,9 +141,7 @@ def segment_mo(text: str) -> list[str]:
     syntok does not support Mooré, so we split on sentence-ending punctuation
     followed by whitespace.  Newlines are collapsed beforehand.
     """
-    text = _join_lines(text)
-    parts = [s.strip() for s in _SENT_BOUNDARY_RE.split(text) if s.strip()]
-    return parts or ([text] if text else [])
+    return segment_fr(text=text)
 
 
 # ---------------------------------------------------------------------------
@@ -129,20 +150,16 @@ def segment_mo(text: str) -> list[str]:
 
 
 def normalize_fr(sentence: str) -> str:
-    """Normalise French spacing.
+    """Normalise French spacing without tokenising.
 
-    Uses ``sacremoses.MosesTokenizer`` when available; falls back to regex
-    rules that fix spaces before punctuation and inside guillemets.
+    Only fixes erroneous spaces before punctuation and inside guillemets,
+    then collapses runs of spaces.  Using MosesTokenizer here is wrong because
+    it splits contractions (``Qu'`` → ``Qu' ``) and adds spaces before
+    sentence-ending punctuation, which corrupts the text for alignment.
     """
-    try:
-        from sacremoses import MosesTokenizer
-
-        tok = MosesTokenizer(lang="fr")
-        return tok.tokenize(sentence, return_str=True, escape=False)
-    except ImportError:
-        sentence = re.sub(r" +([!?:;»])", r"\1", sentence)
-        sentence = re.sub(r"([«]) +", r"\1", sentence)
-        return _MULTI_SPACE_RE.sub(" ", sentence).strip()
+    sentence = re.sub(r" +([!?:;».,])", r"\1", sentence)
+    sentence = re.sub(r"([«]) +", r"\1", sentence)
+    return _MULTI_SPACE_RE.sub(" ", sentence).strip()
 
 
 def normalize_mo(sentence: str) -> str:
@@ -169,6 +186,7 @@ def flatten_sida_book(
         segment:  If True, run sentence segmentation on each text block.
     """
     result = ParallelText(source="sida")
+    # FIXME: normalization add extra spaces.@critical
 
     for chapter in chapters:
         for page in chapter.pages:
@@ -186,6 +204,7 @@ def flatten_sida_book(
                     result.moore.append(normalize_mo(mo_raw))
 
         # Chapter 5 enum items: title + body as a single text unit
+        # TODO: maybe segment?
         for enum in chapter.enums:
             fr = _join_lines(f"{enum.french_title} {enum.french_text}")
             mo = _join_lines(f"{enum.moore_title} {enum.moore_text}")
@@ -248,6 +267,128 @@ def flatten_facilitateur_pair(
         result.moore.extend(normalize_mo(s) for s in mo_list if s.strip())
 
     return result
+
+
+def flatten_simple_parser(
+    pages: list[list[dict]],
+    include_examples: bool = True,
+    include_entries: bool = False,
+) -> ParallelText:
+    """Flatten output of :func:`moore_web.simple_parser.parse_doc` into parallel text.
+
+    Each dictionary entry has:
+    - ``entry``      — Mooré headword
+    - ``senses``     — list of sub-entry blocks, each a list of sense dicts with
+                       ``fr_entry``, ``eng_entry``, ``moore_example``,
+                       ``french_example``, ``english_example``
+
+    Args:
+        pages:            Output of ``parse_doc`` — list of pages, each a list of
+                          entry dicts.
+        include_examples: Add pre-aligned example triplets
+                          (moore_example, french_example, english_example).
+                          All three must be non-null for a triplet to be included.
+        include_entries:  Add definition pairs: moore headword (``entry``),
+                          French definition (``fr_entry``), English definition
+                          (``eng_entry``).
+    """
+    result = ParallelText(source="simple")
+
+    def _clean(text: str | None) -> str:
+        text = text or ""
+        text = re.sub(r"\n+", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    for page in pages:
+        for entry_dict in page:
+            moore_headword = _clean(entry_dict.get("entry"))
+
+            for sub_entry in entry_dict.get("senses") or []:
+                for sense in sub_entry:
+                    if include_entries:
+                        fr = _clean(sense.get("fr_entry"))
+                        en = _clean(sense.get("eng_entry"))
+                        if fr or en or moore_headword:
+                            result.french.append(normalize_fr(fr) if fr else "")
+                            result.moore.append(normalize_mo(moore_headword) if moore_headword else "")
+                            result.english.append(en)
+
+                    if include_examples:
+                        mo_ex = _clean(sense.get("moore_example"))
+                        fr_ex = _clean(sense.get("french_example"))
+                        en_ex = _clean(sense.get("english_example"))
+                        if mo_ex and fr_ex and en_ex:
+                            result.moore.append(mo_ex if mo_ex else mo_ex)
+                            result.french.append(fr_ex)
+                            result.english.append(en_ex)
+
+    return result
+
+
+def flatten_conseils(
+    corpus: list[dict],
+    segment: bool = True,
+) -> list[tuple[str, "ParallelText"]]:
+    """Flatten conseil-des-ministres corpus into per-date ParallelText lists.
+
+    Each entry in *corpus* represents one council session.  Only entries that
+    have non-empty ``src_sections`` **and** ``tgt_sections`` are included.
+    ``src_lang`` / ``tgt_lang`` identify which side is French vs Mooré.
+
+    Each section has a ``title`` string and a ``sentences`` list (already
+    sentence-split by the parser).  Titles are optionally re-segmented;
+    individual sentences are added directly.
+
+    Args:
+        corpus:  List of session dicts with ``date``, ``src_lang``,
+                 ``tgt_lang``, ``src_sections``, ``tgt_sections`` keys.
+                 Each section dict has ``number``, ``title``, ``sentences``,
+                 and ``subsections`` fields.
+        segment: If True, run sentence segmentation on section titles.
+
+    Returns:
+        List of ``(date, ParallelText)`` pairs, one per bilingual session.
+    """
+    results: list[tuple[str, ParallelText]] = []
+
+    for entry in corpus:
+        date = entry.get("date", "")
+        src_lang = entry.get("src_lang", "fr")
+        src_sections = entry.get("src_sections") or []
+        tgt_sections = entry.get("tgt_sections") or []
+
+        if not src_sections or not tgt_sections:
+            continue
+
+        # Map src/tgt to french/moore based on declared language codes
+        if src_lang == "fr":
+            fr_sections, mo_sections = src_sections, tgt_sections
+        else:
+            mo_sections, fr_sections = src_sections, tgt_sections
+
+        parallel = ParallelText(source=f"conseils/{date}")
+
+        def _add_section(sections: list[dict], target: list[str], normalize_fn, segment_fn) -> None:
+            for sec in sections:
+                title = _join_lines(sec.get("title", ""))
+                if title and not _NUMBER_ONLY_RE.match(title):
+                    if segment:
+                        target.extend(normalize_fn(s) for s in segment_fn(title))
+                    else:
+                        target.append(normalize_fn(title))
+                for sent in sec.get("sentences") or []:
+                    s = _join_lines(sent)
+                    if s and not _NUMBER_ONLY_RE.match(s):
+                        target.append(normalize_fn(s))
+
+        _add_section(fr_sections, parallel.french, normalize_fr, segment_fr)
+        _add_section(mo_sections, parallel.moore, normalize_mo, segment_mo)
+
+        if parallel.french and parallel.moore:
+            results.append((date, parallel))
+
+    return results
 
 
 def flatten_news_entries(

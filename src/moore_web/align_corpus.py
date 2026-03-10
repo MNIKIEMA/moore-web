@@ -61,6 +61,7 @@ def align(
     Returns:
         :class:`~moore_web.flatten.AlignedCorpus` with equal-length lists.
     """
+    # TODO: Optimize for conseil because we are making a call for each session
 
     from laser_encoders import LaserEncoderPipeline
 
