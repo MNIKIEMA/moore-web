@@ -96,6 +96,22 @@ def _load_kade_book(path: Path):
     return parse_book_from_json(str(path))
 
 
+def _dedup_aligned(aligned):
+    """Deduplicate an AlignedCorpus using COMET-QE and return a new one."""
+    from moore_web.dedup_aligned_comet import deduplicate_by_comet
+    from moore_web.flatten import AlignedCorpus
+
+    pairs = [{"fr": f, "mo": m, "score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)]
+    typer.echo("      Running COMET-QE deduplication…")
+    pairs = deduplicate_by_comet(pairs)
+    return AlignedCorpus(
+        french=[p["fr"] for p in pairs],
+        moore=[p["mo"] for p in pairs],
+        scores=[p["score"] for p in pairs],
+        source=aligned.source,
+    )
+
+
 def _parse_kade_file(input_path: Path, lang: KadeLang):
     """Parse a single Kadé PDF or TXT file and return a Book."""
     import re as _re
@@ -583,6 +599,13 @@ def e2e(
             "--entries/--no-entries", help="Include definition entries as moore/fr/en rows (simple only)."
         ),
     ] = False,
+    drop_duplicate: Annotated[
+        bool,
+        typer.Option(
+            "--drop-duplicate/--no-drop-duplicate",
+            help="Deduplicate aligned pairs with COMET-QE, keeping highest score per group (not available for simple).",
+        ),
+    ] = False,
 ) -> None:
     """End-to-end pipeline: parse → flatten → align.
 
@@ -702,6 +725,8 @@ def e2e(
             scores=all_scores,
             source="conseils",
         )
+        if drop_duplicate:
+            aligned = _dedup_aligned(aligned)
         out.write_bytes(msgspec.json.encode(aligned))
         typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
         return
@@ -711,6 +736,9 @@ def e2e(
     # ── align ────────────────────────────────────────────────────────────────
     typer.echo("[3/3] Aligning with LASER + FastDTW…")
     aligned = _align(parallel, min_score=min_score)
+
+    if drop_duplicate:
+        aligned = _dedup_aligned(aligned)
 
     out.write_bytes(msgspec.json.encode(aligned))
     typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
