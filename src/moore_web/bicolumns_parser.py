@@ -228,7 +228,7 @@ def split_entry(text: str) -> list[str]:
 
 
 def parse_complex_definition(text: str, page: int = 0, failure_count: list[int] | None = None):
-    pattern = r"^(?P<french>[^;]+;)\s*(?P<english>[^.]+?\.)\s*(?P<remaining>.*)"
+    pattern = r"^(?P<french>[^;]+;)\s*(?P<english>[^.?!]+?[.?!])\s*(?P<remaining>.*)"
     match = re.search(pattern, text, re.DOTALL)
     if match:
         french_gloss = match.group("french").strip()
@@ -288,7 +288,7 @@ def parse_complex_definition(text: str, page: int = 0, failure_count: list[int] 
 
 def extract_examples(text: str, page: int = 0, failure_count: list[int] | None = None):
     text = re.sub(r"\s+", " ", text).strip()
-    if not text or not re.search(r"[.?!]", text):
+    if not re.search(r"[a-zA-Z0-9]", text):
         return []
     text = text.replace("- ", "-")
     text = re.sub(r"\.\s+\.", ".", text)
@@ -302,7 +302,7 @@ def extract_examples(text: str, page: int = 0, failure_count: list[int] | None =
         if not re.search(r"proverb[e]?\s+indiquant|proverb\s+indicating|\(proverb", s, re.IGNORECASE)
     ]
     segments = [re.sub(r"^\)\s*", "", s).strip() for s in segments]
-    segments = [s for s in segments if s]
+    segments = [s for s in segments if s and not re.match(r"^[,/]", s)]
 
     num_segments = len(segments)
     results = []
