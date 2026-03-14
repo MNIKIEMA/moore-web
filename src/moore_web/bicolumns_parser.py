@@ -3,10 +3,15 @@ import pymupdf
 from argparse import ArgumentParser
 import json
 import re
-from loguru import logger
+from moore_web.set_logging import setup_logging
 
 
-def parse_dictionary_entries(entries: list[str]) -> list[dict]:
+logger = setup_logging(Path().cwd())
+
+
+def parse_dictionary_entries(
+    entries: list[str], page: int = 0, failure_count: list[int] | None = None
+) -> list[dict]:
     """
     Parses a list of split strings into structured dictionary data.
     Expected format: [Lemma, POS, Text+Lemma, POS, Text+Lemma...]
@@ -83,7 +88,7 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
 
         senses = []
         for sense_id, sense_text in raw_senses:
-            parsed = parse_complex_definition(sense_text)
+            parsed = parse_complex_definition(sense_text, page=page, failure_count=failure_count)
 
             sense_obj = {
                 "id": sense_id,
@@ -222,7 +227,7 @@ def split_entry(text: str) -> list[str]:
     return [text[: last_dot + 1].strip(), text[last_dot + 1 :].strip()]
 
 
-def parse_complex_definition(text: str):
+def parse_complex_definition(text: str, page: int = 0, failure_count: list[int] | None = None):
     pattern = r"^(?P<french>[^;]+;)\s*(?P<english>[^.]+?\.)\s*(?P<remaining>.*)"
     match = re.search(pattern, text, re.DOTALL)
     if match:
@@ -230,7 +235,11 @@ def parse_complex_definition(text: str):
         english_gloss = match.group("english").strip()
         remaining = match.group("remaining").strip()
     else:
-        logger.warning(f"Failed to match pattern: {text}\n English gloss will be empty")
+        if failure_count is not None:
+            failure_count[0] += 1
+        logger.warning(
+            f"[page={page}, failure=#{failure_count[0] if failure_count else '?'}] Failed to match pattern: {text}\n English gloss will be empty"
+        )
         parts = text.split(".", 1)
         french_gloss = parts[0].strip()
         english_gloss = ""
@@ -264,7 +273,7 @@ def parse_complex_definition(text: str):
             if definition_part[0].islower() and ";" not in definition_part:
                 english_gloss = english_gloss.rstrip() + " " + definition_part
             else:
-                examples = extract_examples(definition_part)
+                examples = extract_examples(definition_part, page=page, failure_count=failure_count)
 
     return {
         "french": french_gloss,
@@ -277,7 +286,7 @@ def parse_complex_definition(text: str):
     }
 
 
-def extract_examples(text: str):
+def extract_examples(text: str, page: int = 0, failure_count: list[int] | None = None):
     text = re.sub(r"\s+", " ", text).strip()
     if not text or not re.search(r"[.?!]", text):
         return []
@@ -314,11 +323,19 @@ def extract_examples(text: str):
             french = " ".join(segments[per_lang : per_lang * 2])
             english = None
         else:
-            logger.warning(f"Failed to parse example: {text}")
+            if failure_count is not None:
+                failure_count[0] += 1
+            logger.warning(
+                f"[page={page}, failure=#{failure_count[0] if failure_count else '?'}] Failed to parse example: {text}"
+            )
             return []
         results.append({"moore": moore, "french": french, "english": english})
     else:
-        logger.warning(f"Failed to parse example: {text} ({segments} segments)")
+        if failure_count is not None:
+            failure_count[0] += 1
+        logger.warning(
+            f"[page={page}, failure=#{failure_count[0] if failure_count else '?'}] Failed to parse example: {text} ({segments} segments)"
+        )
         return []
 
     return results
@@ -344,6 +361,7 @@ def merge_page(page: pymupdf.Page, num_columns: int = 2) -> str:
 
 def parse_doc(doc: pymupdf.Document):
     all_parsed = []
+    failure_count = [0]
     pos_pattern = r"((?:Verbe|Pronom|Nom|n\.pl|n\.propre|v\.inaccompli|v|expression|interj|particule grammaticale|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|interrogatif|Déterminant|postposition)\.)"
     num_columns = 2
     for i, page in enumerate(doc, start=1):
@@ -360,7 +378,7 @@ def parse_doc(doc: pymupdf.Document):
         entries = re.split(pos_pattern, text)
         if len(entries) > 1:
             try:
-                parsed_entries = parse_dictionary_entries(entries)
+                parsed_entries = parse_dictionary_entries(entries, page=i, failure_count=failure_count)
                 all_parsed.extend(parsed_entries)
             except Exception as e:
                 logger.error(f"Error processing page {i}: {e}")
