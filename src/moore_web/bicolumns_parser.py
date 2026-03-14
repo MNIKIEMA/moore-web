@@ -378,7 +378,7 @@ def main():
     parsed = parse_doc(doc)
     print_statistics(parsed)
     doc.close()
-    logger.info(f"Writing output to: {args.output}")
+    logger.info(f"Writing output to: {args.output_path}")
     with open(out_path, "w", encoding="utf-8") as f:
         if out_path.suffix != ".jsonl":
             if args.pretty:
