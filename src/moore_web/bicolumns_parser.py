@@ -19,12 +19,12 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
     text_blocks = entries[2::2]
     current_lemma = entries[0].strip()
 
-    lemma_match = re.match(r"^(.*?)\s*\[([^\]]+)\]", current_lemma)
+    lemma_match = re.match(r"^([^\s(]\S*)\s*\[([^\]]+)\]", current_lemma)
     if lemma_match:
         lemma_name = lemma_match.group(1).strip()
         ipa = lemma_match.group(2).strip()
     else:
-        lemma_name = re.split(r"\s+", current_lemma)[0].strip()
+        lemma_name = current_lemma.strip()
         ipa = ""
 
     all_data = []
@@ -51,11 +51,28 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
 
         dots = current_content.count(".")
         if dots > 1:
-            current_definition, raw_next_lemma = split_entry(current_content)
+            candidate_def, candidate_lemma = split_entry(current_content)
+            # A real next lemma is just a bare headword - no sentences inside.
+            # If the candidate contains sentence-ending punctuation + space, it's example text.
+            if candidate_lemma and re.search(r"[.?!]\s+", candidate_lemma):
+                current_definition = current_content
+                raw_next_lemma = ""
+            else:
+                current_definition = candidate_def
+                raw_next_lemma = candidate_lemma
         elif dots == 1:
             parts = current_content.rsplit(".", 1)
-            current_definition = parts[0].strip() + "."
-            raw_next_lemma = parts[1].strip() if len(parts) > 1 else ""
+            candidate_lemma = parts[1].strip() if len(parts) > 1 else ""
+            if candidate_lemma and re.search(r"[.?!]", candidate_lemma):
+                # Example sentences (using ? or !) follow the only period.
+                # Use the full content as definition and extract just the bare
+                # next lemma from after the last sentence-ending punctuation.
+                current_definition = current_content
+                sent_ends = list(re.finditer(r"[.?!]", candidate_lemma))
+                raw_next_lemma = candidate_lemma[sent_ends[-1].end() :].strip()
+            else:
+                current_definition = parts[0].strip() + "."
+                raw_next_lemma = candidate_lemma
         else:
             current_definition = current_content
             raw_next_lemma = ""
@@ -98,14 +115,18 @@ def parse_dictionary_entries(entries: list[str]) -> list[dict]:
         all_data.append(entry_data)
 
         if raw_next_lemma:
-            next_lemma_match = re.match(r"^(.*?)\s*\[([^\]]+)\]", raw_next_lemma)
+            next_lemma_match = re.match(r"^([^\s(]\S*)\s*\[([^\]]+)\]", raw_next_lemma)
             if next_lemma_match:
                 next_lemma_name = next_lemma_match.group(1).strip()
                 next_ipa = next_lemma_match.group(2).strip()
             else:
-                next_lemma_name = re.split(r"\s+", raw_next_lemma)[0].strip()
+                next_lemma_name = raw_next_lemma.strip()
                 next_ipa = ""
-            if not re.match(r"^\d+$", next_lemma_name):
+            if (
+                next_lemma_name
+                and not re.match(r"^\d+$", next_lemma_name)
+                and not re.match(r"^(synonyme|antonyme|Category):", next_lemma_name, re.IGNORECASE)
+            ):
                 lemma_name = next_lemma_name
                 ipa = next_ipa
 
@@ -185,13 +206,15 @@ def split_entry(text: str) -> list[str]:
 
     if not dot_positions:
         return [text, ""]
-    field_keywords = (
-        r"^(Comparez|Varinat|Variant|racine|emprunt|Plural|infinitif|Inaccompli|nominal|Category):"
-    )
+    field_keywords = r"^(Comparez|Varinat|Variant|racine|emprunt|Plural|infinitif|Inaccompli|nominal|Category|synonyme|antonyme):"
 
     for pos in reversed(dot_positions):
         after_dot = text[pos + 2 :].lstrip()
-        if after_dot and not re.match(field_keywords, after_dot, re.IGNORECASE):
+        if (
+            after_dot
+            and not re.match(field_keywords, after_dot, re.IGNORECASE)
+            and re.match(r"^[^\s(]", after_dot)
+        ):
             definition = text[: pos + 1].strip()
             lemma_part = text[pos + 1 :].strip()
             return [definition, lemma_part]
@@ -208,31 +231,40 @@ def parse_complex_definition(text: str):
         remaining = match.group("remaining").strip()
     else:
         logger.warning(f"Failed to match pattern: {text}\n English gloss will be empty")
-        gloss, remaining = text.split(".", 1)
-        french_gloss = gloss.strip()
+        parts = text.split(".", 1)
+        french_gloss = parts[0].strip()
         english_gloss = ""
+        remaining = parts[1].strip() if len(parts) > 1 else ""
     if not remaining:
         return {"french": french_gloss, "english": english_gloss}
-    cat_sci_pattern = r"Category:\s*([^.]+?)\.\s*(?:([A-Za-z][a-z]+(?:\s+[a-z]+){1,2}))?"
-    cat_sci_match = re.search(cat_sci_pattern, remaining)
+    remaining = re.sub(r"\b\S+\s*\[[^\]]+\]\s*\)\s*\.?", "", remaining).strip()
+    remaining = re.sub(r"\)\s*\S+\s*\[[^\]]+\]", "", remaining).strip()
+
+    cat_sci_pattern = r"Category:\s*((?:[^.]|\.\d)+)\.\s*(.*?)(?=\s*(?:synonyme|antonyme):\s|$)"
+    cat_sci_match = re.search(cat_sci_pattern, remaining, re.DOTALL | re.IGNORECASE)
     category = None
     scientific_name = None
 
     if cat_sci_match:
         category = cat_sci_match.group(1).strip()
-        scientific_name = cat_sci_match.group(2)
-        remaining = remaining.replace(cat_sci_match.group(0), "")
+        sci_raw = cat_sci_match.group(2).strip()
+        scientific_name = re.sub(r"[\s.;]+$", "", sci_raw) or None
+        remaining = remaining.replace(cat_sci_match.group(0), "").strip()
+
     syn_match = re.search(r"synonyme:\s*([^.]+)\.", remaining)
     ant_match = re.search(r"antonyme:\s*([^.]+)\.", remaining)
 
     clean_text = re.sub(r"(synonyme|antonyme):.*?\.", "", remaining, flags=re.DOTALL)
 
-    definition_part = ""
     examples = []
 
     if clean_text:
         definition_part = clean_text.strip()
-        examples = extract_examples(definition_part)
+        if definition_part.strip(". "):
+            if definition_part[0].islower() and ";" not in definition_part:
+                english_gloss = english_gloss.rstrip() + " " + definition_part
+            else:
+                examples = extract_examples(definition_part)
 
     return {
         "french": french_gloss,
@@ -247,11 +279,21 @@ def parse_complex_definition(text: str):
 
 def extract_examples(text: str):
     text = re.sub(r"\s+", " ", text).strip()
+    if not text or not re.search(r"[.?!]", text):
+        return []
     text = text.replace("- ", "-")
     text = re.sub(r"\.\s+\.", ".", text)
 
     segments = re.findall(r"[^.?!]+[.?!](?:\s*»\s*\.\s*\.)?", text)
     segments = [s.strip() for s in segments]
+
+    segments = [
+        s
+        for s in segments
+        if not re.search(r"proverb[e]?\s+indiquant|proverb\s+indicating|\(proverb", s, re.IGNORECASE)
+    ]
+    segments = [re.sub(r"^\)\s*", "", s).strip() for s in segments]
+    segments = [s for s in segments if s]
 
     num_segments = len(segments)
     results = []
@@ -302,7 +344,7 @@ def merge_page(page: pymupdf.Page, num_columns: int = 2) -> str:
 
 def parse_doc(doc: pymupdf.Document):
     all_parsed = []
-    pos_pattern = r"((?:Verbe|Pronom|Nom|expression|interj|particule grammaticale|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|v\.inaccompli|interrogatif|Déterminant|postposition)\.)"
+    pos_pattern = r"((?:Verbe|Pronom|Nom|n\.pl|n\.propre|v\.inaccompli|v|expression|interj|particule grammaticale|préfixe|Adverbe|auxiliaire|Adjectif|conjonction|indéfinie|démonstratif|interrogatif|Déterminant|postposition)\.)"
     num_columns = 2
     for i, page in enumerate(doc, start=1):
         text = merge_page(page, num_columns)
@@ -378,7 +420,7 @@ def main():
     parsed = parse_doc(doc)
     print_statistics(parsed)
     doc.close()
-    logger.info(f"Writing output to: {args.output}")
+    logger.info(f"Writing output to: {args.output_path}")
     with open(out_path, "w", encoding="utf-8") as f:
         if out_path.suffix != ".jsonl":
             if args.pretty:

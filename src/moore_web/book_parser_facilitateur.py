@@ -127,6 +127,27 @@ FRENCH_INTRO_SUBSECTION_TITLES = [
 
 CHAPTER_RE = re.compile(r"^(?:chapitre|sak\s+a)\s+(\d+)(?:\s+soaba)?\s*[:\-–]?\s*(.*)$", re.IGNORECASE)
 
+# Name mapping: facilitateur names → Mooré SIDA book standard names
+FACILITATEUR_NAME_MAP: dict[str, str] = {
+    "Kadé": "Poko",
+    "Kaluu": "Mariam",
+    "Katiu": "Yembi",
+    "Kayaga": "Aminata",
+    "Kande": "Poko",
+    "Atiana": "Séni",
+    "Betaro": "Yõdi",
+    "Apiu": "Adama",
+    "Atega": "Abdou",
+}
+
+_FR_NAME_RE = re.compile(r"\b(" + "|".join(re.escape(k) for k in FACILITATEUR_NAME_MAP) + r")\b")
+
+
+def replace_facilitateur_names_fr(text: str) -> str:
+    """Replace French facilitateur character names with their SIDA equivalents."""
+    return _FR_NAME_RE.sub(lambda m: FACILITATEUR_NAME_MAP[m.group(0)], text)
+
+
 NUMBERED_ITEM_RE = re.compile(r"^\s*(\d+)\.\s+(.+)")
 BULLET_ITEM_RE = re.compile(r"^\s*•\s+(.+)")
 

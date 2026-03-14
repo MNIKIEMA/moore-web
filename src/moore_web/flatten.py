@@ -234,17 +234,20 @@ def flatten_facilitateur_pair(
         mo_book: Parsed Mooré Kadé book.
         segment: If True, run sentence segmentation on each item.
     """
-    from moore_web.book_parser_facilitateur import flatten_book_to_list
+    from moore_web.book_parser_facilitateur import flatten_book_to_list, replace_facilitateur_names_fr
 
     result = ParallelText(source="kade")
 
     # Titles as alignment anchors
     for ch in fr_book.chapters:
         if ch.title.strip():
-            result.french.append(normalize_fr(ch.title.strip()))
+            result.french.append(normalize_fr(replace_facilitateur_names_fr(ch.title.strip())))
         for sec in ch.sections:
             if sec.title.strip():
-                result.french.append(normalize_fr(sec.title.strip()))
+                result.french.append(normalize_fr(replace_facilitateur_names_fr(sec.title.strip())))
+            for sub in sec.subsections:
+                if sub.title.strip():
+                    result.french.append(normalize_fr(replace_facilitateur_names_fr(sub.title.strip())))
 
     for ch in mo_book.chapters:
         if ch.title.strip():
@@ -259,11 +262,11 @@ def flatten_facilitateur_pair(
 
     if segment:
         for s in fr_list:
-            result.french.extend(normalize_fr(sent) for sent in segment_fr(s))
+            result.french.extend(normalize_fr(sent) for sent in segment_fr(replace_facilitateur_names_fr(s)))
         for s in mo_list:
             result.moore.extend(normalize_mo(sent) for sent in segment_mo(s))
     else:
-        result.french.extend(normalize_fr(s) for s in fr_list if s.strip())
+        result.french.extend(normalize_fr(replace_facilitateur_names_fr(s)) for s in fr_list if s.strip())
         result.moore.extend(normalize_mo(s) for s in mo_list if s.strip())
 
     return result

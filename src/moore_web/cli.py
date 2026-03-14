@@ -90,6 +90,9 @@ def _err(msg: str) -> None:
     typer.echo(f"Error: {msg}", err=True)
 
 
+# TODO: replace Kadé by Poko and Katiu, Atega too
+
+
 def _load_kade_book(path: Path):
     from moore_web.book_parser_facilitateur import parse_book_from_json
 
