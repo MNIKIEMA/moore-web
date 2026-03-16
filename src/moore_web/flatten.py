@@ -84,6 +84,33 @@ class AlignedCorpus(ParallelText):
             source=source,
         )
 
+    def to_jsonl_rows(self) -> list[dict]:
+        """Return one dict per aligned pair, ready to write as JSONL."""
+        has_english = bool(self.english)
+        if has_english:
+            return [
+                {
+                    "french": french,
+                    "moore": moore,
+                    "english": english,
+                    "score": score,
+                    "source": self.source,
+                }
+                for i, (french, moore, english, score) in enumerate(zip(self.french, self.moore, self.english, self.scores))
+            ]
+        return [
+            {"french": french, "moore": moore, "score": score, "source": self.source}
+            for french, moore, score in zip(self.french, self.moore, self.scores)
+        ]
+
+    def write_jsonl(self, path: str) -> None:
+        """Write aligned pairs to a JSONL file."""
+        import json
+
+        with open(path, "w", encoding="utf-8") as f:
+            for row in self.to_jsonl_rows():
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
