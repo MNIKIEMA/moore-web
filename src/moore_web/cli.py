@@ -618,6 +618,13 @@ def e2e(
             "--entries/--no-entries", help="Include definition entries as moore/fr/en rows (simple only)."
         ),
     ] = False,
+    entries_output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--entries-output",
+            help="Write entries to a separate file (simple only). Avoids parsing the PDF twice.",
+        ),
+    ] = None,
     drop_duplicate: Annotated[
         bool,
         typer.Option(
@@ -723,21 +730,26 @@ def e2e(
         with pymupdf.open(str(input)) as doc:
             pages = parse_doc(doc)
         typer.echo("[2/2] Flattening…")
-        parallel = flatten_simple_parser(pages, include_examples=examples, include_entries=entries)
-        out = output or _default_output(input, f"_aligned{_ext}")
 
-        typer.echo(
-            f"      FR: {len(parallel.french)}  MO: {len(parallel.moore)}  EN: {len(parallel.english)}"
-        )
-        # Data is pre-aligned by construction — no LASER needed.
-        aligned = AlignedCorpus(
-            french=parallel.french,
-            moore=parallel.moore,
-            english=parallel.english,
-            scores=[1.0] * len(parallel.french),
-            source=parallel.source,
-        )
-        _write_aligned(aligned, out, jsonl)
+        def _write_simple(inc_examples: bool, inc_entries: bool, dest: Path) -> None:
+            p = flatten_simple_parser(pages, include_examples=inc_examples, include_entries=inc_entries)
+            typer.echo(f"      FR: {len(p.french)}  MO: {len(p.moore)}  EN: {len(p.english)}  → {dest}")
+            a = AlignedCorpus(
+                french=p.french,
+                moore=p.moore,
+                english=p.english,
+                scores=[1.0] * len(p.french),
+                source=p.source,
+            )
+            _write_aligned(a, dest, jsonl)
+
+        out = output or _default_output(input, f"_aligned{_ext}")
+        if entries_output is not None:
+            # Parse once, write examples and entries to separate files.
+            _write_simple(inc_examples=True, inc_entries=False, dest=out)
+            _write_simple(inc_examples=False, inc_entries=True, dest=entries_output)
+        else:
+            _write_simple(inc_examples=examples, inc_entries=entries, dest=out)
         return
 
     elif source == Source.conseils:
