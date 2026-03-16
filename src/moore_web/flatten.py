@@ -103,20 +103,34 @@ def _join_lines(text: str) -> str:
 def _merge_open_quotes(sentences: list[str]) -> list[str]:
     """Merge syntok fragments produced by splitting inside quoted speech.
 
-    Tracks `"` balance across segments: if a segment leaves an unclosed quote,
-    the next segment is merged into it until the quote is closed.
-    A lone closing `"` is also merged back unconditionally.
+    Tracks both typographic double-quote (`"`) balance and guillemet (`«»`)
+    balance across segments.  If a segment leaves an unclosed quote open, the
+    next segment is merged into it until the quote is closed.  A lone closing
+    `"` or `»` is also merged back unconditionally.
+
+    Texts in this corpus mix both quote styles for the *same* quoted speech
+    (e.g. ``«…sentence one.`` / ``sentence two…»``), so both markers must be
+    tracked together.
     """
     result: list[str] = []
     in_quote = False
 
+    def _is_open(s: str) -> bool:
+        if s.count("«") > s.count("»"):
+            return True
+        if s.count('"') % 2 == 1:
+            return True
+        if s.count("\u201c") > s.count("\u201d"):
+            return True
+        return False
+
     for s in sentences:
-        is_lone_quote = s.strip() == '"'
-        if result and (in_quote or is_lone_quote):
+        is_lone_closing = s.strip() in {'"', "»", "\u201d"}
+        if result and (in_quote or is_lone_closing):
             result[-1] += " " + s
         else:
             result.append(s)
-        in_quote = result[-1].count('"') % 2 == 1
+        in_quote = _is_open(result[-1])
 
     return result
 
@@ -150,20 +164,25 @@ def segment_mo(text: str) -> list[str]:
 
 
 def normalize_fr(sentence: str) -> str:
-    """Normalise French spacing without tokenising.
+    """Normalise French spacing and quotes without tokenising.
 
-    Only fixes erroneous spaces before punctuation and inside guillemets,
-    then collapses runs of spaces.  Using MosesTokenizer here is wrong because
-    it splits contractions (``Qu'`` → ``Qu' ``) and adds spaces before
-    sentence-ending punctuation, which corrupts the text for alignment.
+    - Converts curly double-quotes (U+201C/U+201D) to straight ASCII `"`.
+    - Fixes erroneous spaces before punctuation and inside guillemets.
+    - Collapses runs of spaces.
+
+    Using MosesTokenizer here is wrong because it splits contractions
+    (``Qu'`` → ``Qu' ``) and adds spaces before sentence-ending punctuation,
+    which corrupts the text for alignment.
     """
+    sentence = sentence.replace("\u201c", '"').replace("\u201d", '"')
     sentence = re.sub(r" +([!?:;».,])", r"\1", sentence)
     sentence = re.sub(r"([«]) +", r"\1", sentence)
     return _MULTI_SPACE_RE.sub(" ", sentence).strip()
 
 
 def normalize_mo(sentence: str) -> str:
-    """Basic Mooré normalisation: collapse consecutive spaces."""
+    """Basic Mooré normalisation: collapse spaces and curly quotes."""
+    sentence = sentence.replace("\u201c", '"').replace("\u201d", '"')
     return _MULTI_SPACE_RE.sub(" ", sentence).strip()
 
 
@@ -398,11 +417,16 @@ def flatten_news_entries(
     entries: list[dict],
     segment: bool = True,
 ) -> ParallelText:
-    """Flatten segmented news entries into parallel text.
+    """Flatten segmented news entries into a single parallel text.
 
     Each entry must have ``entry["segments"]["french"]`` and
     ``entry["segments"]["moore"]`` (lists of text units, as produced by
     :func:`moore_web.segment_news_data.segment_entries`).
+
+    .. warning::
+        All articles are merged into one flat list.  Use
+        :func:`flatten_news_per_entry` when aligning, so that FastDTW
+        operates within article boundaries rather than across them.
 
     Args:
         entries: Annotated corpus entries.
@@ -430,3 +454,47 @@ def flatten_news_entries(
                 result.moore.append(normalize_mo(mo_text))
 
     return result
+
+
+def flatten_news_per_entry(
+    entries: list[dict],
+    segment: bool = True,
+) -> list[tuple[str, ParallelText]]:
+    """Flatten segmented news entries into one ParallelText per article.
+
+    Returns a list of ``(url, ParallelText)`` pairs so that alignment can be
+    run independently per article.  This preserves the monotonic ordering
+    assumption required by FastDTW and prevents sentences from different
+    articles being aligned to each other.
+
+    Entries without both French and Mooré content are skipped.
+
+    Args:
+        entries: Annotated corpus entries (output of
+                 :func:`moore_web.segment_news_data.segment_entries`).
+        segment: If True, run sentence segmentation on each entry's text.
+    """
+    results: list[tuple[str, ParallelText]] = []
+
+    for i, item in enumerate(entries):
+        segs = item.get("segments", {})
+        fr_text = _join_lines(" ".join(segs.get("french") or []))
+        mo_text = _join_lines(" ".join(segs.get("moore") or []))
+
+        if not fr_text or not mo_text:
+            continue
+
+        parallel = ParallelText(source=f"news/{i}")
+
+        if segment:
+            parallel.french.extend(normalize_fr(s) for s in segment_fr(fr_text))
+            parallel.moore.extend(normalize_mo(s) for s in segment_mo(mo_text))
+        else:
+            parallel.french.append(normalize_fr(fr_text))
+            parallel.moore.append(normalize_mo(mo_text))
+
+        if parallel.french and parallel.moore:
+            url = item.get("url", str(i))
+            results.append((url, parallel))
+
+    return results

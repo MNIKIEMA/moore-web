@@ -1,7 +1,8 @@
 import re
-from dataclasses import dataclass
 import pymupdf
 from loguru import logger
+
+from moore_web.models import DictionaryEntry, Example, Sense
 
 
 SUB_SPLIT_RE = re.compile(r"\s+\d+\)\s+(?=Frn)")
@@ -76,11 +77,54 @@ ENTRY_START = rf"""
 """
 
 
-@dataclass
-class Entry:
-    french: str
-    english: str
-    moore: str
+_VARIANT_EXTRAS = frozenset({"variant", "nominal", "racine", "infinitif", "empr", "sg", "inaccompli"})
+
+
+def _make_entry(d: dict) -> DictionaryEntry:
+    """Convert an internal parse dict to a DictionaryEntry struct."""
+    senses: list[Sense] = []
+    variants: dict[str, list[str]] = {}
+    sense_id = 1
+
+    for block in d["senses"]:
+        for s in block:
+            for key in _VARIANT_EXTRAS:
+                if key in s:
+                    variants[key] = [v.strip() for v in str(s[key]).split(",")]
+
+            examples: list[Example] = []
+            moore_ex = s.get("moore_example")
+            fr_ex = s.get("french_example")
+            if moore_ex or fr_ex:
+                examples.append(
+                    Example(
+                        moore=moore_ex or "",
+                        french=fr_ex or "",
+                        english=s.get("english_example") or None,
+                    )
+                )
+
+            senses.append(
+                Sense(
+                    id=str(sense_id),
+                    french=s.get("fr_entry", ""),
+                    english=s.get("eng_entry", ""),
+                    examples=examples,
+                    category=s.get("category"),
+                    scientific_name=s.get("scientific"),
+                    synonym=s.get("synonym"),
+                    antonym=None,
+                )
+            )
+            sense_id += 1
+
+    return DictionaryEntry(
+        lemma=d["entry"],
+        ipa=d["tone"],
+        pos=d["grammar"],
+        senses=senses,
+        variants=variants if variants else None,
+    )
 
 
 def split_sub_entries(entry_text):
@@ -308,7 +352,8 @@ def strip_trailing_entry_name(body: str, entry: str) -> str:
     return body
 
 
-def parse_page(page: str):
+def parse_page(page: str) -> tuple[list[dict], str]:
+    """Return (internal_entry_dicts, spillover_text)."""
     page_entries: list[dict] = []
     unfinished_block, entries = split_first_entry(page)
     entries = split_dictionary_entries(entries)
@@ -319,7 +364,6 @@ def parse_page(page: str):
         page_entries.append(
             {
                 "body": cleaned_body,
-                "raw_body": rest,
                 "entry": token,
                 "tone": tone,
                 "grammar": grammar,
@@ -330,7 +374,7 @@ def parse_page(page: str):
     return page_entries, unfinished_block
 
 
-def parse_doc(doc: pymupdf.Document):
+def parse_doc(doc: pymupdf.Document) -> list[DictionaryEntry]:
     parsed_entries: list[list[dict]] = []
     for i, page in enumerate(doc, start=1):  # type: ignore
         blocks = page.get_text("blocks", sort=True)
@@ -343,22 +387,23 @@ def parse_doc(doc: pymupdf.Document):
             continue
         if not parsed_entries:
             parsed_entries.append(entries)
+            continue
         last_page_entries = parsed_entries[-1]
         last_entry = last_page_entries.pop()
 
         # FIXME: Page with image has the entry name repeated at the end
-        # like
         merged_body = last_entry["body"] + valid_start
         last_entry["body"] = merged_body
         last_entry["senses"] = analyze_body(merged_body)
         last_page_entries.append(last_entry)
         last_page_entries.extend(entries)
-    return parsed_entries
+
+    return [_make_entry(d) for page_entries in parsed_entries for d in page_entries]
 
 
 if __name__ == "__main__":
-    import json
     import argparse
+    import msgspec.json
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -367,14 +412,12 @@ if __name__ == "__main__":
         type=str,
         default="data/Dictionnaire-Moore-français-English-avec-images.pdf",
     )
-    parser.add_argument("--output_json", "-o", type=str, default="output.json")
+    parser.add_argument("--output_jsonl", "-o", type=str, default="output.jsonl")
     args = parser.parse_args()
 
-    input_pdf = args.input_pdf
-    output_json = args.output_json
-
-    with pymupdf.open(input_pdf) as doc:
+    with pymupdf.open(args.input_pdf) as doc:
         res = parse_doc(doc)
 
-        with open(output_json, "w", encoding="utf-8") as f:
-            json.dump(res, f, indent=3, ensure_ascii=False)
+    with open(args.output_jsonl, "wb") as f:
+        for entry in res:
+            f.write(msgspec.json.encode(entry) + b"\n")

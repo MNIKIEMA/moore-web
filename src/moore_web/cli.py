@@ -620,7 +620,6 @@ def e2e(
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import (
         flatten_facilitateur_pair,
-        flatten_news_entries,
         flatten_sida_book,
     )
 
@@ -662,12 +661,34 @@ def e2e(
             typer.echo("      Running language ID…")
             corpus = annotate_text_units(corpus)
 
+        from moore_web.flatten import AlignedCorpus, flatten_news_per_entry
         from moore_web.segment_news_data import segment_entries
 
         corpus = segment_entries(corpus)
         typer.echo("[2/3] Flattening…")
-        parallel = flatten_news_entries(corpus, segment=segment)
+        article_parallels = flatten_news_per_entry(corpus, segment=segment)
         out = output or _default_output(input, "_aligned.json")
+        typer.echo(f"      {len(article_parallels)} bilingual articles found.")
+
+        typer.echo("[3/3] Aligning per article with LASER + FastDTW…")
+        all_fr, all_mo, all_scores = [], [], []
+        for url, dp in article_parallels:
+            aligned_dp = _align(dp, min_score=min_score)
+            all_fr.extend(aligned_dp.french)
+            all_mo.extend(aligned_dp.moore)
+            all_scores.extend(aligned_dp.scores)
+
+        aligned = AlignedCorpus(
+            french=all_fr,
+            moore=all_mo,
+            scores=all_scores,
+            source="news",
+        )
+        if drop_duplicate:
+            aligned = _dedup_aligned(aligned)
+        out.write_bytes(msgspec.json.encode(aligned))
+        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        return
 
     elif source == Source.simple:
         if input is None:
