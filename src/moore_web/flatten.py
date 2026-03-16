@@ -96,7 +96,9 @@ class AlignedCorpus(ParallelText):
                     "score": score,
                     "source": self.source,
                 }
-                for i, (french, moore, english, score) in enumerate(zip(self.french, self.moore, self.english, self.scores))
+                for i, (french, moore, english, score) in enumerate(
+                    zip(self.french, self.moore, self.english, self.scores)
+                )
             ]
         return [
             {"french": french, "moore": moore, "score": score, "source": self.source}
