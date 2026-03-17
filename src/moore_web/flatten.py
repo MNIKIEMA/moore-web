@@ -84,6 +84,35 @@ class AlignedCorpus(ParallelText):
             source=source,
         )
 
+    def to_jsonl_rows(self) -> list[dict]:
+        """Return one dict per aligned pair, ready to write as JSONL."""
+        has_english = bool(self.english)
+        if has_english:
+            return [
+                {
+                    "french": french,
+                    "moore": moore,
+                    "english": english,
+                    "score": score,
+                    "source": self.source,
+                }
+                for i, (french, moore, english, score) in enumerate(
+                    zip(self.french, self.moore, self.english, self.scores)
+                )
+            ]
+        return [
+            {"french": french, "moore": moore, "score": score, "source": self.source}
+            for french, moore, score in zip(self.french, self.moore, self.scores)
+        ]
+
+    def write_jsonl(self, path: str) -> None:
+        """Write aligned pairs to a JSONL file."""
+        import json
+
+        with open(path, "w", encoding="utf-8") as f:
+            for row in self.to_jsonl_rows():
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -292,28 +321,20 @@ def flatten_facilitateur_pair(
 
 
 def flatten_simple_parser(
-    pages: list[list[dict]],
+    entries: list,
     include_examples: bool = True,
     include_entries: bool = False,
 ) -> ParallelText:
     """Flatten output of :func:`moore_web.simple_parser.parse_doc` into parallel text.
 
-    Each dictionary entry has:
-    - ``entry``      — Mooré headword
-    - ``senses``     — list of sub-entry blocks, each a list of sense dicts with
-                       ``fr_entry``, ``eng_entry``, ``moore_example``,
-                       ``french_example``, ``english_example``
-
     Args:
-        pages:            Output of ``parse_doc`` — list of pages, each a list of
-                          entry dicts.
-        include_examples: Add pre-aligned example triplets
-                          (moore_example, french_example, english_example).
-                          All three must be non-null for a triplet to be included.
-        include_entries:  Add definition pairs: moore headword (``entry``),
-                          French definition (``fr_entry``), English definition
-                          (``eng_entry``).
+        entries:          Output of ``parse_doc`` — list of :class:`DictionaryEntry`.
+        include_examples: Add pre-aligned example triplets. All three languages must
+                          be present for a triplet to be included.
+        include_entries:  Add definition pairs: mooré headword + French + English.
     """
+    from moore_web.models import DictionaryEntry
+
     result = ParallelText(source="simple")
 
     def _clean(text: str | None) -> str:
@@ -322,28 +343,29 @@ def flatten_simple_parser(
         text = re.sub(r"\s+", " ", text)
         return text.strip()
 
-    for page in pages:
-        for entry_dict in page:
-            moore_headword = _clean(entry_dict.get("entry"))
+    for entry in entries:
+        if not isinstance(entry, DictionaryEntry):
+            continue
+        moore_headword = _clean(entry.lemma)
 
-            for sub_entry in entry_dict.get("senses") or []:
-                for sense in sub_entry:
-                    if include_entries:
-                        fr = _clean(sense.get("fr_entry"))
-                        en = _clean(sense.get("eng_entry"))
-                        if fr or en or moore_headword:
-                            result.french.append(normalize_fr(fr) if fr else "")
-                            result.moore.append(normalize_mo(moore_headword) if moore_headword else "")
-                            result.english.append(en)
+        for sense in entry.senses:
+            if include_entries:
+                fr = _clean(sense.french)
+                en = _clean(sense.english)
+                if fr or en or moore_headword:
+                    result.french.append(normalize_fr(fr) if fr else "")
+                    result.moore.append(normalize_mo(moore_headword) if moore_headword else "")
+                    result.english.append(en)
 
-                    if include_examples:
-                        mo_ex = _clean(sense.get("moore_example"))
-                        fr_ex = _clean(sense.get("french_example"))
-                        en_ex = _clean(sense.get("english_example"))
-                        if mo_ex and fr_ex and en_ex:
-                            result.moore.append(mo_ex if mo_ex else mo_ex)
-                            result.french.append(fr_ex)
-                            result.english.append(en_ex)
+            if include_examples:
+                for example in sense.examples:
+                    mo_ex = _clean(example.moore)
+                    fr_ex = _clean(example.french)
+                    en_ex = _clean(example.english)
+                    if mo_ex and fr_ex and en_ex:
+                        result.moore.append(mo_ex)
+                        result.french.append(fr_ex)
+                        result.english.append(en_ex)
 
     return result
 

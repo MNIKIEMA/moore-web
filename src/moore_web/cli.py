@@ -99,6 +99,14 @@ def _load_kade_book(path: Path):
     return parse_book_from_json(str(path))
 
 
+def _write_aligned(aligned, out: Path, use_jsonl: bool) -> None:
+    if use_jsonl:
+        aligned.write_jsonl(str(out))
+    else:
+        out.write_bytes(msgspec.json.encode(aligned))
+    typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+
+
 def _dedup_aligned(aligned):
     """Deduplicate an AlignedCorpus using COMET-QE and return a new one."""
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
@@ -531,6 +539,10 @@ def align(
         float,
         typer.Option("--min-score", min=0.0, max=1.0, help="Drop pairs below this cosine similarity."),
     ] = 0.0,
+    jsonl: Annotated[
+        bool,
+        typer.Option("--jsonl", is_flag=True, help="Write output as JSONL instead of JSON."),
+    ] = False,
 ) -> None:
     """Align a ParallelText JSON using LASER embeddings + FastDTW.
 
@@ -539,14 +551,18 @@ def align(
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import ParallelText
 
-    out = output or _default_output(input, "_aligned.json")
+    suffix = "_aligned.jsonl" if jsonl else "_aligned.json"
+    out = output or _default_output(input, suffix)
 
     parallel = ParallelText.from_json(input.read_bytes())
     typer.echo(f"Input: {len(parallel.french)} FR  {len(parallel.moore)} MO")
 
     aligned = _align(parallel, min_score=min_score)
 
-    out.write_bytes(msgspec.json.encode(aligned))
+    if jsonl:
+        aligned.write_jsonl(str(out))
+    else:
+        out.write_bytes(msgspec.json.encode(aligned))
     typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
 
 
@@ -602,12 +618,23 @@ def e2e(
             "--entries/--no-entries", help="Include definition entries as moore/fr/en rows (simple only)."
         ),
     ] = False,
+    entries_output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--entries-output",
+            help="Write entries to a separate file (simple only). Avoids parsing the PDF twice.",
+        ),
+    ] = None,
     drop_duplicate: Annotated[
         bool,
         typer.Option(
             "--drop-duplicate/--no-drop-duplicate",
             help="Deduplicate aligned pairs with COMET-QE, keeping highest score per group (not available for simple).",
         ),
+    ] = False,
+    jsonl: Annotated[
+        bool,
+        typer.Option("--jsonl", is_flag=True, help="Write output as JSONL instead of JSON."),
     ] = False,
 ) -> None:
     """End-to-end pipeline: parse → flatten → align.
@@ -624,6 +651,7 @@ def e2e(
     )
 
     # ── parse + flatten ──────────────────────────────────────────────────────
+    _ext = ".jsonl" if jsonl else ".json"
     if source == Source.sida:
         if input is None:
             _err("--input is required for source 'sida'.")
@@ -634,7 +662,7 @@ def e2e(
         chapters = parse_pdf_to_json(str(input))
         typer.echo(f"[2/3] Flattening {len(chapters)} chapters…")
         parallel = flatten_sida_book(chapters, segment=segment)
-        out = output or _default_output(input, "_aligned.json")
+        out = output or _default_output(input, f"_aligned{_ext}")
 
     elif source == Source.kade:
         if fr_input is None or mo_input is None:
@@ -646,7 +674,7 @@ def e2e(
         mo_book = _parse_kade_file(mo_input, KadeLang.moore)
         typer.echo("[2/3] Flattening…")
         parallel = flatten_facilitateur_pair(fr_book, mo_book, segment=segment)
-        out = output or fr_input.with_name("kade_aligned.json")
+        out = output or fr_input.with_name(f"kade_aligned{_ext}")
 
     elif source == Source.news:
         if input is None:
@@ -667,7 +695,7 @@ def e2e(
         corpus = segment_entries(corpus)
         typer.echo("[2/3] Flattening…")
         article_parallels = flatten_news_per_entry(corpus, segment=segment)
-        out = output or _default_output(input, "_aligned.json")
+        out = output or _default_output(input, f"_aligned{_ext}")
         typer.echo(f"      {len(article_parallels)} bilingual articles found.")
 
         typer.echo("[3/3] Aligning per article with LASER + FastDTW…")
@@ -686,8 +714,7 @@ def e2e(
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
-        out.write_bytes(msgspec.json.encode(aligned))
-        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        _write_aligned(aligned, out, jsonl)
         return
 
     elif source == Source.simple:
@@ -703,22 +730,26 @@ def e2e(
         with pymupdf.open(str(input)) as doc:
             pages = parse_doc(doc)
         typer.echo("[2/2] Flattening…")
-        parallel = flatten_simple_parser(pages, include_examples=examples, include_entries=entries)
-        out = output or _default_output(input, "_aligned.json")
 
-        typer.echo(
-            f"      FR: {len(parallel.french)}  MO: {len(parallel.moore)}  EN: {len(parallel.english)}"
-        )
-        # Data is pre-aligned by construction — no LASER needed.
-        aligned = AlignedCorpus(
-            french=parallel.french,
-            moore=parallel.moore,
-            english=parallel.english,
-            scores=[1.0] * len(parallel.french),
-            source=parallel.source,
-        )
-        out.write_bytes(msgspec.json.encode(aligned))
-        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        def _write_simple(inc_examples: bool, inc_entries: bool, dest: Path) -> None:
+            p = flatten_simple_parser(pages, include_examples=inc_examples, include_entries=inc_entries)
+            typer.echo(f"      FR: {len(p.french)}  MO: {len(p.moore)}  EN: {len(p.english)}  → {dest}")
+            a = AlignedCorpus(
+                french=p.french,
+                moore=p.moore,
+                english=p.english,
+                scores=[1.0] * len(p.french),
+                source=p.source,
+            )
+            _write_aligned(a, dest, jsonl)
+
+        out = output or _default_output(input, f"_aligned{_ext}")
+        if entries_output is not None:
+            # Parse once, write examples and entries to separate files.
+            _write_simple(inc_examples=True, inc_entries=False, dest=out)
+            _write_simple(inc_examples=False, inc_entries=True, dest=entries_output)
+        else:
+            _write_simple(inc_examples=examples, inc_entries=entries, dest=out)
         return
 
     elif source == Source.conseils:
@@ -730,7 +761,7 @@ def e2e(
         typer.echo(f"[1/2] Flattening conseil-des-ministres corpus: {input}")
         corpus = json.loads(input.read_text(encoding="utf-8"))
         date_parallels = flatten_conseils(corpus, segment=segment)
-        out = output or _default_output(input, "_aligned.json")
+        out = output or _default_output(input, f"_aligned{_ext}")
         typer.echo(f"      {len(date_parallels)} bilingual sessions found.")
 
         # Align each date independently, then concatenate.
@@ -751,8 +782,7 @@ def e2e(
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
-        out.write_bytes(msgspec.json.encode(aligned))
-        typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+        _write_aligned(aligned, out, jsonl)
         return
 
     typer.echo(f"      FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences")
@@ -764,8 +794,7 @@ def e2e(
     if drop_duplicate:
         aligned = _dedup_aligned(aligned)
 
-    out.write_bytes(msgspec.json.encode(aligned))
-    typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
+    _write_aligned(aligned, out, jsonl)
 
 
 # ---------------------------------------------------------------------------
