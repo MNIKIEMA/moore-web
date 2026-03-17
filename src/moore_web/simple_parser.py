@@ -7,6 +7,8 @@ from moore_web.models import DictionaryEntry, Example, Sense
 
 SUB_SPLIT_RE = re.compile(r"\s+\d+\)\s+(?=Frn)")
 MOORE_EXAMPLE_RE = re.compile(r"\{e\.g\.\s*(.*?)\}", flags=re.DOTALL)
+# Detects: "Frn <def> {e.g. <moore>} Frn <fr_ex>" — no Eng between the two Frn blocks
+EMBEDDED_EG_FRN_RE = re.compile(r"^(.*?)\{e\.g\.\s*(.*?)\}\s*Frn\s*(.*)", flags=re.DOTALL)
 EXTRA_FIELDS = [
     (
         "variant",
@@ -44,7 +46,10 @@ EXTRA_FIELDS = [
         "inaccompli",
         r"Inaccompli\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg)",
     ),
-    ("antonym", r"ant\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg|Inaccompli)"),
+    (
+        "antonym",
+        r"ant\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg|Inaccompli)",
+    ),
     ("category", r"\(catégorie\s*:\s*(.*?)\.\)"),
 ]
 
@@ -102,6 +107,14 @@ def _make_entry(d: dict) -> DictionaryEntry:
                         moore=moore_ex or "",
                         french=fr_ex or "",
                         english=s.get("english_example") or None,
+                    )
+                )
+            for extra in s.get("extra_examples", []):
+                examples.append(
+                    Example(
+                        moore=extra.get("moore", ""),
+                        french=extra.get("french", ""),
+                        english=extra.get("english") or None,
                     )
                 )
 
@@ -228,31 +241,70 @@ def analyze_body(body):
 
         sense_data = []
 
-        if len(fr_eng_pairs) == 2:
+        if len(fr_eng_pairs) >= 2:
             fr_entry, eng_entry = fr_eng_pairs[0]
-            fr_example, eng_rest = fr_eng_pairs[1]
 
-            moore_example = extract_moore_examples(eng_entry)
-            eng_entry_rest = clean_english_remove_examples(eng_entry)
-            extras = extract_extra_fields(eng_rest)
-            eng_entry_clean = clean_english_text(eng_entry_rest)
+            # Pair 0's fr may contain an embedded "{e.g. <moore>} Frn <fr_ex>" with no Eng
+            embedded0 = EMBEDDED_EG_FRN_RE.match(fr_entry)
+            if embedded0:
+                fr_entry = embedded0.group(1).strip()
+                embedded_moore = embedded0.group(2).strip()
+                embedded_fr_ex = embedded0.group(3).strip()
+                embedded_en_ex = clean_english_text(eng_entry)
+                extra_from_embedded = [
+                    {"moore": embedded_moore, "french": embedded_fr_ex, "english": embedded_en_ex}
+                ]
+                eng_entry = ""
+            else:
+                extra_from_embedded = []
 
+            eng_entry_clean = clean_english_text(clean_english_remove_examples(eng_entry))
+            extras = extract_extra_fields(fr_eng_pairs[-1][1])
+
+            # Chain: pair[j-1]'s {e.g.} is the Moore example; pair[j] provides its fr/en
+            examples = list(extra_from_embedded)
+            for j in range(1, len(fr_eng_pairs)):
+                m_ex = extract_moore_examples(fr_eng_pairs[j - 1][1])
+                fr_ex, en_ex = fr_eng_pairs[j]
+                en_ex_clean = clean_english_text(en_ex)
+                if m_ex or fr_ex or en_ex_clean:
+                    examples.append({"moore": m_ex or "", "french": fr_ex, "english": en_ex_clean})
+
+            first_ex = examples[0] if examples else {}
             sense_data.append(
                 {
                     "fr_entry": fr_entry,
                     "eng_entry": eng_entry_clean,
-                    "moore_example": moore_example,
-                    "french_example": fr_example,
-                    "english_example": clean_english_text(eng_rest),
+                    "moore_example": first_ex.get("moore"),
+                    "french_example": first_ex.get("french"),
+                    "english_example": first_ex.get("english"),
+                    "extra_examples": examples[1:],
                     **extras,
                 }
             )
         else:
-            for fr, eng in fr_eng_pairs:
+            fr, eng = fr_eng_pairs[0]
+            embedded = EMBEDDED_EG_FRN_RE.match(fr)
+            if embedded:
+                fr_def = embedded.group(1).strip()
+                moore_ex = embedded.group(2).strip()
+                fr_ex = embedded.group(3).strip()
+                en_ex = clean_english_text(eng)
+                extras = extract_extra_fields(en_ex)
+                sense_data.append(
+                    {
+                        "fr_entry": fr_def,
+                        "eng_entry": "",
+                        "moore_example": moore_ex,
+                        "french_example": fr_ex,
+                        "english_example": en_ex,
+                        **extras,
+                    }
+                )
+            else:
                 moore_example = extract_moore_examples(eng)
-                eng_clean = clean_english_remove_examples(eng)
+                eng_clean = clean_english_text(clean_english_remove_examples(eng))
                 extras = extract_extra_fields(eng)
-                eng_clean = clean_english_text(eng_clean)
                 sense_data.append(
                     {
                         "fr_entry": fr,
