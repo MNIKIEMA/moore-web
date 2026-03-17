@@ -44,7 +44,8 @@ EXTRA_FIELDS = [
         "inaccompli",
         r"Inaccompli\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg)",
     ),
-    ("category", r"\(catégorie\s*:\s*(.*?)\)"),
+    ("antonym", r"ant\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|sg|Inaccompli)"),
+    ("category", r"\(catégorie\s*:\s*(.*?)\.\)"),
 ]
 
 EXTRA_FIELDS_BETTER = [
@@ -56,7 +57,7 @@ EXTRA_FIELDS_BETTER = [
         r"scient\.?:\s*(.*?)(?=\s*(?:syn|var|Nominal|Racine|catégorie|\n|$))",
     ),
     ("racine", r"Racine\.?:\s*(.*?)(?=\s*(?:syn|var|Nominal|scient|catégorie|\n|$))"),
-    ("category", r"\(catégorie\s*:\s*(.*?)\)"),
+    ("category", r"\(catégorie\s*:\s*(.*?)\.\)"),
 ]
 
 
@@ -113,7 +114,7 @@ def _make_entry(d: dict) -> DictionaryEntry:
                     category=s.get("category"),
                     scientific_name=s.get("scientific"),
                     synonym=s.get("synonym"),
-                    antonym=None,
+                    antonym=s.get("antonym"),
                 )
             )
             sense_id += 1
@@ -155,7 +156,7 @@ def clean_english_remove_examples(eng_text):
 
 def extract_extra_fields(text):
     info = {}
-    category_pattern = r"\(catégorie\s*:\s*(.*?)\)[.,\s]*"
+    category_pattern = r"\(catégorie\s*:\s*(.*?)\.\)[.,\s]*"
     category_match = re.search(category_pattern, text, flags=re.DOTALL | re.IGNORECASE)
     if category_match:
         info["category"] = category_match.group(1).strip()
@@ -176,6 +177,7 @@ def clean_text(t):
     t = re.sub(r"\n\s*\d+\s*\n", "\n", t)
     t = re.sub(r"\n{2,}", "\n", t)
     t = re.sub(r"^\s*-\s*$", "", t, flags=re.MULTILINE)
+    t = re.sub(r"(\w)- +(\w)", r"\1-\2", t)
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\b\d+\s+of\s+\d+\b", "", t, flags=re.IGNORECASE)
     t = re.sub(r"\b\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\b", "", t)
@@ -195,7 +197,7 @@ def clean_english_text(eng_text):
     """
     eng_text = MOORE_EXAMPLE_RE.sub("", eng_text)
 
-    eng_text = re.sub(r"\(catégorie\s*:.*?\)[.,\s]*", "", eng_text, flags=re.IGNORECASE)
+    eng_text = re.sub(r"\(catégorie\s*:.*?\.\)[.,\s]*", "", eng_text, flags=re.IGNORECASE | re.DOTALL)
 
     for name, pattern in EXTRA_FIELDS:
         if name != "category":
@@ -247,6 +249,7 @@ def analyze_body(body):
             )
         else:
             for fr, eng in fr_eng_pairs:
+                moore_example = extract_moore_examples(eng)
                 eng_clean = clean_english_remove_examples(eng)
                 extras = extract_extra_fields(eng)
                 eng_clean = clean_english_text(eng_clean)
@@ -254,7 +257,7 @@ def analyze_body(body):
                     {
                         "fr_entry": fr,
                         "eng_entry": eng_clean,
-                        "moore_example": None,
+                        "moore_example": moore_example,
                         "french_example": None,
                         "english_example": None,
                         **extras,
