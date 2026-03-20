@@ -13,8 +13,8 @@ Usage (CLI):
 import re
 
 MOORE_END_MARKERS = [
-    r"Kibar[aã]\s+yii",
-    r"Z[ɩi]ll\s+KAFAANDO",
+    r"^Kibar[aã]\s+yii",
+    r"^Z[ɩi]ll\s+KAFAANDO",
 ]
 
 MOORE_LANG = "mos_Latn"

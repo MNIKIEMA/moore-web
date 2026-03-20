@@ -34,6 +34,7 @@ _NEWLINE_RE = re.compile(r"\n+")
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SENT_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 _NUMBER_ONLY_RE = re.compile(r"^\d+\.+$")
+_MISSING_SPACE_RE = re.compile(r"(?<=[.!?])(?=[A-ZÀ-Ö][a-zà-öø-ÿ])")
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +121,9 @@ class AlignedCorpus(ParallelText):
 
 
 def _join_lines(text: str) -> str:
-    """Collapse all newlines into single spaces."""
-    return _MULTI_SPACE_RE.sub(" ", _NEWLINE_RE.sub(" ", text)).strip()
+    """Collapse all newlines into single spaces and fix missing spaces after sentence-ending punctuation."""
+    text = _MULTI_SPACE_RE.sub(" ", _NEWLINE_RE.sub(" ", text)).strip()
+    return _MISSING_SPACE_RE.sub(" ", text)
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ def deduplicate_by_comet(
         field with their raw model score.
     """
     # TODO: Can we vectorize this to be faster?
+    # is this better than google/metricx-24-hybrid-xl-v2p6 mentionned in Omnilingual MT?
     from comet import download_model, load_from_checkpoint
 
     src_to_indices: dict[str, list[int]] = defaultdict(list)
