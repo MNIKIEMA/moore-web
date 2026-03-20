@@ -46,6 +46,7 @@ dev = [
     "prek>=0.3.0",
     "ruff>=0.14.10",
     "marimo>=0.10.0",
+    "pytest>=9.0.2",
 ]
 [tool.ruff.format]
 quote-style = "double"
