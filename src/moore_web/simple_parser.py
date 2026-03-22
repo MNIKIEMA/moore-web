@@ -156,15 +156,23 @@ def split_french_english(text):
         text,
         flags=re.DOTALL | re.VERBOSE,
     )
-    return [(fr.strip(), eng.strip()) for fr, eng in blocks]
+    return [(_normalize(fr), _normalize(eng)) for fr, eng in blocks]
 
 
 def extract_moore_examples(eng_text):
-    return MOORE_EXAMPLE_RE.findall(eng_text)[-1] if MOORE_EXAMPLE_RE.search(eng_text) else None
+    return _normalize(MOORE_EXAMPLE_RE.findall(eng_text)[-1]) if MOORE_EXAMPLE_RE.search(eng_text) else None
 
 
 def clean_english_remove_examples(eng_text):
     return MOORE_EXAMPLE_RE.sub("", eng_text).strip()
+
+
+# TODO: _normalize is redundant — flatten_simple_parser._clean() already collapses newlines
+#       before writing output. Consider removing _normalize and its call sites once
+#       DictionaryEntry / Sense are consumed exclusively through the flatten layer.
+def _normalize(text: str) -> str:
+    """Collapse newlines and surrounding whitespace into a single space."""
+    return re.sub(r"\s*\n\s*", " ", text).strip()
 
 
 def extract_extra_fields(text):
@@ -172,14 +180,14 @@ def extract_extra_fields(text):
     category_pattern = r"\(catégorie\s*:\s*(.*?)\.\)[.,\s]*"
     category_match = re.search(category_pattern, text, flags=re.DOTALL | re.IGNORECASE)
     if category_match:
-        info["category"] = category_match.group(1).strip()
+        info["category"] = _normalize(category_match.group(1))
         text = re.sub(category_pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
     for name, pattern in EXTRA_FIELDS:
         if name == "category":
             continue
         m = re.search(pattern, text, flags=re.DOTALL | re.IGNORECASE)
         if m:
-            value = m.group(1).strip()
+            value = _normalize(m.group(1))
             if value:
                 info[name] = value
     return info
