@@ -341,7 +341,7 @@ def split_first_entry(text: str):
     entry_start_re = re.compile(
         rf"""
         ^                                           # start of line
-        ([^\s\n][^\n]*?)                           # token (any non-whitespace start)
+        ([^\s\n](?:(?![,\.]\s)[^\n])*?)            # token (no sentence-style ", " or ". " inside)
         (?:\s+|\n\s*)                              # whitespace or newline+whitespace
         (?:\[[^\]]+\]\s+)?                         # optional tone in brackets
         (?:\d+\)\s+)?                              # optional sub-entry number before grammar
@@ -372,9 +372,7 @@ def split_dictionary_entries(content) -> list[tuple[str, str, str, str]]:
     """
     entries = []
 
-    entry_start_pattern = (
-        rf"^([^\s\n][^\n]*?)\s+(?:\[([^\]]+)\]\s+)?(?:\d+\)\s+)?({GRAMMAR_PATTERN})\s+(?=Frn|\d+\))"
-    )
+    entry_start_pattern = rf"^([^\s\n](?:(?![,\.]\s)[^\n])*?)\s+(?:\[([^\]]+)\]\s+)?(?:\d+\)\s+)?({GRAMMAR_PATTERN})\s+(?=Frn|\d+\))"
     print(content)
 
     matches = list(re.finditer(entry_start_pattern, content, re.MULTILINE))
