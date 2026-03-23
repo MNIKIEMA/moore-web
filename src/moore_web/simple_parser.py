@@ -5,7 +5,6 @@ from loguru import logger
 from moore_web.models import DictionaryEntry, Example, Sense
 
 
-SUB_SPLIT_RE = re.compile(r"\s+\d+\)\s+(?=Frn)")
 MOORE_EXAMPLE_RE = re.compile(r"\{e\.g\.\s*(.*?)\}", flags=re.DOTALL)
 # Detects: "Frn <def> {e.g. <moore>} Frn <fr_ex>" — no Eng between the two Frn blocks
 EMBEDDED_EG_FRN_RE = re.compile(r"^(.*?)\{e\.g\.\s*(.*?)\}\s*Frn\s*(.*)", flags=re.DOTALL)
@@ -72,6 +71,10 @@ GRAMMAR_PATTERN = (
     r"Adjectif|verbe\.it|v\.inacc|conj|pron|adv"
 )
 
+SUB_SPLIT_RE = re.compile(rf"\s+\d+\)\s+(?:(?:{GRAMMAR_PATTERN})\s+)?(?=Frn)")
+# Same pattern with a capturing group so split_sub_entries can recover the grammar tag
+_SUB_SPLIT_CAP_RE = re.compile(rf"\s+\d+\)\s+(?:({GRAMMAR_PATTERN})\s+)?(?=Frn)")
+
 ENTRY_START = rf"""
 (?=
     ^\s*                       # must start at beginning of line
@@ -84,6 +87,7 @@ ENTRY_START = rf"""
 
 
 _VARIANT_EXTRAS = frozenset({"variant", "nominal", "racine", "infinitif", "empr", "sg", "inaccompli"})
+_UNSPEC_SENSE_RE = re.compile(r"^\(unspec\.\s+var\.\s+of\s+(\S+)\)$")
 
 
 def _make_entry(d: dict) -> DictionaryEntry:
@@ -92,8 +96,17 @@ def _make_entry(d: dict) -> DictionaryEntry:
     variants: dict[str, list[str]] = {}
     sense_id = 1
 
+    is_unspec_entry = False
+
     for block in d["senses"]:
         for s in block:
+            # Detect synthetic unspec. var. stub — record as variant, skip as sense
+            unspec_match = _UNSPEC_SENSE_RE.match(s.get("fr_entry", ""))
+            if unspec_match:
+                is_unspec_entry = True
+                variants.setdefault("variant", []).append(unspec_match.group(1))
+                continue
+
             for key in _VARIANT_EXTRAS:
                 if key in s:
                     variants[key] = [v.strip() for v in str(s[key]).split(",")]
@@ -128,6 +141,7 @@ def _make_entry(d: dict) -> DictionaryEntry:
                     scientific_name=s.get("scientific"),
                     synonym=s.get("synonym"),
                     antonym=s.get("antonym"),
+                    pos=s.get("grammar") or d["grammar"],
                 )
             )
             sense_id += 1
@@ -135,15 +149,24 @@ def _make_entry(d: dict) -> DictionaryEntry:
     return DictionaryEntry(
         lemma=d["entry"],
         ipa=d["tone"],
-        pos=d["grammar"],
+        pos="" if is_unspec_entry else d["grammar"],
         senses=senses,
         variants=variants if variants else None,
     )
 
 
-def split_sub_entries(entry_text):
-    parts = re.split(SUB_SPLIT_RE, entry_text)
-    return [p.strip() for p in parts if p.strip()]
+def split_sub_entries(entry_text: str) -> list[tuple[str | None, str]]:
+    """Split on sub-entry delimiters, returning (grammar_tag | None, block) pairs.
+    The first block always has grammar=None (its POS comes from the entry level)."""
+    parts = re.split(_SUB_SPLIT_CAP_RE, entry_text)
+    # re.split with one capturing group: [block0, cap1, block1, cap2, block2, ...]
+    result = [(None, parts[0].strip())]
+    for i in range(1, len(parts), 2):
+        grammar = parts[i]  # None when the optional grammar group didn't match
+        block = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        if block:
+            result.append((grammar, block))
+    return result
 
 
 def has_sub_entries(entry_text):
@@ -156,15 +179,23 @@ def split_french_english(text):
         text,
         flags=re.DOTALL | re.VERBOSE,
     )
-    return [(fr.strip(), eng.strip()) for fr, eng in blocks]
+    return [(_normalize(fr), _normalize(eng)) for fr, eng in blocks]
 
 
 def extract_moore_examples(eng_text):
-    return MOORE_EXAMPLE_RE.findall(eng_text)[-1] if MOORE_EXAMPLE_RE.search(eng_text) else None
+    return _normalize(MOORE_EXAMPLE_RE.findall(eng_text)[-1]) if MOORE_EXAMPLE_RE.search(eng_text) else None
 
 
 def clean_english_remove_examples(eng_text):
     return MOORE_EXAMPLE_RE.sub("", eng_text).strip()
+
+
+# TODO: _normalize is redundant — flatten_simple_parser._clean() already collapses newlines
+#       before writing output. Consider removing _normalize and its call sites once
+#       DictionaryEntry / Sense are consumed exclusively through the flatten layer.
+def _normalize(text: str) -> str:
+    """Collapse newlines and surrounding whitespace into a single space."""
+    return re.sub(r"\s*\n\s*", " ", text).strip()
 
 
 def extract_extra_fields(text):
@@ -172,17 +203,42 @@ def extract_extra_fields(text):
     category_pattern = r"\(catégorie\s*:\s*(.*?)\.\)[.,\s]*"
     category_match = re.search(category_pattern, text, flags=re.DOTALL | re.IGNORECASE)
     if category_match:
-        info["category"] = category_match.group(1).strip()
+        info["category"] = _normalize(category_match.group(1))
         text = re.sub(category_pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
     for name, pattern in EXTRA_FIELDS:
         if name == "category":
             continue
         m = re.search(pattern, text, flags=re.DOTALL | re.IGNORECASE)
         if m:
-            value = m.group(1).strip()
+            value = _normalize(m.group(1))
             if value:
                 info[name] = value
     return info
+
+
+_UNSPEC_VAR_RE = re.compile(
+    r"^([^\s\n][^\n]*?)\s+(?:\[([^\]]+)\]\s+)?unspec\.\s+var\.\s+of\s+(\S[^\n]*?)$",
+    re.MULTILINE,
+)
+
+
+def _normalise_unspec_var(t: str) -> str:
+    """Rewrite 'lemma [tone] unspec. var. of X' stubs into a synthetic
+    grammar-bearing line so split_dictionary_entries can cut there."""
+    # Cat C: "lemma\n[tone] unspec." → join onto one line
+    t = re.sub(r"(\S)\n(\[[^\]]+\]\s+unspec\.)", r"\1 \2", t)
+    # Cat D: "lemma\nunspec. var." → join onto one line
+    t = re.sub(r"(\S)\n(unspec\.)", r"\1 \2", t)
+    # Cat D: strip nested "(unspec. var. of X)" inside the target
+    t = re.sub(r"\s*\(unspec\.[^)]+\)", "", t)
+
+    def _replace(m: re.Match) -> str:
+        lemma = m.group(1).strip()
+        tone = f"[{m.group(2)}] " if m.group(2) else ""
+        target = m.group(3).strip()
+        return f"{lemma} {tone}n Frn (unspec. var. of {target}) Eng"
+
+    return _UNSPEC_VAR_RE.sub(_replace, t)
 
 
 def clean_text(t):
@@ -201,6 +257,7 @@ def clean_text(t):
         t,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    t = _normalise_unspec_var(t)
     return t.strip()
 
 
@@ -231,11 +288,10 @@ def analyze_body(body):
     Returns list of senses.
     """
     senses = []
-    blocks = split_sub_entries(body) if has_sub_entries(body) else [body]
+    blocks = split_sub_entries(body) if has_sub_entries(body) else [(None, body)]
 
-    for block in blocks:
+    for sub_grammar, block in blocks:
         fr_eng_pairs = split_french_english(block)
-        print("*" * 60 + "\n", fr_eng_pairs, len(fr_eng_pairs), "*" * 60 + "\n", sep="\n")
         if not fr_eng_pairs:
             continue
 
@@ -279,6 +335,7 @@ def analyze_body(body):
                     "french_example": first_ex.get("french"),
                     "english_example": first_ex.get("english"),
                     "extra_examples": examples[1:],
+                    "grammar": sub_grammar,
                     **extras,
                 }
             )
@@ -298,6 +355,7 @@ def analyze_body(body):
                         "moore_example": moore_ex,
                         "french_example": fr_ex,
                         "english_example": en_ex,
+                        "grammar": sub_grammar,
                         **extras,
                     }
                 )
@@ -312,6 +370,7 @@ def analyze_body(body):
                         "moore_example": moore_example,
                         "french_example": None,
                         "english_example": None,
+                        "grammar": sub_grammar,
                         **extras,
                     }
                 )
@@ -333,9 +392,11 @@ def split_first_entry(text: str):
     entry_start_re = re.compile(
         rf"""
         ^                                           # start of line
-        ([^\s\n][^\n]*?)                           # token (any non-whitespace start)
+        (?!\d+\)\s)                                # not a bare sub-entry number e.g. "2) "
+        ([^\s\n](?:(?![,\.]\s)[^\n])*?)            # token (no sentence-style ", " or ". " inside)
         (?:\s+|\n\s*)                              # whitespace or newline+whitespace
         (?:\[[^\]]+\]\s+)?                         # optional tone in brackets
+        (?:\([^)]+\)\s+)?                          # optional parenthetical e.g. (unspec. var. X)
         (?:\d+\)\s+)?                              # optional sub-entry number before grammar
         ({GRAMMAR_PATTERN})                        # grammar tag
         \s+                                        # whitespace
@@ -364,10 +425,7 @@ def split_dictionary_entries(content) -> list[tuple[str, str, str, str]]:
     """
     entries = []
 
-    entry_start_pattern = (
-        rf"^([^\s\n][^\n]*?)\s+(?:\[([^\]]+)\]\s+)?(?:\d+\)\s+)?({GRAMMAR_PATTERN})\s+(?=Frn|\d+\))"
-    )
-    print(content)
+    entry_start_pattern = rf"^(?!\d+\)\s)([^\s\n](?:(?![,\.]\s)[^\n])*?)\s+(?:\[([^\]]+)\]\s+)?(?:\([^)]+\)\s+)?(?:\d+\)\s+)?({GRAMMAR_PATTERN})\s+(?=Frn|\d+\))"
 
     matches = list(re.finditer(entry_start_pattern, content, re.MULTILINE))
 
@@ -447,6 +505,9 @@ def parse_doc(doc: pymupdf.Document) -> list[DictionaryEntry]:
             parsed_entries.append(entries)
             continue
         last_page_entries = parsed_entries[-1]
+        if not last_page_entries:
+            parsed_entries.append(entries)
+            continue
         last_entry = last_page_entries.pop()
 
         # FIXME: Page with image has the entry name repeated at the end

@@ -25,3 +25,7 @@ precommit:
 # run type checking with ty
 typecheck:
     uvx ty check
+
+# Run using Pytest
+test:
+	uv run pytest

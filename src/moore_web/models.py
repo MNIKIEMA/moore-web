@@ -16,6 +16,7 @@ class Sense(msgspec.Struct):
     scientific_name: str | None = None
     synonym: str | None = None
     antonym: str | None = None
+    pos: str | None = None
 
 
 class DictionaryEntry(msgspec.Struct):
