@@ -4,6 +4,29 @@ from typing import Optional
 
 import pymupdf
 
+# Typographic ligatures that PyMuPDF may emit verbatim when the PDF font's
+# encoding table lacks proper Unicode mappings.  Expand them to plain ASCII so
+# downstream parsing is not confused.
+#
+# This dictionary's font maps its fi-ligature glyph to U+03E7 (ϧ, COPTIC
+# SMALL LETTER HAI) rather than U+FB01 (ﬁ) or plain "fi", so we handle both.
+_LIGATURE_MAP = str.maketrans(
+    {
+        "\u03E7": "fi",   # ϧ  — font-specific mis-mapping for fi ligature
+        "\uFB00": "ff",   # ﬀ
+        "\uFB01": "fi",   # ﬁ
+        "\uFB02": "fl",   # ﬂ
+        "\uFB03": "ffi",  # ﬃ
+        "\uFB04": "ffl",  # ﬄ
+        "\uFB05": "st",   # ﬅ
+        "\uFB06": "st",   # ﬆ
+    }
+)
+
+
+def _expand_ligatures(text: str) -> str:
+    return text.translate(_LIGATURE_MAP)
+
 
 def extract_pdf_blocks(
     pdf_path: str,
@@ -42,7 +65,7 @@ def extract_pdf_blocks(
                 extracted_pages.append("\n\n".join(page_text))
 
     sep = f"\n\n{page_separator}\n\n" if page_separator else "\n\n"
-    return sep.join(extracted_pages)
+    return _expand_ligatures(sep.join(extracted_pages))
 
 
 def _extract_multicolumn_page(page: pymupdf.Page, num_columns: int) -> str:
@@ -98,4 +121,4 @@ def extract_multicolumn_blocks(
                 extracted_pages.append(text)
 
     sep = f"\n\n{page_separator}\n\n" if page_separator else "\n\n"
-    return sep.join(extracted_pages)
+    return _expand_ligatures(sep.join(extracted_pages))
