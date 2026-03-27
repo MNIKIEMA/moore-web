@@ -98,3 +98,9 @@ S6 case
 {"lemma":"about what?","ipa":"","pos":"<Not Sure>"}
 {"lemma":"poorẽ1)","ipa":"","pos":"<Not Sure>"}
 ```
+
+Other
+
+```json
+{"lemma":"gẽ[é]","ipa":"","pos":"v"}
+```
