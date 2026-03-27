@@ -97,6 +97,7 @@ S6 case
 ```json
 {"lemma":"about what?","ipa":"","pos":"<Not Sure>"}
 {"lemma":"poorẽ1)","ipa":"","pos":"<Not Sure>"}
+{"lemma":"Frnnous Engwe","ipa":"","pos":"<Not Sure>"}
 ```
 
 Other
