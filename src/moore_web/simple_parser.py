@@ -3,6 +3,7 @@ import pymupdf
 from loguru import logger
 
 from moore_web.models import DictionaryEntry, Example, Sense
+from moore_web.pdf_extractor import _expand_ligatures
 
 
 MOORE_EXAMPLE_RE = re.compile(r"\{e\.g\.\s*(.*?)\}", flags=re.DOTALL)
@@ -242,6 +243,7 @@ def _normalise_unspec_var(t: str) -> str:
 
 
 def clean_text(t):
+    t = _expand_ligatures(t)
     t = re.sub(r"\b[A-Z]\s+[a-z]\b", "", t)
     t = re.sub(r"\n\s*\d+\s*\n", "\n", t)
     t = re.sub(r"\n{2,}", "\n", t)
