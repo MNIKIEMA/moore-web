@@ -512,7 +512,6 @@ def parse_page(page: str) -> tuple[list[dict], str]:
     page_entries: list[dict] = []
     unfinished_block, entries = split_first_entry(page)
     entries = split_dictionary_entries(entries)
-    logger.warning(entries)
     for token, tone, grammar, rest in entries:
         token = _s6_clean_token(token)
         if _s6_is_garbage(token):
