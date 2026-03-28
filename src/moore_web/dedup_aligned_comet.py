@@ -110,4 +110,9 @@ def deduplicate_by_comet(
 
     result = [p for i, p in enumerate(pairs) if i not in indices_to_drop]
     print(f"Removed {len(indices_to_drop)} duplicate pairs. {len(result)} pairs remaining.")
+    # TODO: Save dropped duplicate groups to a JSONL file for manual inspection.
+    #       Each line should contain the full group (all members with their comet_qe
+    #       scores) so it's easy to audit whether the right pair was kept and to
+    #       understand the origin of the duplicates (e.g. boilerplate, scraper
+    #       re-fetches, segmentation boundary errors).
     return result

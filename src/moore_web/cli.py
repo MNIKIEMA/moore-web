@@ -699,9 +699,26 @@ def e2e(
         typer.echo(f"      {len(article_parallels)} bilingual articles found.")
 
         typer.echo("[3/3] Aligning per article with LASER + FastDTW…")
+        from laser_encoders import LaserEncoderPipeline
+
+        from moore_web.align_corpus import align_from_embeddings as _align_from_embs
+
+        laser_fr = LaserEncoderPipeline(lang="fra")
+        laser_mo = LaserEncoderPipeline(lang="mos")
+
+        all_fr_sents = [s for _, dp in article_parallels for s in dp.french]
+        all_mo_sents = [s for _, dp in article_parallels for s in dp.moore]
+        all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
+        all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
+
         all_fr, all_mo, all_scores = [], [], []
+        fr_offset = mo_offset = 0
         for url, dp in article_parallels:
-            aligned_dp = _align(dp, min_score=min_score)
+            fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
+            aligned_dp = _align_from_embs(
+                dp, all_fr_embs[fr_offset:fr_end], all_mo_embs[mo_offset:mo_end], min_score=min_score
+            )
+            fr_offset, mo_offset = fr_end, mo_end
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
@@ -766,10 +783,27 @@ def e2e(
 
         # Align each date independently, then concatenate.
         typer.echo("[2/2] Aligning per date with LASER + FastDTW…")
+        from laser_encoders import LaserEncoderPipeline
+
+        from moore_web.align_corpus import align_from_embeddings as _align_from_embs
+
+        laser_fr = LaserEncoderPipeline(lang="fra")
+        laser_mo = LaserEncoderPipeline(lang="mos")
+
+        all_fr_sents = [s for _, dp in date_parallels for s in dp.french]
+        all_mo_sents = [s for _, dp in date_parallels for s in dp.moore]
+        all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
+        all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
+
         all_fr, all_mo, all_scores = [], [], []
+        fr_offset = mo_offset = 0
         for date, dp in date_parallels:
             typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
-            aligned_dp = _align(dp, min_score=min_score)
+            fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
+            aligned_dp = _align_from_embs(
+                dp, all_fr_embs[fr_offset:fr_end], all_mo_embs[mo_offset:mo_end], min_score=min_score
+            )
+            fr_offset, mo_offset = fr_end, mo_end
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
