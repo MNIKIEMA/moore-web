@@ -48,6 +48,42 @@ def dtw_align(src_embeddings: np.ndarray | list, tgt_embeddings: np.ndarray | li
     return alignments
 
 
+def align_from_embeddings(
+    parallel: ParallelText,
+    fr_embs: np.ndarray | list,
+    mo_embs: np.ndarray | list,
+    min_score: float = 0.0,
+) -> AlignedCorpus:
+    """Align using pre-computed LASER embeddings + FastDTW.
+
+    Useful when encoding many batches: encode all sentences once externally,
+    then call this per-batch with the corresponding embedding slices.
+    """
+    path = dtw_align(src_embeddings=fr_embs, tgt_embeddings=mo_embs)[0]
+
+    fr_out, mo_out, scores_out = [], [], []
+    for fr_idx, mo_idx in path:
+        fr = parallel.french[fr_idx].strip()
+        mo = parallel.moore[mo_idx].strip()
+        if not fr or not mo:
+            continue
+        score = float(cosine_similarity(fr_embs[fr_idx].reshape(1, -1), mo_embs[mo_idx].reshape(1, -1))[0][0])
+        if score >= min_score:
+            fr_out.append(fr)
+            mo_out.append(mo)
+            scores_out.append(score)
+
+    if scores_out:
+        print(
+            f"Aligned {len(scores_out)} pairs — "
+            f"mean: {statistics.mean(scores_out):.3f}  "
+            f"median: {statistics.median(scores_out):.3f}  "
+            f"min: {min(scores_out):.3f}  max: {max(scores_out):.3f}"
+        )
+
+    return AlignedCorpus(french=fr_out, moore=mo_out, scores=scores_out, source=parallel.source)
+
+
 def align(
     parallel: ParallelText,
     min_score: float = 0.0,
@@ -81,30 +117,7 @@ def align(
     mo_embs = laser_mo.encode_sentences(parallel.moore, normalize_embeddings=True)
 
     print("Running FastDTW alignment…")
-    alignments = dtw_align(src_embeddings=fr_embs, tgt_embeddings=mo_embs)
-    path = alignments[0]
-
-    fr_out, mo_out, scores_out = [], [], []
-    for fr_idx, mo_idx in path:
-        fr = parallel.french[fr_idx].strip()
-        mo = parallel.moore[mo_idx].strip()
-        if not fr or not mo:
-            continue
-        score = float(cosine_similarity(fr_embs[fr_idx].reshape(1, -1), mo_embs[mo_idx].reshape(1, -1))[0][0])
-        if score >= min_score:
-            fr_out.append(fr)
-            mo_out.append(mo)
-            scores_out.append(score)
-
-    if scores_out:
-        print(
-            f"Aligned {len(scores_out)} pairs — "
-            f"mean: {statistics.mean(scores_out):.3f}  "
-            f"median: {statistics.median(scores_out):.3f}  "
-            f"min: {min(scores_out):.3f}  max: {max(scores_out):.3f}"
-        )
-
-    return AlignedCorpus(french=fr_out, moore=mo_out, scores=scores_out, source=parallel.source)
+    return align_from_embeddings(parallel, fr_embs, mo_embs, min_score=min_score)
 
 
 if __name__ == "__main__":
