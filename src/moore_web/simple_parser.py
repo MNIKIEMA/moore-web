@@ -92,11 +92,21 @@ _SUB_SPLIT_CAP_RE = re.compile(rf"\s+\d+\)\s+(?:({GRAMMAR_PATTERN})\s+)?(?=Frn)"
 #            "N) <grammar> Frn" variant so none of these fragments reach parse_page.
 # ---------------------------------------------------------------------------
 _S6_TRAILING_SUBENTRY_RE = re.compile(r"\d+\)$")
+_INLINE_TONE_RE = re.compile(r"^(.*?)\s*\[([^\]]+)\]$")
 
 
 def _s6_clean_token(token: str) -> str:
     """Strip a trailing sub-entry index (e.g. '1)') bled into the lemma."""
     return _S6_TRAILING_SUBENTRY_RE.sub("", token).strip()
+
+
+def _extract_inline_tone(token: str, tone: str) -> tuple[str, str]:
+    """If the tone was merged into the token (e.g. 'gẽ[é]'), split it out."""
+    if not tone:
+        m = _INLINE_TONE_RE.match(token)
+        if m:
+            return m.group(1).strip(), m.group(2)
+    return token, tone
 
 
 def _s6_is_garbage(token: str) -> bool:
@@ -514,6 +524,7 @@ def parse_page(page: str) -> tuple[list[dict], str]:
     entries = split_dictionary_entries(entries)
     for token, tone, grammar, rest in entries:
         token = _s6_clean_token(token)
+        token, tone = _extract_inline_tone(token, tone)
         if _s6_is_garbage(token):
             logger.warning("S6 artifact dropped: {!r}", token)
             continue
