@@ -515,7 +515,7 @@ def parse_page(page: str) -> tuple[list[dict], str]:
     for token, tone, grammar, rest in entries:
         token = _s6_clean_token(token)
         if _s6_is_garbage(token):
-            logger.warning("S6 artifact dropped: %r", token)
+            logger.warning("S6 artifact dropped: {!r}", token)
             continue
         cleaned_body = strip_trailing_entry_name(rest, token)
         senses = analyze_body(cleaned_body)
