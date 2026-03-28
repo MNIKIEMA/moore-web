@@ -16,8 +16,11 @@ Usage
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
 import statistics
 
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # COMET-QE scoring
@@ -28,7 +31,7 @@ def _comet_scores(
     eng_sentences: list[str],
     mos_sentences: list[str],
     batch_size: int = 8,
-    gpus: int = 0,
+    accelerator: str = "auto",
 ) -> list[float]:
     """Return per-pair COMET-QE scores using McGill-NLP/ssa-comet-qe."""
     from comet import download_model, load_from_checkpoint
@@ -39,8 +42,8 @@ def _comet_scores(
 
     comet_data = [{"src": src, "mt": mt} for src, mt in zip(eng_sentences, mos_sentences)]
 
-    print(f"Scoring {len(comet_data)} pairs with COMET-QE (batch_size={batch_size})…")
-    output = model.predict(comet_data, batch_size=batch_size, gpus=gpus)
+    print(f"Scoring {len(comet_data)} pairs with COMET-QE (batch_size={batch_size}, accelerator={accelerator})…")
+    output = model.predict(comet_data, batch_size=batch_size, accelerator=accelerator)
 
     scores = [float(s) for s in output.scores]
     print(
@@ -112,7 +115,7 @@ def score_and_upload(
     hub_repo: str = "nllb-mos",
     min_laser: float = 0.0,
     comet_batch_size: int = 8,
-    gpus: int = 0,
+    accelerator: str = "auto",
     private: bool = False,
 ) -> None:
     """Load NLLB eng↔mos, add COMET-QE scores, push to HF Hub.
@@ -124,7 +127,7 @@ def score_and_upload(
         hub_repo:          HuggingFace repo name, e.g. ``username/nllb-mos``.
         min_laser:         Drop pairs whose original NLLB laser_score is below this.
         comet_batch_size:  Batch size for COMET-QE inference.
-        gpus:              Number of GPUs for COMET-QE (0 = CPU).
+        accelerator:       PyTorch Lightning accelerator (``"auto"``, ``"gpu"``, ``"cpu"``).
         private:           Whether to make the HF Hub dataset private.
     """
     from datasets import Dataset, DatasetDict
@@ -139,7 +142,7 @@ def score_and_upload(
     eng_sentences = [r["eng_Latn"] for r in rows]
     mos_sentences = [r["mos_Latn"] for r in rows]
 
-    comet_scores = _comet_scores(eng_sentences, mos_sentences, batch_size=comet_batch_size, gpus=gpus)
+    comet_scores = _comet_scores(eng_sentences, mos_sentences, batch_size=comet_batch_size, accelerator=accelerator)
 
     dataset = Dataset.from_dict(
         {
@@ -185,10 +188,9 @@ if __name__ == "__main__":
         help="COMET-QE inference batch size (default: %(default)s).",
     )
     parser.add_argument(
-        "--gpus",
-        type=int,
-        default=0,
-        help="Number of GPUs for COMET-QE inference (default: 0 = CPU).",
+        "--accelerator",
+        default="auto",
+        help="PyTorch Lightning accelerator: 'auto', 'gpu', or 'cpu' (default: %(default)s).",
     )
     parser.add_argument(
         "--private",
@@ -201,6 +203,6 @@ if __name__ == "__main__":
         hub_repo=args.hub_repo,
         min_laser=args.min_laser,
         comet_batch_size=args.batch_size,
-        gpus=args.gpus,
+        accelerator=args.accelerator,
         private=args.private,
     )
