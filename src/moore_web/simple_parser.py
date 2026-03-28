@@ -76,6 +76,53 @@ SUB_SPLIT_RE = re.compile(rf"\s+\d+\)\s+(?:(?:{GRAMMAR_PATTERN})\s+)?(?=Frn)")
 # Same pattern with a capturing group so split_sub_entries can recover the grammar tag
 _SUB_SPLIT_CAP_RE = re.compile(rf"\s+\d+\)\s+(?:({GRAMMAR_PATTERN})\s+)?(?=Frn)")
 
+# ---------------------------------------------------------------------------
+# S6 artifact patch — temporary until SUB_SPLIT_RE handles all "N) grammar Frn"
+# sub-entry splits correctly.
+#
+# Three failure modes leak through as bogus headwords:
+#   1. "poorẽ1)"   — a real lemma with a trailing sub-entry index ("1)") bled in
+#                    because split_sub_entries couldn't cut before it.
+#   2. "Frnnous Engwe" — a French/English definition block that wasn't split off
+#                    and was mistakenly captured as the next headword.
+#   3. "about what?" — punctuation-heavy fragment from an unsplit definition line.
+#
+# These are dropped / cleaned here as a best-effort workaround.
+# TODO (S6): Remove this patch once split_sub_entries reliably handles every
+#            "N) <grammar> Frn" variant so none of these fragments reach parse_page.
+# ---------------------------------------------------------------------------
+_S6_TRAILING_SUBENTRY_RE = re.compile(r"\d+\)$")
+_INLINE_TONE_RE = re.compile(r"^(.*?)\s*\[([^\]]+)\]$")
+
+
+def _s6_clean_token(token: str) -> str:
+    """Strip a trailing sub-entry index (e.g. '1)') bled into the lemma."""
+    return _S6_TRAILING_SUBENTRY_RE.sub("", token).strip()
+
+
+def _extract_inline_tone(token: str, tone: str) -> tuple[str, str]:
+    """If the tone was merged into the token (e.g. 'gẽ[é]'), split it out."""
+    if not tone:
+        m = _INLINE_TONE_RE.match(token)
+        if m:
+            return m.group(1).strip(), m.group(2)
+    return token, tone
+
+
+def _s6_is_garbage(token: str) -> bool:
+    """Return True for tokens that are parsing artifacts, not valid Moore lemmas.
+
+    Covers the known S6 failure modes; other cases may still slip through until
+    the root cause in SUB_SPLIT_RE / split_sub_entries is fully resolved.
+    """
+    # "Frnnous Engwe" — Frn…Eng definition text mistaken for a headword
+    if token.startswith("Frn"):
+        return True
+    # "about what?" — interrogative fragment that cannot be a Moore headword
+    if "?" in token:
+        return True
+    return False
+
 ENTRY_START = rf"""
 (?=
     ^\s*                       # must start at beginning of line
@@ -475,8 +522,12 @@ def parse_page(page: str) -> tuple[list[dict], str]:
     page_entries: list[dict] = []
     unfinished_block, entries = split_first_entry(page)
     entries = split_dictionary_entries(entries)
-    logger.warning(entries)
     for token, tone, grammar, rest in entries:
+        token = _s6_clean_token(token)
+        token, tone = _extract_inline_tone(token, tone)
+        if _s6_is_garbage(token):
+            logger.warning("S6 artifact dropped: {!r}", token)
+            continue
         cleaned_body = strip_trailing_entry_name(rest, token)
         senses = analyze_body(cleaned_body)
         page_entries.append(
