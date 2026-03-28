@@ -699,9 +699,13 @@ def e2e(
         typer.echo(f"      {len(article_parallels)} bilingual articles found.")
 
         typer.echo("[3/3] Aligning per article with LASER + FastDTW…")
+        from laser_encoders import LaserEncoderPipeline
+
+        laser_fr = LaserEncoderPipeline(lang="fra")
+        laser_mo = LaserEncoderPipeline(lang="mos")
         all_fr, all_mo, all_scores = [], [], []
         for url, dp in article_parallels:
-            aligned_dp = _align(dp, min_score=min_score)
+            aligned_dp = _align(dp, min_score=min_score, laser_fr=laser_fr, laser_mo=laser_mo)
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
@@ -766,10 +770,14 @@ def e2e(
 
         # Align each date independently, then concatenate.
         typer.echo("[2/2] Aligning per date with LASER + FastDTW…")
+        from laser_encoders import LaserEncoderPipeline
+
+        laser_fr = LaserEncoderPipeline(lang="fra")
+        laser_mo = LaserEncoderPipeline(lang="mos")
         all_fr, all_mo, all_scores = [], [], []
         for date, dp in date_parallels:
             typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
-            aligned_dp = _align(dp, min_score=min_score)
+            aligned_dp = _align(dp, min_score=min_score, laser_fr=laser_fr, laser_mo=laser_mo)
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)

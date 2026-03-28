@@ -51,23 +51,28 @@ def dtw_align(src_embeddings: np.ndarray | list, tgt_embeddings: np.ndarray | li
 def align(
     parallel: ParallelText,
     min_score: float = 0.0,
+    laser_fr=None,
+    laser_mo=None,
 ) -> AlignedCorpus:
     """Align French and Mooré sentences using LASER embeddings + FastDTW.
 
     Args:
         parallel:  Parallel sentence lists (``ParallelText``).
         min_score: Drop pairs with cosine similarity below this value.
+        laser_fr:  Pre-loaded LASER encoder for French. Loaded if not provided.
+        laser_mo:  Pre-loaded LASER encoder for Mooré. Loaded if not provided.
 
     Returns:
         :class:`~moore_web.flatten.AlignedCorpus` with equal-length lists.
     """
-    # TODO: Optimize for conseil because we are making a call for each session
-
     from laser_encoders import LaserEncoderPipeline
 
-    print("Loading LASER models…")
-    laser_fr = LaserEncoderPipeline(lang="fra")
-    laser_mo = LaserEncoderPipeline(lang="mos")
+    if laser_fr is None:
+        print("Loading LASER French model…")
+        laser_fr = LaserEncoderPipeline(lang="fra")
+    if laser_mo is None:
+        print("Loading LASER Mooré model…")
+        laser_mo = LaserEncoderPipeline(lang="mos")
 
     print(f"Encoding {len(parallel.french)} French sentences…")
     fr_embs = laser_fr.encode_sentences(parallel.french, normalize_embeddings=True)
