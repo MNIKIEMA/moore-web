@@ -42,7 +42,7 @@ return sites and at the top of `simple_parser.clean_text()`.
 
 ---
 
-### S6 — `2) grammar Frn` sub-entries not split into separate senses · open · 🔴 High
+### S6 — `2) grammar Frn` sub-entries not split into separate senses · patched · 🔴 High
 
 **What happens:** When a numbered sub-entry has a grammar tag between the number and `Frn`
 (e.g. `2) adj Frnaligné...`), it is not recognised by `split_sub_entries`. The sub-sense
@@ -71,6 +71,24 @@ SUB_SPLIT_RE = re.compile(
     rf"\s+\d+\)\s+(?:(?:{GRAMMAR_PATTERN})\s+)?(?=Frn)"
 )
 ```
+
+**Patch applied (temporary workaround — not a full fix):**
+
+The three known artifact entries produced by this bug are handled in `parse_page`
+via `_s6_clean_token` / `_s6_is_garbage`:
+
+| Artifact | Action | Reason |
+| -------- | ------ | ------ |
+| `"poorẽ1)"` | cleaned → `"poorẽ"` | trailing sub-entry index bled into lemma |
+| `"Frnnous Engwe"` | dropped | `Frn…Eng` definition text mistaken for a headword |
+| `"about what?"` | dropped | punctuation fragment, not a valid Moore lemma |
+
+**What still needs to be solved:**
+The regex fix above (`SUB_SPLIT_RE`) was merged but `split_sub_entries` still fails
+for sub-entry patterns not covered by `GRAMMAR_PATTERN` or where the grammar tag is
+absent. Until every `N) [grammar] Frn` variant is handled at the split level, other
+entries of the same shape may produce similar artifacts that the patch won't catch.
+The patch must be removed once the root-cause fix is verified to be complete.
 
 ---
 
