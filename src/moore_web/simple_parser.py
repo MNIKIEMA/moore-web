@@ -123,6 +123,7 @@ def _s6_is_garbage(token: str) -> bool:
         return True
     return False
 
+
 ENTRY_START = rf"""
 (?=
     ^\s*                       # must start at beginning of line

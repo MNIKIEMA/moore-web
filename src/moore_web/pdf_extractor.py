@@ -12,14 +12,14 @@ import pymupdf
 # SMALL LETTER HAI) rather than U+FB01 (ﬁ) or plain "fi", so we handle both.
 _LIGATURE_MAP = str.maketrans(
     {
-        "\u03E7": "fi",   # ϧ  — font-specific mis-mapping for fi ligature
-        "\uFB00": "ff",   # ﬀ
-        "\uFB01": "fi",   # ﬁ
-        "\uFB02": "fl",   # ﬂ
-        "\uFB03": "ffi",  # ﬃ
-        "\uFB04": "ffl",  # ﬄ
-        "\uFB05": "st",   # ﬅ
-        "\uFB06": "st",   # ﬆ
+        "\u03e7": "fi",  # ϧ  — font-specific mis-mapping for fi ligature
+        "\ufb00": "ff",  # ﬀ
+        "\ufb01": "fi",  # ﬁ
+        "\ufb02": "fl",  # ﬂ
+        "\ufb03": "ffi",  # ﬃ
+        "\ufb04": "ffl",  # ﬄ
+        "\ufb05": "st",  # ﬅ
+        "\ufb06": "st",  # ﬆ
     }
 )
 
