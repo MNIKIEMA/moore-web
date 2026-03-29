@@ -18,9 +18,11 @@ Usage
 
 from __future__ import annotations
 
+import statistics
+
 from dotenv import load_dotenv
 
-import statistics
+from moore_web.upload_nllb_raw import _COLS as _TSV_COLS, _load_nllb_tsv
 
 load_dotenv()
 
@@ -59,58 +61,6 @@ def _comet_scores(
 # ---------------------------------------------------------------------------
 # Main pipeline
 # ---------------------------------------------------------------------------
-
-
-_NLLB_URL = "https://storage.googleapis.com/allennlp-data-bucket/nllb/eng_Latn-mos_Latn.gz"
-
-# Column order in the AllenAI TSV:
-# src  tgt  laser_score  src_lid  tgt_lid  src_source  src_url  tgt_source  tgt_url
-_TSV_COLS = [
-    "eng_Latn",
-    "mos_Latn",
-    "laser_score",
-    "source_sentence_lid",
-    "target_sentence_lid",
-    "source_sentence_source",
-    "source_sentence_url",
-    "target_sentence_source",
-    "target_sentence_url",
-]
-
-
-def _load_nllb_tsv(url: str = _NLLB_URL) -> list[dict]:
-    """Download and parse the NLLB eng↔mos gzipped TSV.
-
-    Returns a list of dicts with keys matching ``_TSV_COLS``.
-    The ``laser_score`` field is the original NLLB LASER score (float).
-    """
-    import gzip
-    import io
-    import urllib.request
-
-    print(f"Downloading {url} …")
-    with urllib.request.urlopen(url) as response:
-        raw = response.read()
-
-    rows = []
-    with gzip.open(io.BytesIO(raw), "rt", encoding="utf-8") as f:
-        for line in f:
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 2:
-                continue
-            row: dict = {}
-            for i, col in enumerate(_TSV_COLS):
-                val: str | float | None = parts[i] if i < len(parts) else None
-                if col in ("laser_score", "source_sentence_lid", "target_sentence_lid"):
-                    try:
-                        val = float(val) if val else None  # type: ignore[arg-type]
-                    except ValueError:
-                        val = None
-                row[col] = val or None
-            rows.append(row)
-
-    print(f"Loaded {len(rows)} pairs from NLLB tsv.")
-    return rows
 
 
 def score_and_upload(
