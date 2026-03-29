@@ -1,24 +1,18 @@
-"""Load allenai/nllb (eng_Latn-mos_Latn), add COMET-QE scores, upload to HF.
+"""Add COMET-QE scores to the raw eng↔mos dataset and upload to HF.
 
-Pipeline
---------
-1. Download the NLLB eng↔mos gzipped TSV from AllenAI's storage.
-   (The dataset already contains an original NLLB ``laser_score``.)
-2. Push the raw dataset to HuggingFace Hub (``download`` subcommand).
-3. Score every pair with ``McGill-NLP/ssa-comet-qe`` and update the HF dataset
-   (``score`` subcommand).
+Assumes the raw dataset has already been pushed to HF Hub by
+``moore_web.upload_nllb_raw``.
 
 Usage
 -----
-    # Step 1 — download raw dataset and push to HF
-    uv run python -m moore_web.score_nllb_mos download
-    uv run python -m moore_web.score_nllb_mos download --hub-repo YOUR_USERNAME/nllb-mos-raw
+    # Score a split from HF Hub and push results
+    uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw
+    uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw --min-laser 0.5
 
-    # Step 2 — add COMET-QE scores and push to HF
-    uv run python -m moore_web.score_nllb_mos score
-    uv run python -m moore_web.score_nllb_mos score --hub-repo YOUR_USERNAME/nllb-mos --min-laser 0.5
+    # Translate English segments to French and push
+    uv run python -m moore_web.score_nllb_mos translate --source-repo madoss/nllb-mos-raw
 
-    # Legacy — run both steps in one go (original behaviour)
+    # Download raw TSV and score in one step (no separate upload)
     uv run python -m moore_web.score_nllb_mos full
 """
 
@@ -117,28 +111,6 @@ def _load_nllb_tsv(url: str = _NLLB_URL) -> list[dict]:
 
     print(f"Loaded {len(rows)} pairs from NLLB tsv.")
     return rows
-
-
-def download_and_upload(
-    hub_repo: str = "madoss/nllb-mos-raw",
-    private: bool = False,
-) -> None:
-    """Download NLLB eng↔mos TSV and push the raw dataset to HF Hub.
-
-    Args:
-        hub_repo:  HuggingFace repo name, e.g. ``username/nllb-mos-raw``.
-        private:   Whether to make the HF Hub dataset private.
-    """
-    from datasets import Dataset, DatasetDict
-
-    rows = _load_nllb_tsv()
-
-    dataset = Dataset.from_dict({col: [r[col] for r in rows] for col in _TSV_COLS})
-    dataset_dict = DatasetDict({"train": dataset})
-
-    print(f"\nPushing raw dataset to HuggingFace Hub as '{hub_repo}'…")
-    dataset_dict.push_to_hub(hub_repo, private=private)
-    print(f"Done. Dataset available at https://huggingface.co/datasets/{hub_repo}")
 
 
 def score_and_upload(
@@ -284,23 +256,11 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Download NLLB eng↔mos data and/or score it with COMET-QE.",
+        description="Score or translate the NLLB eng↔mos dataset with COMET-QE / TranslateGemma.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # -- download subcommand -------------------------------------------------
-    dl_parser = subparsers.add_parser(
-        "download",
-        help="Download raw NLLB TSV and push to HF Hub (no scoring).",
-    )
-    dl_parser.add_argument(
-        "--hub-repo",
-        default="madoss/nllb-mos-raw",
-        help="HuggingFace Hub repo to push to (default: %(default)s).",
-    )
-    dl_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
 
     # -- score subcommand ----------------------------------------------------
     sc_parser = subparsers.add_parser(
@@ -417,8 +377,6 @@ if __name__ == "__main__":
             tensor_parallel_size=args.tensor_parallel_size,
             private=args.private,
         )
-    elif args.command == "download":
-        download_and_upload(hub_repo=args.hub_repo, private=args.private)
     elif args.command == "score":
         score_and_upload(
             hub_repo=args.hub_repo,
