@@ -4,14 +4,22 @@ Pipeline
 --------
 1. Download the NLLB eng↔mos gzipped TSV from AllenAI's storage.
    (The dataset already contains an original NLLB ``laser_score``.)
-2. Score every pair with ``McGill-NLP/ssa-comet-qe`` (reference-free QE).
-3. Push the enriched dataset to HuggingFace Hub as ``nllb-mos``.
+2. Push the raw dataset to HuggingFace Hub (``download`` subcommand).
+3. Score every pair with ``McGill-NLP/ssa-comet-qe`` and update the HF dataset
+   (``score`` subcommand).
 
 Usage
 -----
-    uv run python -m moore_web.score_nllb_mos
-    uv run python -m moore_web.score_nllb_mos --hub-repo YOUR_USERNAME/nllb-mos
-    uv run python -m moore_web.score_nllb_mos --min-laser 0.5 --batch-size 16
+    # Step 1 — download raw dataset and push to HF
+    uv run python -m moore_web.score_nllb_mos download
+    uv run python -m moore_web.score_nllb_mos download --hub-repo YOUR_USERNAME/nllb-mos-raw
+
+    # Step 2 — add COMET-QE scores and push to HF
+    uv run python -m moore_web.score_nllb_mos score
+    uv run python -m moore_web.score_nllb_mos score --hub-repo YOUR_USERNAME/nllb-mos --min-laser 0.5
+
+    # Legacy — run both steps in one go (original behaviour)
+    uv run python -m moore_web.score_nllb_mos full
 """
 
 from __future__ import annotations
@@ -111,28 +119,57 @@ def _load_nllb_tsv(url: str = _NLLB_URL) -> list[dict]:
     return rows
 
 
+def download_and_upload(
+    hub_repo: str = "madoss/nllb-mos-raw",
+    private: bool = False,
+) -> None:
+    """Download NLLB eng↔mos TSV and push the raw dataset to HF Hub.
+
+    Args:
+        hub_repo:  HuggingFace repo name, e.g. ``username/nllb-mos-raw``.
+        private:   Whether to make the HF Hub dataset private.
+    """
+    from datasets import Dataset, DatasetDict
+
+    rows = _load_nllb_tsv()
+
+    dataset = Dataset.from_dict({col: [r[col] for r in rows] for col in _TSV_COLS})
+    dataset_dict = DatasetDict({"train": dataset})
+
+    print(f"\nPushing raw dataset to HuggingFace Hub as '{hub_repo}'…")
+    dataset_dict.push_to_hub(hub_repo, private=private)
+    print(f"Done. Dataset available at https://huggingface.co/datasets/{hub_repo}")
+
+
 def score_and_upload(
-    hub_repo: str = "nllb-mos",
+    hub_repo: str = "madoss/nllb-mos",
+    source_repo: str | None = None,
     min_laser: float = 0.0,
     comet_batch_size: int = 8,
     accelerator: str = "auto",
     private: bool = False,
 ) -> None:
-    """Load NLLB eng↔mos, add COMET-QE scores, push to HF Hub.
+    """Add COMET-QE scores to an existing HF dataset and push the result.
 
-    The dataset already contains an original NLLB ``laser_score``.  We keep it
-    and add ``comet_qe`` from ``McGill-NLP/ssa-comet-qe``.
+    Loads from ``source_repo`` if provided, otherwise re-downloads the raw TSV.
 
     Args:
-        hub_repo:          HuggingFace repo name, e.g. ``username/nllb-mos``.
-        min_laser:         Drop pairs whose original NLLB laser_score is below this.
+        hub_repo:          HuggingFace repo to push the scored dataset to.
+        source_repo:       HuggingFace repo to load the raw dataset from.
+                           If None, the raw TSV is downloaded directly.
+        min_laser:         Drop pairs whose NLLB laser_score is below this.
         comet_batch_size:  Batch size for COMET-QE inference.
         accelerator:       PyTorch Lightning accelerator (``"auto"``, ``"gpu"``, ``"cpu"``).
         private:           Whether to make the HF Hub dataset private.
     """
-    from datasets import Dataset, DatasetDict
+    from datasets import Dataset, DatasetDict, load_dataset
 
-    rows = _load_nllb_tsv()
+    if source_repo:
+        print(f"Loading dataset from HuggingFace Hub: '{source_repo}'…")
+        ds = load_dataset(source_repo, split="train")
+        rows = [dict(zip(ds.column_names, vals)) for vals in zip(*[ds[col] for col in ds.column_names])]
+    else:
+        rows = _load_nllb_tsv()
 
     if min_laser > 0.0:
         before = len(rows)
@@ -144,18 +181,37 @@ def score_and_upload(
 
     comet_scores = _comet_scores(eng_sentences, mos_sentences, batch_size=comet_batch_size, accelerator=accelerator)
 
+    cols = list(rows[0].keys()) if rows else _TSV_COLS
     dataset = Dataset.from_dict(
         {
-            **{col: [r[col] for r in rows] for col in _TSV_COLS},
+            **{col: [r[col] for r in rows] for col in cols},
             "comet_qe": comet_scores,
         }
     )
 
     dataset_dict = DatasetDict({"train": dataset})
 
-    print(f"\nPushing dataset to HuggingFace Hub as '{hub_repo}'…")
+    print(f"\nPushing scored dataset to HuggingFace Hub as '{hub_repo}'…")
     dataset_dict.push_to_hub(hub_repo, private=private)
     print(f"Done. Dataset available at https://huggingface.co/datasets/{hub_repo}")
+
+
+def full_pipeline(
+    hub_repo: str = "madoss/nllb-mos",
+    min_laser: float = 0.0,
+    comet_batch_size: int = 8,
+    accelerator: str = "auto",
+    private: bool = False,
+) -> None:
+    """Download, score, and upload in one step (original behaviour)."""
+    score_and_upload(
+        hub_repo=hub_repo,
+        source_repo=None,
+        min_laser=min_laser,
+        comet_batch_size=comet_batch_size,
+        accelerator=accelerator,
+        private=private,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -166,43 +222,105 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Score allenai/nllb (eng↔mos) with LASER + COMET-QE and upload to HF.",
+        description="Download NLLB eng↔mos data and/or score it with COMET-QE.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # -- download subcommand -------------------------------------------------
+    dl_parser = subparsers.add_parser(
+        "download",
+        help="Download raw NLLB TSV and push to HF Hub (no scoring).",
+    )
+    dl_parser.add_argument(
+        "--hub-repo",
+        default="madoss/nllb-mos-raw",
+        help="HuggingFace Hub repo to push to (default: %(default)s).",
+    )
+    dl_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+
+    # -- score subcommand ----------------------------------------------------
+    sc_parser = subparsers.add_parser(
+        "score",
+        help="Add COMET-QE scores to a (raw) HF dataset and push to HF Hub.",
+    )
+    sc_parser.add_argument(
         "--hub-repo",
         default="madoss/nllb-mos",
-        help="HuggingFace Hub repo to push to, e.g. username/nllb-mos (default: %(default)s).",
+        help="HuggingFace Hub repo to push the scored dataset to (default: %(default)s).",
     )
-    parser.add_argument(
+    sc_parser.add_argument(
+        "--source-repo",
+        default=None,
+        help="HF Hub repo to load the raw dataset from. If omitted, re-downloads the TSV.",
+    )
+    sc_parser.add_argument(
         "--min-laser",
         type=float,
         default=0.0,
-        help="Drop pairs with LASER cosine similarity below this value before COMET-QE (default: keep all).",
+        help="Drop pairs with LASER score below this value (default: keep all).",
     )
-    parser.add_argument(
+    sc_parser.add_argument(
         "--batch-size",
         type=int,
         default=8,
         help="COMET-QE inference batch size (default: %(default)s).",
     )
-    parser.add_argument(
+    sc_parser.add_argument(
         "--accelerator",
         default="auto",
         help="PyTorch Lightning accelerator: 'auto', 'gpu', or 'cpu' (default: %(default)s).",
     )
-    parser.add_argument(
-        "--private",
-        action="store_true",
-        help="Make the HuggingFace dataset private.",
+    sc_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+
+    # -- full subcommand (legacy) --------------------------------------------
+    full_parser = subparsers.add_parser(
+        "full",
+        help="Download, score, and upload in one step.",
     )
+    full_parser.add_argument(
+        "--hub-repo",
+        default="madoss/nllb-mos",
+        help="HuggingFace Hub repo to push to (default: %(default)s).",
+    )
+    full_parser.add_argument(
+        "--min-laser",
+        type=float,
+        default=0.0,
+        help="Drop pairs with LASER score below this value (default: keep all).",
+    )
+    full_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="COMET-QE inference batch size (default: %(default)s).",
+    )
+    full_parser.add_argument(
+        "--accelerator",
+        default="auto",
+        help="PyTorch Lightning accelerator: 'auto', 'gpu', or 'cpu' (default: %(default)s).",
+    )
+    full_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+
     args = parser.parse_args()
 
-    score_and_upload(
-        hub_repo=args.hub_repo,
-        min_laser=args.min_laser,
-        comet_batch_size=args.batch_size,
-        accelerator=args.accelerator,
-        private=args.private,
-    )
+    if args.command == "download":
+        download_and_upload(hub_repo=args.hub_repo, private=args.private)
+    elif args.command == "score":
+        score_and_upload(
+            hub_repo=args.hub_repo,
+            source_repo=args.source_repo,
+            min_laser=args.min_laser,
+            comet_batch_size=args.batch_size,
+            accelerator=args.accelerator,
+            private=args.private,
+        )
+    elif args.command == "full":
+        full_pipeline(
+            hub_repo=args.hub_repo,
+            min_laser=args.min_laser,
+            comet_batch_size=args.batch_size,
+            accelerator=args.accelerator,
+            private=args.private,
+        )
