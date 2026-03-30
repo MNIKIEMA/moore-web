@@ -85,6 +85,7 @@ def score_and_upload(
     comet_batch_size: int = 8,
     accelerator: str = "auto",
     private: bool = False,
+    rows_slice: slice | None = None,
 ) -> None:
     """Add COMET-QE scores to an existing HF dataset and push the result.
 
@@ -98,12 +99,25 @@ def score_and_upload(
         comet_batch_size:  Batch size for COMET-QE inference.
         accelerator:       PyTorch Lightning accelerator (``"auto"``, ``"gpu"``, ``"cpu"``).
         private:           Whether to make the HF Hub dataset private.
+        rows_slice:        Optional ``slice`` to select a subset of rows *after*
+                           laser filtering, e.g. ``slice(0, 1000)`` for the first
+                           1 000 pairs.  ``None`` keeps all rows.
     """
     from datasets import Dataset, DatasetDict, load_dataset
 
     if source_repo:
-        print(f"Loading dataset from HuggingFace Hub: '{source_repo}'…")
-        ds = load_dataset(source_repo, split="train")
+        # When no laser filtering is needed we can push the slice directly into
+        # the split string so only the requested rows are downloaded.
+        if rows_slice is not None and min_laser == 0.0:
+            start = rows_slice.start or ""
+            stop = rows_slice.stop or ""
+            split = f"train[{start}:{stop}]"
+            print(f"Loading dataset from HuggingFace Hub: '{source_repo}' (split='{split}')…")
+            ds = load_dataset(source_repo, split=split)
+            rows_slice = None  # already applied
+        else:
+            print(f"Loading dataset from HuggingFace Hub: '{source_repo}'…")
+            ds = load_dataset(source_repo, split="train")
         rows = [dict(zip(ds.column_names, vals)) for vals in zip(*[ds[col] for col in ds.column_names])]
     else:
         rows = _load_nllb_tsv()
@@ -112,6 +126,11 @@ def score_and_upload(
         before = len(rows)
         rows = [r for r in rows if (r["laser_score"] or 0.0) >= min_laser]
         print(f"Dropped {before - len(rows)} pairs with laser_score < {min_laser}. Keeping {len(rows)}.")
+
+    if rows_slice is not None:
+        before = len(rows)
+        rows = rows[rows_slice]
+        print(f"Row selection {rows_slice}: using {len(rows)} of {before} pairs.")
 
     eng_sentences = [r["eng_Latn"] for r in rows]
     mos_sentences = [r["mos_Latn"] for r in rows]
@@ -201,6 +220,7 @@ def full_pipeline(
     comet_batch_size: int = 8,
     accelerator: str = "auto",
     private: bool = False,
+    rows_slice: slice | None = None,
 ) -> None:
     """Download, score, and upload in one step (original behaviour)."""
     score_and_upload(
@@ -210,6 +230,7 @@ def full_pipeline(
         comet_batch_size=comet_batch_size,
         accelerator=accelerator,
         private=private,
+        rows_slice=rows_slice,
     )
 
 
@@ -258,6 +279,12 @@ if __name__ == "__main__":
         "--accelerator",
         default="auto",
         help="PyTorch Lightning accelerator: 'auto', 'gpu', or 'cpu' (default: %(default)s).",
+    )
+    sc_parser.add_argument(
+        "--rows",
+        default=None,
+        metavar="START:END",
+        help="Select a slice of rows to score, e.g. '0:1000' or '500:' (default: all).",
     )
     sc_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
 
@@ -328,9 +355,25 @@ if __name__ == "__main__":
         default="auto",
         help="PyTorch Lightning accelerator: 'auto', 'gpu', or 'cpu' (default: %(default)s).",
     )
+    full_parser.add_argument(
+        "--rows",
+        default=None,
+        metavar="START:END",
+        help="Select a slice of rows to score, e.g. '0:1000' or '500:' (default: all).",
+    )
     full_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
 
     args = parser.parse_args()
+
+    def _parse_rows(value: str | None) -> slice | None:
+        if value is None:
+            return None
+        parts = value.split(":")
+        if len(parts) != 2:
+            parser.error("--rows must be in START:END format, e.g. '0:1000'")
+        start = int(parts[0]) if parts[0] else None
+        end = int(parts[1]) if parts[1] else None
+        return slice(start, end)
 
     if args.command == "translate":
         translate_and_upload(
@@ -350,6 +393,7 @@ if __name__ == "__main__":
             comet_batch_size=args.batch_size,
             accelerator=args.accelerator,
             private=args.private,
+            rows_slice=_parse_rows(args.rows),
         )
     elif args.command == "full":
         full_pipeline(
@@ -358,4 +402,5 @@ if __name__ == "__main__":
             comet_batch_size=args.batch_size,
             accelerator=args.accelerator,
             private=args.private,
+            rows_slice=_parse_rows(args.rows),
         )
