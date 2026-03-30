@@ -36,26 +36,41 @@ def _comet_scores(
     mos_sentences: list[str],
     batch_size: int = 8,
     accelerator: str = "auto",
+    chunk_size: int = 4096,
+    num_workers: int = 0,
 ) -> list[float]:
-    """Return per-pair COMET-QE scores using McGill-NLP/ssa-comet-qe."""
+    """Return per-pair COMET-QE scores using McGill-NLP/ssa-comet-qe.
+
+    For large datasets, ``chunk_size`` controls how many pairs are passed to
+    ``model.predict`` at once to avoid OOM errors.  COMET already handles
+    mini-batching internally (``batch_size``), so chunking is only needed when
+    the full dataset is too large to hold in GPU memory all at once.  Set
+    ``chunk_size=0`` to disable chunking and process everything in one call.
+    """
     from comet import download_model, load_from_checkpoint
+    from tqdm import tqdm
 
     print("Loading COMET-QE model (McGill-NLP/ssa-comet-qe)…")
     model_path = download_model("McGill-NLP/ssa-comet-qe")
     model = load_from_checkpoint(model_path)
 
-    comet_data = [{"src": src, "mt": mt} for src, mt in zip(eng_sentences, mos_sentences)]
+    data = [{"src": src, "mt": mt} for src, mt in zip(eng_sentences, mos_sentences)]
+    n = len(data)
+    print(f"Scoring {n} pairs with COMET-QE (batch_size={batch_size}, accelerator={accelerator})…")
 
-    print(f"Scoring {len(comet_data)} pairs with COMET-QE (batch_size={batch_size}, accelerator={accelerator})…")
-    output = model.predict(comet_data, batch_size=batch_size, accelerator=accelerator)
+    effective_chunk = chunk_size if chunk_size and chunk_size < n else n
+    all_scores: list[float] = []
+    for i in tqdm(range(0, n, effective_chunk), desc="COMET chunks", unit="chunk"):
+        chunk = data[i : i + effective_chunk]
+        output = model.predict(chunk, batch_size=batch_size, accelerator=accelerator, num_workers=num_workers)
+        all_scores.extend(round(float(s), 4) for s in output["scores"])
 
-    scores = [float(s) for s in output.scores]
     print(
-        f"COMET-QE scores — mean: {statistics.mean(scores):.3f}  "
-        f"median: {statistics.median(scores):.3f}  "
-        f"min: {min(scores):.3f}  max: {max(scores):.3f}"
+        f"COMET-QE scores — mean: {statistics.mean(all_scores):.3f}  "
+        f"median: {statistics.median(all_scores):.3f}  "
+        f"min: {min(all_scores):.3f}  max: {max(all_scores):.3f}"
     )
-    return scores
+    return all_scores
 
 
 # ---------------------------------------------------------------------------
