@@ -156,7 +156,6 @@ def score_and_upload(
     print(f"Done. Dataset available at https://huggingface.co/datasets/{hub_repo}")
 
 
-
 def full_pipeline(
     hub_repo: str = "madoss/nllb-mos",
     min_laser: float = 0.0,
