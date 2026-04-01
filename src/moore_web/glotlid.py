@@ -1,8 +1,24 @@
-"""Language identification using the GlotLID fasttext model from HuggingFace."""
+"""Language identification using the GlotLID fasttext model from HuggingFace.
 
+Usage
+-----
+    # Annotate a HF dataset and push to Hub
+    uv run python -m moore_web.glotlid --source-repo madoss/nllb-mos-raw --hub-repo madoss/nllb-mos-lid
+
+    # Custom source/target columns
+    uv run python -m moore_web.glotlid --source-repo madoss/nllb-mos-raw --hub-repo madoss/nllb-mos-lid \\
+        --source-col eng_Latn --target-col mos_Latn
+"""
+
+from __future__ import annotations
+
+import argparse
+from dotenv import load_dotenv
 import fasttext
 import pandas as pd
 from huggingface_hub import hf_hub_download
+
+load_dotenv()
 
 REPO_ID = "cis-lmu/glotlid"
 FILENAME = "model.bin"
@@ -60,7 +76,7 @@ def annotate_dataset(
         batch["target_glotlid_prob"] = tgt_probs.tolist()
         return batch
 
-    return dataset.map(_batch_predict, batched=True, batch_size=batch_size)
+    return dataset.map(_batch_predict, batched=True, batch_size=batch_size, load_from_cache_file=False)
 
 
 def annotate_text_units(entries: list[dict], model: fasttext.FastText._FastText | None = None) -> list[dict]:
@@ -92,3 +108,67 @@ def annotate_text_units(entries: list[dict], model: fasttext.FastText._FastText 
         item.setdefault("text_unit_probs", None)
 
     return entries
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def cli() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Annotate a HuggingFace dataset with GlotLID language predictions.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--source-repo",
+        required=True,
+        help="HF Hub dataset repo to load (e.g. madoss/nllb-mos-raw).",
+    )
+    parser.add_argument(
+        "--hub-repo",
+        required=True,
+        help="HF Hub dataset repo to push annotated results to.",
+    )
+    parser.add_argument(
+        "--source-col",
+        default="eng_Latn",
+        help="Source language column name (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--target-col",
+        default="mos_Latn",
+        help="Target language column name (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1000,
+        help="Rows per batch for dataset.map (default: %(default)s).",
+    )
+    parser.add_argument("--private", action="store_true", help="Make the HF dataset private.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    from datasets import load_dataset
+
+    args = cli()
+
+    print(f"Loading dataset from '{args.source_repo}'…")
+    ds = load_dataset(args.source_repo, split="train")
+
+    print("Loading GlotLID model…")
+    model = load_model()
+
+    print(f"Annotating {len(ds):,} rows…")
+    ds = annotate_dataset(ds, model=model, source_col=args.source_col, target_col=args.target_col, batch_size=args.batch_size)
+
+    print(f"Pushing to '{args.hub_repo}'…")
+    ds.push_to_hub(args.hub_repo, private=args.private)
+    print(f"Done. https://huggingface.co/datasets/{args.hub_repo}")
+
+
+if __name__ == "__main__":
+    main()
