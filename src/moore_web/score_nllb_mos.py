@@ -18,6 +18,7 @@ Usage
 
 from __future__ import annotations
 
+import argparse
 import statistics
 
 from dotenv import load_dotenv
@@ -135,7 +136,9 @@ def score_and_upload(
     eng_sentences = [r["eng_Latn"] for r in rows]
     mos_sentences = [r["mos_Latn"] for r in rows]
 
-    comet_scores = _comet_scores(eng_sentences, mos_sentences, batch_size=comet_batch_size, accelerator=accelerator)
+    comet_scores = _comet_scores(
+        eng_sentences, mos_sentences, batch_size=comet_batch_size, accelerator=accelerator
+    )
 
     cols = list(rows[0].keys()) if rows else _TSV_COLS
     dataset = Dataset.from_dict(
@@ -238,9 +241,20 @@ def full_pipeline(
 # CLI
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    import argparse
 
+def _parse_rows(value: str | None) -> slice | None:
+    if value is None:
+        return None
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("--rows must be in START:END format, e.g. '0:1000'")
+    start = int(parts[0]) if parts[0] else None
+    end = int(parts[1]) if parts[1] else None
+    return slice(start, end)
+
+
+def cli():
+    """Build and return the argument parser."""
     parser = argparse.ArgumentParser(
         description="Score or translate the NLLB eng↔mos dataset with COMET-QE / TranslateGemma.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -364,17 +378,13 @@ if __name__ == "__main__":
     full_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
 
     args = parser.parse_args()
+    return args
 
-    def _parse_rows(value: str | None) -> slice | None:
-        if value is None:
-            return None
-        parts = value.split(":")
-        if len(parts) != 2:
-            parser.error("--rows must be in START:END format, e.g. '0:1000'")
-        start = int(parts[0]) if parts[0] else None
-        end = int(parts[1]) if parts[1] else None
-        return slice(start, end)
 
+def main() -> None:
+    """Dispatch parsed CLI arguments to the appropriate pipeline function."""
+    args = cli()
+    slice_args = _parse_rows(args.rows) if args.command in ("score", "full") else None
     if args.command == "translate":
         translate_and_upload(
             hub_repo=args.hub_repo,
@@ -393,7 +403,7 @@ if __name__ == "__main__":
             comet_batch_size=args.batch_size,
             accelerator=args.accelerator,
             private=args.private,
-            rows_slice=_parse_rows(args.rows),
+            rows_slice=slice_args,
         )
     elif args.command == "full":
         full_pipeline(
@@ -402,5 +412,9 @@ if __name__ == "__main__":
             comet_batch_size=args.batch_size,
             accelerator=args.accelerator,
             private=args.private,
-            rows_slice=_parse_rows(args.rows),
+            rows_slice=slice_args,
         )
+
+
+if __name__ == "__main__":
+    main()
