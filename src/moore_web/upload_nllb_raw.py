@@ -72,7 +72,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Upload AllenAI NLLB eng↔mos dataset to HuggingFace Hub.")
-    parser.add_argument("--hub-repo", default="madoss/nllb-mos-raw", help="HF Hub repo (default: %(default)s).")
+    parser.add_argument(
+        "--hub-repo", default="madoss/nllb-mos-raw", help="HF Hub repo (default: %(default)s)."
+    )
     parser.add_argument("--private", action="store_true", help="Make the dataset private.")
     args = parser.parse_args()
 
