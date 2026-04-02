@@ -98,8 +98,7 @@ def score_and_upload(
         source_repo:       HuggingFace repo to load the raw dataset from.
                            If None, the raw TSV is downloaded directly.
         min_laser:         Drop pairs whose NLLB laser_score is below this.
-        comet_batch_size:  Batch size for COMET-QE inference (COMET handles
-                           mini-batching internally).
+        comet_batch_size:  COMET-QE internal DataLoader mini-batch size.
         accelerator:       PyTorch Lightning accelerator (``"auto"``, ``"gpu"``, ``"cpu"``).
         private:           Whether to make the HF Hub dataset private.
         rows_slice:        Optional ``slice`` to select a subset of rows *after*
@@ -137,7 +136,7 @@ def score_and_upload(
         accelerator=accelerator,
         apply_lid_filter=apply_lid_filter,
     )
-    ds = ds.map(score_fn, batched=True, batch_size=comet_batch_size, desc="COMET-QE scoring")
+    ds = ds.map(score_fn, batched=True, desc="COMET-QE scoring")
 
     print(f"\nPushing scored dataset to HuggingFace Hub as '{hub_repo}'…")
     DatasetDict({"train": ds}).push_to_hub(hub_repo, private=private)
