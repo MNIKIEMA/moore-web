@@ -9,6 +9,9 @@ Usage
     uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw
     uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw --min-laser 0.5
 
+    # Score only rows that pass the LID quality filter (glotlid + sentence-lid)
+    uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw --filter-lid
+
     # Translate English segments to French and push
     uv run python -m moore_web.score_nllb_mos translate --source-repo madoss/nllb-mos-raw
 
@@ -27,6 +30,27 @@ from moore_web.translation import translate_and_upload
 from moore_web.upload_nllb_raw import _COLS as _TSV_COLS, _load_nllb_tsv
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# LID quality filter
+# ---------------------------------------------------------------------------
+
+
+def _apply_lid_filter(rows: list[dict]) -> tuple[list[dict], list[int]]:
+    """
+    Return rows that pass the LID quality filter and their original indices.
+    """
+    filtered_indices = [
+        i
+        for i, r in enumerate(rows)
+        if (r.get("target_glotlid_prob") or 0.0) > 0.9
+        and (r.get("target_sentence_lid") or 0.0) > 0.9
+        and "mos_Latn" in (r.get("target_glotlid_lang") or "")
+    ]
+    filtered_rows = [rows[i] for i in filtered_indices]
+    print(f"LID filter: {len(filtered_rows)} of {len(rows)} pairs pass.")
+    return filtered_rows, filtered_indices
+
 
 # ---------------------------------------------------------------------------
 # COMET-QE scoring
@@ -88,10 +112,14 @@ def score_and_upload(
     accelerator: str = "auto",
     private: bool = False,
     rows_slice: slice | None = None,
+    apply_lid_filter: bool = False,
 ) -> None:
     """Add COMET-QE scores to an existing HF dataset and push the result.
 
     Loads from ``source_repo`` if provided, otherwise re-downloads the raw TSV.
+    The output column is named ``comet_qe_en_mos``; rows that are skipped by
+    the LID filter (when ``apply_lid_filter=True``) keep ``None`` for that
+    column.
 
     Args:
         hub_repo:          HuggingFace repo to push the scored dataset to.
@@ -104,6 +132,11 @@ def score_and_upload(
         rows_slice:        Optional ``slice`` to select a subset of rows *after*
                            laser filtering, e.g. ``slice(0, 1000)`` for the first
                            1 000 pairs.  ``None`` keeps all rows.
+        apply_lid_filter:  When True, only score rows that pass the LID quality
+                           filter (target_glotlid_prob > 0.9,
+                           target_sentence_lid > 0.9, target_glotlid_lang
+                           contains ``mos_Latn``).  Other rows are kept in the
+                           dataset with ``comet_qe_en_mos=None``.
     """
     from datasets import Dataset, DatasetDict, load_dataset
 
@@ -134,18 +167,29 @@ def score_and_upload(
         rows = rows[rows_slice]
         print(f"Row selection {rows_slice}: using {len(rows)} of {before} pairs.")
 
-    eng_sentences = [r["eng_Latn"] for r in rows]
-    mos_sentences = [r["mos_Latn"] for r in rows]
+    # Initialise the score column to None for all rows; filtered rows will be
+    # filled in after inference.
+    comet_qe_en_mos: list[float | None] = [None] * len(rows)
 
-    comet_scores = _comet_scores(
-        eng_sentences, mos_sentences, batch_size=comet_batch_size, accelerator=accelerator
-    )
+    if apply_lid_filter:
+        score_rows, score_indices = _apply_lid_filter(rows)
+    else:
+        score_rows, score_indices = rows, list(range(len(rows)))
+
+    if score_rows:
+        eng_sentences = [r["eng_Latn"] for r in score_rows]
+        mos_sentences = [r["mos_Latn"] for r in score_rows]
+        scores = _comet_scores(eng_sentences, mos_sentences, batch_size=comet_batch_size, accelerator=accelerator)
+        for idx, score in zip(score_indices, scores):
+            comet_qe_en_mos[idx] = score
+    else:
+        print("No rows to score after filtering.")
 
     cols = list(rows[0].keys()) if rows else _TSV_COLS
     dataset = Dataset.from_dict(
         {
             **{col: [r[col] for r in rows] for col in cols},
-            "comet_qe": comet_scores,
+            "comet_qe_en_mos": comet_qe_en_mos,
         }
     )
 
@@ -163,6 +207,7 @@ def full_pipeline(
     accelerator: str = "auto",
     private: bool = False,
     rows_slice: slice | None = None,
+    apply_lid_filter: bool = False,
 ) -> None:
     """Download, score, and upload in one step (original behaviour)."""
     score_and_upload(
@@ -173,6 +218,7 @@ def full_pipeline(
         accelerator=accelerator,
         private=private,
         rows_slice=rows_slice,
+        apply_lid_filter=apply_lid_filter,
     )
 
 
@@ -240,6 +286,16 @@ def cli():
         help="Select a slice of rows to score, e.g. '0:1000' or '500:' (default: all).",
     )
     sc_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+    sc_parser.add_argument(
+        "--filter-lid",
+        action="store_true",
+        help=(
+            "Only score rows that pass the LID quality filter "
+            "(target_glotlid_prob > 0.9, target_sentence_lid > 0.9, "
+            "target_glotlid_lang contains 'mos_Latn'). "
+            "Other rows are kept with comet_qe_en_mos=null."
+        ),
+    )
 
     # -- translate subcommand ------------------------------------------------
     tr_parser = subparsers.add_parser(
@@ -315,6 +371,16 @@ def cli():
         help="Select a slice of rows to score, e.g. '0:1000' or '500:' (default: all).",
     )
     full_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+    full_parser.add_argument(
+        "--filter-lid",
+        action="store_true",
+        help=(
+            "Only score rows that pass the LID quality filter "
+            "(target_glotlid_prob > 0.9, target_sentence_lid > 0.9, "
+            "target_glotlid_lang contains 'mos_Latn'). "
+            "Other rows are kept with comet_qe_en_mos=null."
+        ),
+    )
 
     args = parser.parse_args()
     return args
@@ -343,6 +409,7 @@ def main() -> None:
             accelerator=args.accelerator,
             private=args.private,
             rows_slice=slice_args,
+            apply_lid_filter=args.filter_lid,
         )
     elif args.command == "full":
         full_pipeline(
@@ -352,6 +419,7 @@ def main() -> None:
             accelerator=args.accelerator,
             private=args.private,
             rows_slice=slice_args,
+            apply_lid_filter=args.filter_lid,
         )
 
 
