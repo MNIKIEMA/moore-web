@@ -163,7 +163,9 @@ def main() -> None:
     model = load_model()
 
     print(f"Annotating {len(ds):,} rows…")
-    ds = annotate_dataset(ds, model=model, source_col=args.source_col, target_col=args.target_col, batch_size=args.batch_size)
+    ds = annotate_dataset(
+        ds, model=model, source_col=args.source_col, target_col=args.target_col, batch_size=args.batch_size
+    )
 
     print(f"Pushing to '{args.hub_repo}'…")
     ds.push_to_hub(args.hub_repo, private=args.private)

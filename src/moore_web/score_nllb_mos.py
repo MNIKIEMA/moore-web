@@ -9,6 +9,9 @@ Usage
     uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw
     uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw --min-laser 0.5
 
+    # Score only rows that pass the LID quality filter (glotlid + sentence-lid)
+    uv run python -m moore_web.score_nllb_mos score --source-repo madoss/nllb-mos-raw --filter-lid
+
     # Translate English segments to French and push
     uv run python -m moore_web.score_nllb_mos translate --source-repo madoss/nllb-mos-raw
 
@@ -19,60 +22,53 @@ Usage
 from __future__ import annotations
 
 import argparse
-import statistics
 
 from dotenv import load_dotenv
-
+from functools import partial
 from moore_web.translation import translate_and_upload
-from moore_web.upload_nllb_raw import _COLS as _TSV_COLS, _load_nllb_tsv
+from moore_web.upload_nllb_raw import _load_nllb_tsv
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# LID quality filter predicate
+# ---------------------------------------------------------------------------
+
+
+def _passes_lid(row: dict) -> bool:
+    return (
+        (row.get("target_glotlid_prob") or 0.0) > 0.9
+        and (row.get("target_sentence_lid") or 0.0) > 0.9
+        and "mos_Latn" in (row.get("target_glotlid_lang") or "")
+    )
+
 
 # ---------------------------------------------------------------------------
 # COMET-QE scoring
 # ---------------------------------------------------------------------------
 
 
-def _comet_scores(
-    eng_sentences: list[str],
-    mos_sentences: list[str],
-    batch_size: int = 8,
-    accelerator: str = "auto",
-    chunk_size: int = 4096,
-    num_workers: int = 0,
-) -> list[float]:
-    """Return per-pair COMET-QE scores using McGill-NLP/ssa-comet-qe.
-
-    For large datasets, ``chunk_size`` controls how many pairs are passed to
-    ``model.predict`` at once to avoid OOM errors.  COMET already handles
-    mini-batching internally (``batch_size``), so chunking is only needed when
-    the full dataset is too large to hold in GPU memory all at once.  Set
-    ``chunk_size=0`` to disable chunking and process everything in one call.
-    """
-    from comet import download_model, load_from_checkpoint
-    from tqdm import tqdm
-
-    print("Loading COMET-QE model (McGill-NLP/ssa-comet-qe)…")
-    model_path = download_model("McGill-NLP/ssa-comet-qe")
-    model = load_from_checkpoint(model_path)
-
-    data = [{"src": src, "mt": mt} for src, mt in zip(eng_sentences, mos_sentences)]
-    n = len(data)
-    print(f"Scoring {n} pairs with COMET-QE (batch_size={batch_size}, accelerator={accelerator})…")
-
-    effective_chunk = chunk_size if chunk_size and chunk_size < n else n
-    all_scores: list[float] = []
-    for i in tqdm(range(0, n, effective_chunk), desc="COMET chunks", unit="chunk"):
-        chunk = data[i : i + effective_chunk]
-        output = model.predict(chunk, batch_size=batch_size, accelerator=accelerator, num_workers=num_workers)
-        all_scores.extend(round(float(s), 4) for s in output["scores"])
-
-    print(
-        f"COMET-QE scores — mean: {statistics.mean(all_scores):.3f}  "
-        f"median: {statistics.median(all_scores):.3f}  "
-        f"min: {min(all_scores):.3f}  max: {max(all_scores):.3f}"
-    )
-    return all_scores
+def _score_batch(
+    batch: dict,
+    model,
+    comet_batch_size: int,
+    accelerator: str,
+    apply_lid_filter: bool,
+) -> dict:
+    n = len(batch["eng_Latn"])
+    if apply_lid_filter:
+        idx = [i for i in range(n) if _passes_lid({k: batch[k][i] for k in batch})]
+        scores: list[float | None] = [None] * n
+        if idx:
+            data = [{"src": batch["eng_Latn"][i], "mt": batch["mos_Latn"][i]} for i in idx]
+            output = model.predict(data, batch_size=comet_batch_size, accelerator=accelerator, num_workers=0)
+            for i, score in zip(idx, output["scores"]):
+                scores[i] = round(float(score), 4)
+    else:
+        data = [{"src": src, "mt": mt} for src, mt in zip(batch["eng_Latn"], batch["mos_Latn"])]
+        output = model.predict(data, batch_size=comet_batch_size, accelerator=accelerator, num_workers=0)
+        scores = [round(float(s), 4) for s in output["scores"]]
+    return {"comet_qe_en_mos": scores}
 
 
 # ---------------------------------------------------------------------------
@@ -88,71 +84,62 @@ def score_and_upload(
     accelerator: str = "auto",
     private: bool = False,
     rows_slice: slice | None = None,
+    apply_lid_filter: bool = False,
 ) -> None:
     """Add COMET-QE scores to an existing HF dataset and push the result.
 
     Loads from ``source_repo`` if provided, otherwise re-downloads the raw TSV.
+    The output column is named ``comet_qe_en_mos``; rows that are skipped by
+    the LID filter (when ``apply_lid_filter=True``) keep ``None`` for that
+    column.
 
     Args:
         hub_repo:          HuggingFace repo to push the scored dataset to.
         source_repo:       HuggingFace repo to load the raw dataset from.
                            If None, the raw TSV is downloaded directly.
         min_laser:         Drop pairs whose NLLB laser_score is below this.
-        comet_batch_size:  Batch size for COMET-QE inference.
+        comet_batch_size:  COMET-QE internal DataLoader mini-batch size.
         accelerator:       PyTorch Lightning accelerator (``"auto"``, ``"gpu"``, ``"cpu"``).
         private:           Whether to make the HF Hub dataset private.
         rows_slice:        Optional ``slice`` to select a subset of rows *after*
                            laser filtering, e.g. ``slice(0, 1000)`` for the first
                            1 000 pairs.  ``None`` keeps all rows.
+        apply_lid_filter:  When True, only score rows that pass the LID quality
+                           filter (target_glotlid_prob > 0.9,
+                           target_sentence_lid > 0.9, target_glotlid_lang
+                           contains ``mos_Latn``).  Other rows are kept in the
+                           dataset with ``comet_qe_en_mos=None``.
     """
+    from comet import download_model, load_from_checkpoint
     from datasets import Dataset, DatasetDict, load_dataset
 
     if source_repo:
-        # When no laser filtering is needed we can push the slice directly into
-        # the split string so only the requested rows are downloaded.
-        if rows_slice is not None and min_laser == 0.0:
-            start = rows_slice.start or ""
-            stop = rows_slice.stop or ""
-            split = f"train[{start}:{stop}]"
-            print(f"Loading dataset from HuggingFace Hub: '{source_repo}' (split='{split}')…")
-            ds = load_dataset(source_repo, split=split)
-            rows_slice = None  # already applied
-        else:
-            print(f"Loading dataset from HuggingFace Hub: '{source_repo}'…")
-            ds = load_dataset(source_repo, split="train")
-        rows = [dict(zip(ds.column_names, vals)) for vals in zip(*[ds[col] for col in ds.column_names])]
+        ds = load_dataset(source_repo, split="train")
     else:
-        rows = _load_nllb_tsv()
+        ds = Dataset.from_list(_load_nllb_tsv())
 
     if min_laser > 0.0:
-        before = len(rows)
-        rows = [r for r in rows if (r["laser_score"] or 0.0) >= min_laser]
-        print(f"Dropped {before - len(rows)} pairs with laser_score < {min_laser}. Keeping {len(rows)}.")
+        before = len(ds)
+        ds = ds.filter(lambda r: (r["laser_score"] or 0.0) >= min_laser)
+        print(f"Dropped {before - len(ds)} pairs with laser_score < {min_laser}. Keeping {len(ds)}.")
 
     if rows_slice is not None:
-        before = len(rows)
-        rows = rows[rows_slice]
-        print(f"Row selection {rows_slice}: using {len(rows)} of {before} pairs.")
+        ds = ds.select(range(*rows_slice.indices(len(ds))))
 
-    eng_sentences = [r["eng_Latn"] for r in rows]
-    mos_sentences = [r["mos_Latn"] for r in rows]
+    print("Loading COMET-QE model (McGill-NLP/ssa-comet-qe)…")
+    model = load_from_checkpoint(download_model("McGill-NLP/ssa-comet-qe"))
 
-    comet_scores = _comet_scores(
-        eng_sentences, mos_sentences, batch_size=comet_batch_size, accelerator=accelerator
+    score_fn = partial(
+        _score_batch,
+        model=model,
+        comet_batch_size=comet_batch_size,
+        accelerator=accelerator,
+        apply_lid_filter=apply_lid_filter,
     )
-
-    cols = list(rows[0].keys()) if rows else _TSV_COLS
-    dataset = Dataset.from_dict(
-        {
-            **{col: [r[col] for r in rows] for col in cols},
-            "comet_qe": comet_scores,
-        }
-    )
-
-    dataset_dict = DatasetDict({"train": dataset})
+    ds = ds.map(score_fn, batched=True, desc="COMET-QE scoring")
 
     print(f"\nPushing scored dataset to HuggingFace Hub as '{hub_repo}'…")
-    dataset_dict.push_to_hub(hub_repo, private=private)
+    DatasetDict({"train": ds}).push_to_hub(hub_repo, private=private)
     print(f"Done. Dataset available at https://huggingface.co/datasets/{hub_repo}")
 
 
@@ -163,6 +150,7 @@ def full_pipeline(
     accelerator: str = "auto",
     private: bool = False,
     rows_slice: slice | None = None,
+    apply_lid_filter: bool = False,
 ) -> None:
     """Download, score, and upload in one step (original behaviour)."""
     score_and_upload(
@@ -173,6 +161,7 @@ def full_pipeline(
         accelerator=accelerator,
         private=private,
         rows_slice=rows_slice,
+        apply_lid_filter=apply_lid_filter,
     )
 
 
@@ -240,6 +229,16 @@ def cli():
         help="Select a slice of rows to score, e.g. '0:1000' or '500:' (default: all).",
     )
     sc_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+    sc_parser.add_argument(
+        "--filter-lid",
+        action="store_true",
+        help=(
+            "Only score rows that pass the LID quality filter "
+            "(target_glotlid_prob > 0.9, target_sentence_lid > 0.9, "
+            "target_glotlid_lang contains 'mos_Latn'). "
+            "Other rows are kept with comet_qe_en_mos=null."
+        ),
+    )
 
     # -- translate subcommand ------------------------------------------------
     tr_parser = subparsers.add_parser(
@@ -315,6 +314,16 @@ def cli():
         help="Select a slice of rows to score, e.g. '0:1000' or '500:' (default: all).",
     )
     full_parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+    full_parser.add_argument(
+        "--filter-lid",
+        action="store_true",
+        help=(
+            "Only score rows that pass the LID quality filter "
+            "(target_glotlid_prob > 0.9, target_sentence_lid > 0.9, "
+            "target_glotlid_lang contains 'mos_Latn'). "
+            "Other rows are kept with comet_qe_en_mos=null."
+        ),
+    )
 
     args = parser.parse_args()
     return args
@@ -343,6 +352,7 @@ def main() -> None:
             accelerator=args.accelerator,
             private=args.private,
             rows_slice=slice_args,
+            apply_lid_filter=args.filter_lid,
         )
     elif args.command == "full":
         full_pipeline(
@@ -352,6 +362,7 @@ def main() -> None:
             accelerator=args.accelerator,
             private=args.private,
             rows_slice=slice_args,
+            apply_lid_filter=args.filter_lid,
         )
 
 
