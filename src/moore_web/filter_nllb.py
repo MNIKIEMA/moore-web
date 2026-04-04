@@ -186,7 +186,7 @@ def _lang_consistency_score(text: str, foreign_words: set[str]) -> float:
 
 
 def _load_glotlid_wordlists(languages: list[str]) -> set[str]:
-    """Load word lists from ``cis-lmu/glotlid-wordlists`` for the given language configs.
+    """Load word lists from ``madoss/mos-eng-fra-wordlists`` for the given language configs.
 
     Each language is a separate dataset config (e.g. ``"fra_Latn"``).
     Returns a flat union of all words across the requested languages.
@@ -200,7 +200,7 @@ def _load_glotlid_wordlists(languages: list[str]) -> set[str]:
     words: set[str] = set()
     for lang in languages:
         try:
-            ds = load_dataset("cis-lmu/glotlid-wordlists", name=lang, split="train")
+            ds = load_dataset("madoss/mos-eng-fra-wordlists", split=lang)
             for row in ds:
                 word = row.get("text") or row.get("word", "")
                 if word:
