@@ -64,10 +64,10 @@ def _load_lexicon_moore(path: Path) -> set[str]:
                 continue
             # Strip IPA/pronunciation annotations in brackets e.g. "kenge [è]" → "kenge"
             clean = re.sub(r"\s*[\[\(][^\]\)]*[\]\)]", "", raw).strip()
-            # Add the cleaned lemma (lowercased)
-            words.add(clean.lower())
-            # Also add individual tokens (letters + Mooré diacritics)
-            for token in re.findall(r"[\w\u0300-\u036f\u1e00-\u1eff]+", raw.lower()):
+            # Split on whitespace and process each token individually
+            for token in clean.lower().split():
+                # Strip leading hyphens (morpheme markers e.g. "-ame" → "ame")
+                token = token.lstrip("-")
                 if len(token) >= 2:
                     words.add(token)
     print(f"  lexicon[mos_Latn]: {len(words):,} words (from {path.name})")
