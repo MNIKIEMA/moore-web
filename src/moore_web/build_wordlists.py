@@ -66,6 +66,11 @@ def _load_lexicon_moore(path: Path) -> set[str]:
             clean = re.sub(r"\s*[\[\(][^\]\)]*[\]\)]", "", raw).strip()
             # Split on whitespace and process each token individually
             for token in clean.lower().split():
+                # Drop placeholder/noise tokens
+                if token.startswith("@"):  # e.g. "@email"
+                    continue
+                # Strip leading dots (ellipsis markers e.g. "...ye" → "ye")
+                token = token.lstrip(".")
                 # Strip leading hyphens (morpheme markers e.g. "-ame" → "ame")
                 token = token.lstrip("-")
                 if len(token) >= 2:
