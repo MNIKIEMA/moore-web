@@ -170,8 +170,11 @@ def _lang_consistency_score(text: str, foreign_words: set[str]) -> float:
         cleaned = _simplify_text(str(text).strip(), _NORM_CONFIG)
     else:
         cleaned = text
-    words = set(re.findall(r"\b\w+\b", cleaned.lower()))
-    if not words:
+    # Exclude tokens shorter than 3 characters: single letters, abbreviations and
+    # random noise are absent from any wordlist and would inflate the score.
+    words = {w for w in re.findall(r"\b\w+\b", cleaned.lower()) if len(w) >= 3}
+    # If too few meaningful tokens remain the score is unreliable (noise / gibberish).
+    if len(words) < 2:
         return 0.0
     non_foreign = len(words - foreign_words)
     return round(non_foreign / len(words), 4)
@@ -208,11 +211,42 @@ def _load_glotlid_wordlists(languages: list[str]) -> set[str]:
     return words
 
 
+# GlotLID language code → pyspellchecker language code
+_SPELLCHECKER_LANG_MAP = {"fra_Latn": "fr", "eng_Latn": "en", "spa_Latn": "es", "deu_Latn": "de"}
+
+
+def _load_spellchecker_words(languages: list[str]) -> set[str]:
+    """Load full vocabulary from pyspellchecker for the given GlotLID language codes.
+
+    pyspellchecker ships with comprehensive word-frequency dictionaries (~100k+ words),
+    unlike the GlotLID discriminative lists (~14–25k n-grams).  This catches common
+    words like 'comment', 'game', 'pesée' that GlotLID lists omit.
+    """
+    try:
+        from spellchecker import SpellChecker
+    except ImportError:
+        print("Warning: 'pyspellchecker' not installed — falling back to GlotLID wordlists only.")
+        return set()
+
+    words: set[str] = set()
+    for lang in languages:
+        sc_lang = _SPELLCHECKER_LANG_MAP.get(lang)
+        if sc_lang is None:
+            continue
+        try:
+            sc = SpellChecker(language=sc_lang)
+            words.update(sc.word_frequency.keys())
+            print(f"  Loaded spellchecker[{sc_lang}] ({len(words):,} words total so far).")
+        except Exception as e:
+            print(f"Warning: could not load spellchecker[{sc_lang}] ({e}) — skipping.")
+    return words
+
+
 def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
-    """True when *text* contains at least one token present in the foreign wordlist."""
+    """True when *text* contains at least one token (length >= 3) present in the foreign wordlist."""
     if not wordlist:
         return False
-    tokens = re.findall(r"\b\w+\b", text.lower())
+    tokens = (t for t in re.findall(r"\b\w+\b", text.lower()) if len(t) >= 3)
     return any(t in wordlist for t in tokens)
 
 
@@ -442,14 +476,20 @@ def filter_nllb(
     # Load wordlists
     foreign_wordlist: set[str] = set()
     if load_wordlists:
-        raw_foreign = _load_glotlid_wordlists(["fra_Latn", "eng_Latn"])
+        # GlotLID discriminative n-grams (~14–25k, misses common words like 'comment', 'game')
+        glotlid_foreign = _load_glotlid_wordlists(["fra_Latn", "eng_Latn"])
+        # pyspellchecker full dictionaries (~100k+, covers common vocabulary)
+        spell_foreign = _load_spellchecker_words(["fra_Latn", "eng_Latn"])
+        raw_foreign = glotlid_foreign | spell_foreign
         moore_wordlist = _load_glotlid_wordlists(["mos_Latn"])
         # NOTE: the GlotLID Mooré wordlist is very small (~1 000 discriminative n-grams),
         # so it cannot be used to positively identify Mooré words.  We use it only to
         # subtract any overlap from the foreign wordlist, avoiding false positives for
         # loanwords or short tokens shared between languages.
         foreign_wordlist = raw_foreign - moore_wordlist
-        print(f"  Exclusive foreign wordlist: {len(foreign_wordlist):,} words ({len(raw_foreign) - len(foreign_wordlist):,} removed as Mooré overlap).")
+        print(
+            f"  Exclusive foreign wordlist: {len(foreign_wordlist):,} words ({len(raw_foreign) - len(foreign_wordlist):,} removed as Mooré overlap)."
+        )
 
     # Annotate quality warnings
     print("Annotating quality warnings…")
