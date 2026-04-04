@@ -29,18 +29,18 @@ Usage
 
     # Custom thresholds
     uv run python -m moore_web.filter_nllb \\
-        --source-repo madoss/nllb-mos-lid \\
+        --source-repo madoss/nllb-mos \\
         --hub-repo madoss/nllb-mos-filtered \\
         --lid-threshold 0.9 \\
         --glotlid-threshold 0.9 \\
         --comet-threshold 0.5
 """
 
+# TODO; Improve filtering with https://huggingface.co/datasets/cis-lmu/glotlid-wordlists/blob/main/filter.py
 from __future__ import annotations
 
 import argparse
 import re
-from typing import Any
 
 from dotenv import load_dotenv
 
@@ -139,16 +139,17 @@ def _has_bullet_asymmetry(src: str, tgt: str) -> bool:
     return src_bullet != tgt_bullet
 
 
-def _identification_inconsistency(row: dict[str, Any], lid_threshold: float = 0.9) -> bool:
-    """True when NLLB LID and GlotLID disagree about whether target is Mooré."""
-    nllb_lid = row.get(_COL_TARGET_LID)
-    glotlid_lang = row.get(_COL_TARGET_GLOTLID_LANG)
-    glotlid_prob = row.get(_COL_TARGET_GLOTLID_PROB)
-    if nllb_lid is None or glotlid_lang is None or glotlid_prob is None:
-        return False
-    nllb_ok = nllb_lid >= lid_threshold
-    glotlid_ok = glotlid_lang == _EXPECTED_TARGET_LANG and glotlid_prob >= lid_threshold
-    return nllb_ok != glotlid_ok
+def _lang_consistency_score(text: str, lang_words: set[str]) -> float:
+    """Fraction of tokens in *text* that appear in *lang_words*.
+
+    matching_words = len(words & lang_words)
+    score = matching_words / len(words) if words else 0
+    """
+    words = set(re.findall(r"\b\w+\b", text.lower()))
+    if not words:
+        return 0.0
+    matching_words = len(words & lang_words)
+    return matching_words / len(words)
 
 
 # ---------------------------------------------------------------------------
@@ -156,12 +157,11 @@ def _identification_inconsistency(row: dict[str, Any], lid_threshold: float = 0.
 # ---------------------------------------------------------------------------
 
 
-def _load_glotlid_wordlists(languages: list[str] | None = None) -> set[str]:
-    """Load word lists from the GlotLID wordlists dataset on HuggingFace.
+def _load_glotlid_wordlists(languages: list[str]) -> set[str]:
+    """Load word lists from ``cis-lmu/glotlid-wordlists`` for the given language configs.
 
-    Returns a flat set of known words for *other* languages (i.e., words that
-    should not appear in Mooré text).  Pass ``languages`` to restrict which
-    language word lists are loaded; defaults to common cross-contamination langs.
+    Each language is a separate dataset config (e.g. ``"fra_Latn"``).
+    Returns a flat union of all words across the requested languages.
     """
     try:
         from datasets import load_dataset
@@ -169,23 +169,17 @@ def _load_glotlid_wordlists(languages: list[str] | None = None) -> set[str]:
         print("Warning: 'datasets' not installed — skipping wordlist filter.")
         return set()
 
-    if languages is None:
-        # Languages most likely to contaminate Mooré data in the NLLB corpus
-        languages = ["fra_Latn", "eng_Latn", "mos_Latn"]
-
-    try:
-        ds = load_dataset("cis-lmu/glotlid-wordlists", split="train")
-    except Exception as e:
-        print(f"Warning: could not load glotlid-wordlists ({e}) — skipping wordlist filter.")
-        return set()
-
     words: set[str] = set()
-    for row in ds:
-        if row.get("language") in languages:
-            word = row.get("word", "")
-            if word:
-                words.add(word.lower())
-    print(f"Loaded {len(words):,} foreign words from glotlid-wordlists.")
+    for lang in languages:
+        try:
+            ds = load_dataset("cis-lmu/glotlid-wordlists", name=lang, split="train")
+            for row in ds:
+                word = row.get("word", "")
+                if word:
+                    words.add(word.lower())
+            print(f"  Loaded {lang} wordlist ({len(words):,} words total so far).")
+        except Exception as e:
+            print(f"Warning: could not load glotlid-wordlists[{lang}] ({e}) — skipping.")
     return words
 
 
@@ -205,41 +199,47 @@ def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
 def annotate_warnings(
     batch: dict[str, list],
     foreign_wordlist: set[str],
-    lid_threshold: float = 0.9,
+    moore_wordlist: set[str],
 ) -> dict[str, list]:
-    """Add boolean warning columns to a HF dataset batch."""
+    """Add ``quality_warnings`` and ``identification_consistency`` columns.
+
+    ``quality_warnings`` is a ``list[str]`` of active warning labels per row:
+      ``"emoji"``, ``"dots_asymmetry"``, ``"number_mismatch"``,
+      ``"parenthesis_asymmetry"``, ``"bullet_asymmetry"``, ``"foreign_words"``
+
+    ``identification_consistency`` is a float in [0, 1]: fraction of Mooré
+    tokens that appear in the Mooré word list.
+    """
     src_texts = batch[_COL_ENG]
     tgt_texts = batch[_COL_MOS]
     n = len(src_texts)
 
-    has_emoji = []
-    has_dots = []
-    has_num_mismatch = []
-    has_paren = []
-    has_bullet = []
-    has_foreign = []
-    id_inconsistency = []
+    quality_warnings = []
+    id_consistency = []
 
     for i in range(n):
         src = src_texts[i] or ""
         tgt = tgt_texts[i] or ""
-        row = {k: v[i] for k, v in batch.items()}
 
-        has_emoji.append(_has_emoji(tgt))
-        has_dots.append(_has_dots_asymmetry(src, tgt))
-        has_num_mismatch.append(_has_number_mismatch(src, tgt))
-        has_paren.append(_has_parenthesis_asymmetry(src, tgt))
-        has_bullet.append(_has_bullet_asymmetry(src, tgt))
-        has_foreign.append(_has_foreign_words(tgt, foreign_wordlist))
-        id_inconsistency.append(_identification_inconsistency(row, lid_threshold))
+        warnings: list[str] = []
+        if _has_emoji(tgt):
+            warnings.append("emoji")
+        if _has_dots_asymmetry(src, tgt):
+            warnings.append("dots_asymmetry")
+        if _has_number_mismatch(src, tgt):
+            warnings.append("number_mismatch")
+        if _has_parenthesis_asymmetry(src, tgt):
+            warnings.append("parenthesis_asymmetry")
+        if _has_bullet_asymmetry(src, tgt):
+            warnings.append("bullet_asymmetry")
+        if _has_foreign_words(tgt, foreign_wordlist):
+            warnings.append("foreign_words")
 
-    batch["has_emoji"] = has_emoji
-    batch["has_dots_asymmetry"] = has_dots
-    batch["has_number_mismatch"] = has_num_mismatch
-    batch["has_parenthesis_asymmetry"] = has_paren
-    batch["has_bullet_asymmetry"] = has_bullet
-    batch["has_foreign_words"] = has_foreign
-    batch["identification_inconsistency"] = id_inconsistency
+        quality_warnings.append(warnings)
+        id_consistency.append(_lang_consistency_score(tgt, moore_wordlist))
+
+    batch["quality_warnings"] = quality_warnings
+    batch["identification_consistency"] = id_consistency
 
     return batch
 
@@ -259,6 +259,7 @@ def apply_hard_filters(
     filter_foreign_words: bool = True,
     filter_parenthesis: bool = False,
     filter_number_mismatch: bool = False,
+    consistency_threshold: float = 0.0,
 ):
     """Remove rows that fail any hard quality criterion.
 
@@ -275,6 +276,9 @@ def apply_hard_filters(
         filter_foreign_words:     Drop rows where Mooré contains foreign words.
         filter_parenthesis:       Drop rows with parenthesis asymmetry (off by default).
         filter_number_mismatch:   Drop rows with number mismatch (off by default).
+        consistency_threshold:    Minimum ``identification_consistency`` score (fraction of
+                                  Mooré tokens found in the Mooré word list).  0.0 disables
+                                  this filter.
 
     Returns:
         Filtered HF Dataset.
@@ -325,21 +329,34 @@ def apply_hard_filters(
             lambda r: r[_COL_COMET_QE] is not None and r[_COL_COMET_QE] >= comet_threshold,
         )
 
-    # --- warning-based hard filters ---
-    if filter_emoji and "has_emoji" in dataset.column_names:
-        dataset = _track(dataset, "emoji", lambda r: not r["has_emoji"])
+    # --- warning-based hard filters (check quality_warnings list) ---
+    qw_col = "quality_warnings"
+    if qw_col in dataset.column_names:
+        active: list[str] = []
+        if filter_emoji:
+            active.append("emoji")
+        if filter_dots:
+            active.append("dots_asymmetry")
+        if filter_foreign_words:
+            active.append("foreign_words")
+        if filter_parenthesis:
+            active.append("parenthesis_asymmetry")
+        if filter_number_mismatch:
+            active.append("number_mismatch")
+        if active:
+            active_set = frozenset(active)
+            dataset = _track(
+                dataset,
+                "quality_warnings",
+                lambda r: not bool(active_set & set(r[qw_col] or [])),
+            )
 
-    if filter_dots and "has_dots_asymmetry" in dataset.column_names:
-        dataset = _track(dataset, "dots_asymmetry", lambda r: not r["has_dots_asymmetry"])
-
-    if filter_foreign_words and "has_foreign_words" in dataset.column_names:
-        dataset = _track(dataset, "foreign_words", lambda r: not r["has_foreign_words"])
-
-    if filter_parenthesis and "has_parenthesis_asymmetry" in dataset.column_names:
-        dataset = _track(dataset, "parenthesis", lambda r: not r["has_parenthesis_asymmetry"])
-
-    if filter_number_mismatch and "has_number_mismatch" in dataset.column_names:
-        dataset = _track(dataset, "number_mismatch", lambda r: not r["has_number_mismatch"])
+    if consistency_threshold > 0.0 and "identification_consistency" in dataset.column_names:
+        dataset = _track(
+            dataset,
+            "identification_consistency",
+            lambda r: (r["identification_consistency"] or 0.0) >= consistency_threshold,
+        )
 
     after = len(dataset)
     print(f"\nFiltering summary ({before:,} → {after:,} rows kept, {before - after:,} dropped):")
@@ -366,6 +383,7 @@ def filter_nllb(
     filter_foreign_words: bool = True,
     filter_parenthesis: bool = False,
     filter_number_mismatch: bool = False,
+    consistency_threshold: float = 0.0,
     load_wordlists: bool = True,
     batch_size: int = 1000,
     private: bool = False,
@@ -373,22 +391,23 @@ def filter_nllb(
     """Full annotation + filtering pipeline for the NLLB eng↔mos dataset.
 
     Args:
-        source_repo:            HF Hub dataset to load (must have GlotLID columns).
-        hub_repo:               HF Hub repo to push filtered results to.  If None,
-                                results are not pushed.
-        output:                 Local JSONL path to write filtered results to.
-                                If None, no local file is written.
-        lid_threshold:          Minimum ``target_sentence_lid``.
-        glotlid_threshold:      Minimum GlotLID probability for both sides.
-        comet_threshold:        Minimum COMET-QE score.
-        filter_emoji:           Drop rows with emoji in Mooré text.
-        filter_dots:            Drop rows with dots asymmetry.
-        filter_foreign_words:   Drop rows where Mooré has foreign words.
-        filter_parenthesis:     Drop rows with parenthesis asymmetry.
-        filter_number_mismatch: Drop rows with number mismatch.
-        load_wordlists:         Whether to load GlotLID wordlists for foreign-word detection.
-        batch_size:             Rows per batch for dataset.map.
-        private:                Whether to make the HF Hub dataset private.
+        source_repo:              HF Hub dataset to load (must have GlotLID columns).
+        hub_repo:                 HF Hub repo to push filtered results to.  If None,
+                                  results are not pushed.
+        output:                   Local JSONL path to write filtered results to.
+                                  If None, no local file is written.
+        lid_threshold:            Minimum ``target_sentence_lid``.
+        glotlid_threshold:        Minimum GlotLID probability for both sides.
+        comet_threshold:          Minimum COMET-QE score.
+        filter_emoji:             Drop rows with emoji in Mooré text.
+        filter_dots:              Drop rows with dots asymmetry.
+        filter_foreign_words:     Drop rows where Mooré has foreign words.
+        filter_parenthesis:       Drop rows with parenthesis asymmetry.
+        filter_number_mismatch:   Drop rows with number mismatch.
+        consistency_threshold:    Minimum ``identification_consistency`` score. 0.0 disables.
+        load_wordlists:           Whether to load GlotLID wordlists.
+        batch_size:               Rows per batch for dataset.map.
+        private:                  Whether to make the HF Hub dataset private.
     """
     from datasets import load_dataset
 
@@ -396,15 +415,18 @@ def filter_nllb(
     ds = load_dataset(source_repo, split="train")
     print(f"Loaded {len(ds):,} rows.")
 
-    # Load foreign-language wordlists
+    # Load wordlists
     foreign_wordlist: set[str] = set()
-    if load_wordlists and filter_foreign_words:
-        foreign_wordlist = _load_glotlid_wordlists()
+    moore_wordlist: set[str] = set()
+    if load_wordlists:
+        if filter_foreign_words:
+            foreign_wordlist = _load_glotlid_wordlists(["fra_Latn", "eng_Latn"])
+        moore_wordlist = _load_glotlid_wordlists(["mos_Latn"])
 
     # Annotate quality warnings
     print("Annotating quality warnings…")
     ds = ds.map(
-        lambda batch: annotate_warnings(batch, foreign_wordlist, lid_threshold=lid_threshold),
+        lambda batch: annotate_warnings(batch, foreign_wordlist, moore_wordlist),
         batched=True,
         batch_size=batch_size,
         desc="annotate warnings",
@@ -412,19 +434,20 @@ def filter_nllb(
     )
 
     # Print warning summary before filtering
+    n_total = len(ds)
     print("\nWarning counts (before hard filtering):")
-    for col in [
-        "has_emoji",
-        "has_dots_asymmetry",
-        "has_number_mismatch",
-        "has_parenthesis_asymmetry",
-        "has_bullet_asymmetry",
-        "has_foreign_words",
-        "identification_inconsistency",
-    ]:
-        if col in ds.column_names:
-            count = sum(ds[col])
-            print(f"  {col}: {count:,} ({100 * count / len(ds):.1f}%)")
+    if "quality_warnings" in ds.column_names:
+        rows_with_warnings = sum(1 for w in ds["quality_warnings"] if w)
+        print(f"  quality_warnings (any): {rows_with_warnings:,} ({100 * rows_with_warnings / n_total:.1f}%)")
+        from collections import Counter
+
+        label_counts: Counter = Counter(label for w in ds["quality_warnings"] for label in (w or []))
+        for label, cnt in label_counts.most_common():
+            print(f"    {label}: {cnt:,} ({100 * cnt / n_total:.1f}%)")
+    if "identification_consistency" in ds.column_names:
+        scores = ds["identification_consistency"]
+        mean_score = sum(scores) / len(scores) if scores else 0.0
+        print(f"  identification_consistency (mean): {mean_score:.3f}")
 
     # Apply hard filters
     ds = apply_hard_filters(
@@ -437,6 +460,7 @@ def filter_nllb(
         filter_foreign_words=filter_foreign_words,
         filter_parenthesis=filter_parenthesis,
         filter_number_mismatch=filter_number_mismatch,
+        consistency_threshold=consistency_threshold,
     )
 
     # Write local output
@@ -535,6 +559,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Hard-filter rows with number mismatch (default: warn only).",
     )
     parser.add_argument(
+        "--consistency-threshold",
+        type=float,
+        default=0.0,
+        help="Minimum identification_consistency score (fraction of Mooré tokens in the Mooré "
+        "word list). 0.0 disables this filter (default: %(default)s).",
+    )
+    parser.add_argument(
         "--no-push",
         dest="push",
         action="store_false",
@@ -573,6 +604,7 @@ def main() -> None:
         filter_foreign_words=args.filter_foreign_words,
         filter_parenthesis=args.filter_parenthesis,
         filter_number_mismatch=args.filter_number_mismatch,
+        consistency_threshold=args.consistency_threshold,
         load_wordlists=args.load_wordlists,
         batch_size=args.batch_size,
         private=args.private,
