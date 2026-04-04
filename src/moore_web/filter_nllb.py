@@ -44,6 +44,22 @@ import re
 
 from dotenv import load_dotenv
 
+try:
+    from datatrove.utils.text import TextNormConfig, simplify_text as _simplify_text
+
+    _NORM_CONFIG = TextNormConfig(
+        lowercase=False,
+        norm_numbers=False,
+        norm_weekdays=False,
+        norm_monthnames=False,
+        remove_punctuation=True,
+        norm_unicode_diacritics=False,
+        norm_whitespace=True,
+    )
+    _HAS_DATATROVE = True
+except ImportError:
+    _HAS_DATATROVE = False
+
 load_dotenv()
 
 # ---------------------------------------------------------------------------
@@ -139,17 +155,26 @@ def _has_bullet_asymmetry(src: str, tgt: str) -> bool:
     return src_bullet != tgt_bullet
 
 
-def _lang_consistency_score(text: str, lang_words: set[str]) -> float:
-    """Fraction of tokens in *text* that appear in *lang_words*.
+def _lang_consistency_score(text: str, foreign_words: set[str]) -> float:
+    """Fraction of tokens in *text* that do NOT appear in the foreign wordlist.
 
-    matching_words = len(words & lang_words)
-    score = matching_words / len(words) if words else 0
+    Uses datatrove's ``simplify_text`` when available for punctuation stripping,
+    then falls back to regex tokenisation.
+
+    A high score means the text is mostly non-foreign (consistent with Mooré).
+    A low score means many tokens are French/English words.
+
+    score = len(words - foreign_words) / len(words) if words else 0
     """
-    words = set(re.findall(r"\b\w+\b", text.lower()))
+    if _HAS_DATATROVE:
+        cleaned = _simplify_text(str(text).strip(), _NORM_CONFIG)
+    else:
+        cleaned = text
+    words = set(re.findall(r"\b\w+\b", cleaned.lower()))
     if not words:
         return 0.0
-    matching_words = len(words & lang_words)
-    return matching_words / len(words)
+    non_foreign = len(words - foreign_words)
+    return round(non_foreign / len(words), 4)
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +199,7 @@ def _load_glotlid_wordlists(languages: list[str]) -> set[str]:
         try:
             ds = load_dataset("cis-lmu/glotlid-wordlists", name=lang, split="train")
             for row in ds:
-                word = row.get("word", "")
+                word = row.get("text") or row.get("word", "")
                 if word:
                     words.add(word.lower())
             print(f"  Loaded {lang} wordlist ({len(words):,} words total so far).")
@@ -199,7 +224,6 @@ def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
 def annotate_warnings(
     batch: dict[str, list],
     foreign_wordlist: set[str],
-    moore_wordlist: set[str],
 ) -> dict[str, list]:
     """Add ``quality_warnings`` and ``identification_consistency`` columns.
 
@@ -208,7 +232,7 @@ def annotate_warnings(
       ``"parenthesis_asymmetry"``, ``"bullet_asymmetry"``, ``"foreign_words"``
 
     ``identification_consistency`` is a float in [0, 1]: fraction of Mooré
-    tokens that appear in the Mooré word list.
+    tokens that do NOT appear in the foreign (French/English) word list.
     """
     src_texts = batch[_COL_ENG]
     tgt_texts = batch[_COL_MOS]
@@ -236,7 +260,7 @@ def annotate_warnings(
             warnings.append("foreign_words")
 
         quality_warnings.append(warnings)
-        id_consistency.append(_lang_consistency_score(tgt, moore_wordlist))
+        id_consistency.append(_lang_consistency_score(tgt, foreign_wordlist))
 
     batch["quality_warnings"] = quality_warnings
     batch["identification_consistency"] = id_consistency
@@ -417,16 +441,20 @@ def filter_nllb(
 
     # Load wordlists
     foreign_wordlist: set[str] = set()
-    moore_wordlist: set[str] = set()
     if load_wordlists:
-        if filter_foreign_words:
-            foreign_wordlist = _load_glotlid_wordlists(["fra_Latn", "eng_Latn"])
+        raw_foreign = _load_glotlid_wordlists(["fra_Latn", "eng_Latn"])
         moore_wordlist = _load_glotlid_wordlists(["mos_Latn"])
+        # NOTE: the GlotLID Mooré wordlist is very small (~1 000 discriminative n-grams),
+        # so it cannot be used to positively identify Mooré words.  We use it only to
+        # subtract any overlap from the foreign wordlist, avoiding false positives for
+        # loanwords or short tokens shared between languages.
+        foreign_wordlist = raw_foreign - moore_wordlist
+        print(f"  Exclusive foreign wordlist: {len(foreign_wordlist):,} words ({len(raw_foreign) - len(foreign_wordlist):,} removed as Mooré overlap).")
 
     # Annotate quality warnings
     print("Annotating quality warnings…")
     ds = ds.map(
-        lambda batch: annotate_warnings(batch, foreign_wordlist, moore_wordlist),
+        lambda batch: annotate_warnings(batch, foreign_wordlist),
         batched=True,
         batch_size=batch_size,
         desc="annotate warnings",
