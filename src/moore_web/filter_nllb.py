@@ -1,0 +1,583 @@
+"""Multi-dimensional filtering of the NLLB eng↔mos dataset.
+
+Filters applied
+---------------
+1. ``target_sentence_lid >= threshold``  — NLLB built-in LID confidence
+2. ``target_glotlid_prob >= threshold``  — GlotLID confidence on Mooré target
+3. ``source_glotlid_prob >= threshold``  — GlotLID confidence on English source
+4. ``comet_qe >= threshold``             — COMET-QE translation quality
+5. Emoji filter                          — drop rows where Mooré text contains emoji
+6. Dots asymmetry                        — ".." at start/end in one side but not both
+7. Bullet/special char asymmetry         — leading bullet chars (●, •, ^) in one side only
+8. Parenthesis asymmetry                 — parenthetical content in English absent in Mooré
+9. Number mismatch                       — digit sequences present on one side but not the other
+10. Foreign word list                    — Mooré contains words from non-Mooré GlotLID wordlists
+
+Quality warnings added per row (before hard filtering)
+-------------------------------------------------------
+``has_emoji``, ``has_dots_asymmetry``, ``has_number_mismatch``,
+``has_parenthesis_asymmetry``, ``has_bullet_asymmetry``,
+``has_foreign_words``, ``identification_inconsistency``
+
+Usage
+-----
+    # Annotate warnings only (no hard filter, no push)
+    uv run python -m moore_web.filter_nllb --source-repo madoss/nllb-mos-lid --no-push
+
+    # Filter and push to Hub
+    uv run python -m moore_web.filter_nllb --source-repo madoss/nllb-mos-lid --hub-repo madoss/nllb-mos-filtered
+
+    # Custom thresholds
+    uv run python -m moore_web.filter_nllb \\
+        --source-repo madoss/nllb-mos-lid \\
+        --hub-repo madoss/nllb-mos-filtered \\
+        --lid-threshold 0.9 \\
+        --glotlid-threshold 0.9 \\
+        --comet-threshold 0.5
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+from typing import Any
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+# Unicode emoji ranges (covers most common emoji blocks)
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f680-\U0001f6ff"  # transport & map
+    "\U0001f1e0-\U0001f1ff"  # flags
+    "\U00002702-\U000027b0"
+    "\U000024c2-\U0001f251"
+    "]+",
+    flags=re.UNICODE,
+)
+
+# Consecutive dots that act as ellipsis / page-reference markers
+_DOTS_RE = re.compile(r"\.{2,}")
+
+# Numbers (digit sequences, possibly separated by . or ,)
+_NUMBERS_RE = re.compile(r"\b\d[\d.,]*\b")
+
+# Parenthetical content: (…) or [...]
+_PARENS_RE = re.compile(r"[\(\[][^\)\]]{2,}[\)\]]")
+
+# Bullet / list markers that may legitimately start a line
+_BULLET_CHARS = frozenset("●•◦▪▸►‣⁃◆◇→−–—^*")
+
+# GlotLID language codes we expect for this dataset
+_EXPECTED_SOURCE_LANG = "eng_Latn"
+_EXPECTED_TARGET_LANG = "mos_Latn"
+
+# Column names used by upstream scripts (keep in sync with glotlid.py / score_nllb_mos.py)
+_COL_ENG = "eng_Latn"
+_COL_MOS = "mos_Latn"
+_COL_TARGET_LID = "target_sentence_lid"
+_COL_SOURCE_LID = "source_sentence_lid"
+_COL_TARGET_GLOTLID_LANG = "target_glotlid_lang"
+_COL_TARGET_GLOTLID_PROB = "target_glotlid_prob"
+_COL_SOURCE_GLOTLID_LANG = "source_glotlid_lang"
+_COL_SOURCE_GLOTLID_PROB = "source_glotlid_prob"
+_COL_COMET_QE = "comet_qe"
+
+# ---------------------------------------------------------------------------
+# Warning detectors (pure functions, operate on a single row dict)
+# ---------------------------------------------------------------------------
+
+
+def _has_emoji(text: str) -> bool:
+    return bool(_EMOJI_RE.search(text))
+
+
+def _has_dots_asymmetry(src: str, tgt: str) -> bool:
+    """True when '..'-style dots appear at start/end of one side but not the other."""
+    src_stripped = src.strip()
+    tgt_stripped = tgt.strip()
+    src_has = bool(_DOTS_RE.match(src_stripped) or (src_stripped and _DOTS_RE.search(src_stripped[-5:])))
+    tgt_has = bool(_DOTS_RE.match(tgt_stripped) or (tgt_stripped and _DOTS_RE.search(tgt_stripped[-5:])))
+    return src_has != tgt_has
+
+
+def _has_number_mismatch(src: str, tgt: str) -> bool:
+    """True when digit sequences found in source are missing from target (or vice-versa)."""
+    src_nums = set(_NUMBERS_RE.findall(src))
+    tgt_nums = set(_NUMBERS_RE.findall(tgt))
+    # Flag only when one side has numbers and the other has none, or sets are disjoint and both non-empty
+    if not src_nums and not tgt_nums:
+        return False
+    if src_nums and not tgt_nums:
+        return True
+    if not src_nums and tgt_nums:
+        return True
+    # Both have numbers — flag when the intersection is empty (completely different numbers)
+    return src_nums.isdisjoint(tgt_nums)
+
+
+def _has_parenthesis_asymmetry(src: str, tgt: str) -> bool:
+    """True when source (English) has parenthetical content that target lacks."""
+    src_parens = _PARENS_RE.findall(src)
+    tgt_parens = _PARENS_RE.findall(tgt)
+    return bool(src_parens) and not bool(tgt_parens)
+
+
+def _has_bullet_asymmetry(src: str, tgt: str) -> bool:
+    """True when a bullet/special char leads one side but not the other."""
+    src_first = src.strip()[:1]
+    tgt_first = tgt.strip()[:1]
+    src_bullet = src_first in _BULLET_CHARS
+    tgt_bullet = tgt_first in _BULLET_CHARS
+    return src_bullet != tgt_bullet
+
+
+def _identification_inconsistency(row: dict[str, Any], lid_threshold: float = 0.9) -> bool:
+    """True when NLLB LID and GlotLID disagree about whether target is Mooré."""
+    nllb_lid = row.get(_COL_TARGET_LID)
+    glotlid_lang = row.get(_COL_TARGET_GLOTLID_LANG)
+    glotlid_prob = row.get(_COL_TARGET_GLOTLID_PROB)
+    if nllb_lid is None or glotlid_lang is None or glotlid_prob is None:
+        return False
+    nllb_ok = nllb_lid >= lid_threshold
+    glotlid_ok = glotlid_lang == _EXPECTED_TARGET_LANG and glotlid_prob >= lid_threshold
+    return nllb_ok != glotlid_ok
+
+
+# ---------------------------------------------------------------------------
+# Word-list filter
+# ---------------------------------------------------------------------------
+
+
+def _load_glotlid_wordlists(languages: list[str] | None = None) -> set[str]:
+    """Load word lists from the GlotLID wordlists dataset on HuggingFace.
+
+    Returns a flat set of known words for *other* languages (i.e., words that
+    should not appear in Mooré text).  Pass ``languages`` to restrict which
+    language word lists are loaded; defaults to common cross-contamination langs.
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        print("Warning: 'datasets' not installed — skipping wordlist filter.")
+        return set()
+
+    if languages is None:
+        # Languages most likely to contaminate Mooré data in the NLLB corpus
+        languages = ["fra_Latn", "eng_Latn", "deu_Latn", "spa_Latn"]
+
+    try:
+        ds = load_dataset("cis-lmu/glotlid-wordlists", split="train")
+    except Exception as e:
+        print(f"Warning: could not load glotlid-wordlists ({e}) — skipping wordlist filter.")
+        return set()
+
+    words: set[str] = set()
+    for row in ds:
+        if row.get("language") in languages:
+            word = row.get("word", "")
+            if word:
+                words.add(word.lower())
+    print(f"Loaded {len(words):,} foreign words from glotlid-wordlists.")
+    return words
+
+
+def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
+    """True when *text* contains at least one token present in the foreign wordlist."""
+    if not wordlist:
+        return False
+    tokens = re.findall(r"\b\w+\b", text.lower())
+    return any(t in wordlist for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# Annotation: add warning columns to a batch
+# ---------------------------------------------------------------------------
+
+
+def annotate_warnings(
+    batch: dict[str, list],
+    foreign_wordlist: set[str],
+    lid_threshold: float = 0.9,
+) -> dict[str, list]:
+    """Add boolean warning columns to a HF dataset batch."""
+    src_texts = batch[_COL_ENG]
+    tgt_texts = batch[_COL_MOS]
+    n = len(src_texts)
+
+    has_emoji = []
+    has_dots = []
+    has_num_mismatch = []
+    has_paren = []
+    has_bullet = []
+    has_foreign = []
+    id_inconsistency = []
+
+    for i in range(n):
+        src = src_texts[i] or ""
+        tgt = tgt_texts[i] or ""
+        row = {k: v[i] for k, v in batch.items()}
+
+        has_emoji.append(_has_emoji(tgt))
+        has_dots.append(_has_dots_asymmetry(src, tgt))
+        has_num_mismatch.append(_has_number_mismatch(src, tgt))
+        has_paren.append(_has_parenthesis_asymmetry(src, tgt))
+        has_bullet.append(_has_bullet_asymmetry(src, tgt))
+        has_foreign.append(_has_foreign_words(tgt, foreign_wordlist))
+        id_inconsistency.append(_identification_inconsistency(row, lid_threshold))
+
+    batch["has_emoji"] = has_emoji
+    batch["has_dots_asymmetry"] = has_dots
+    batch["has_number_mismatch"] = has_num_mismatch
+    batch["has_parenthesis_asymmetry"] = has_paren
+    batch["has_bullet_asymmetry"] = has_bullet
+    batch["has_foreign_words"] = has_foreign
+    batch["identification_inconsistency"] = id_inconsistency
+
+    return batch
+
+
+# ---------------------------------------------------------------------------
+# Hard filtering
+# ---------------------------------------------------------------------------
+
+
+def apply_hard_filters(
+    dataset,
+    lid_threshold: float = 0.9,
+    glotlid_threshold: float = 0.9,
+    comet_threshold: float = 0.5,
+    filter_emoji: bool = True,
+    filter_dots: bool = True,
+    filter_foreign_words: bool = True,
+    filter_parenthesis: bool = False,
+    filter_number_mismatch: bool = False,
+):
+    """Remove rows that fail any hard quality criterion.
+
+    Soft warnings (``has_*`` columns) are left in the dataset for downstream
+    inspection regardless of whether hard filtering is applied.
+
+    Args:
+        dataset:                  HF Dataset with warning columns already added.
+        lid_threshold:            Minimum ``target_sentence_lid`` (NLLB built-in).
+        glotlid_threshold:        Minimum ``target_glotlid_prob`` and ``source_glotlid_prob``.
+        comet_threshold:          Minimum COMET-QE score.
+        filter_emoji:             Drop rows where Mooré text has emoji.
+        filter_dots:              Drop rows with dots asymmetry.
+        filter_foreign_words:     Drop rows where Mooré contains foreign words.
+        filter_parenthesis:       Drop rows with parenthesis asymmetry (off by default).
+        filter_number_mismatch:   Drop rows with number mismatch (off by default).
+
+    Returns:
+        Filtered HF Dataset.
+    """
+    before = len(dataset)
+    stats: dict[str, int] = {}
+
+    def _track(ds, name: str, condition):
+        nonlocal stats
+        after = ds.filter(condition, desc=f"filter:{name}")
+        stats[name] = len(ds) - len(after)
+        return after
+
+    # --- numeric thresholds ---
+    if _COL_TARGET_LID in dataset.column_names:
+        dataset = _track(
+            dataset,
+            "target_lid",
+            lambda r: r[_COL_TARGET_LID] is not None and r[_COL_TARGET_LID] >= lid_threshold,
+        )
+
+    if _COL_TARGET_GLOTLID_PROB in dataset.column_names:
+        dataset = _track(
+            dataset,
+            "target_glotlid",
+            lambda r: (
+                r[_COL_TARGET_GLOTLID_PROB] is not None
+                and r[_COL_TARGET_GLOTLID_PROB] >= glotlid_threshold
+                and r.get(_COL_TARGET_GLOTLID_LANG) == _EXPECTED_TARGET_LANG
+            ),
+        )
+
+    if _COL_SOURCE_GLOTLID_PROB in dataset.column_names:
+        dataset = _track(
+            dataset,
+            "source_glotlid",
+            lambda r: (
+                r[_COL_SOURCE_GLOTLID_PROB] is not None
+                and r[_COL_SOURCE_GLOTLID_PROB] >= glotlid_threshold
+                and r.get(_COL_SOURCE_GLOTLID_LANG) == _EXPECTED_SOURCE_LANG
+            ),
+        )
+
+    if _COL_COMET_QE in dataset.column_names:
+        dataset = _track(
+            dataset,
+            "comet_qe",
+            lambda r: r[_COL_COMET_QE] is not None and r[_COL_COMET_QE] >= comet_threshold,
+        )
+
+    # --- warning-based hard filters ---
+    if filter_emoji and "has_emoji" in dataset.column_names:
+        dataset = _track(dataset, "emoji", lambda r: not r["has_emoji"])
+
+    if filter_dots and "has_dots_asymmetry" in dataset.column_names:
+        dataset = _track(dataset, "dots_asymmetry", lambda r: not r["has_dots_asymmetry"])
+
+    if filter_foreign_words and "has_foreign_words" in dataset.column_names:
+        dataset = _track(dataset, "foreign_words", lambda r: not r["has_foreign_words"])
+
+    if filter_parenthesis and "has_parenthesis_asymmetry" in dataset.column_names:
+        dataset = _track(dataset, "parenthesis", lambda r: not r["has_parenthesis_asymmetry"])
+
+    if filter_number_mismatch and "has_number_mismatch" in dataset.column_names:
+        dataset = _track(dataset, "number_mismatch", lambda r: not r["has_number_mismatch"])
+
+    after = len(dataset)
+    print(f"\nFiltering summary ({before:,} → {after:,} rows kept, {before - after:,} dropped):")
+    for name, dropped in stats.items():
+        print(f"  {name}: dropped {dropped:,}")
+
+    return dataset
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
+
+
+def filter_nllb(
+    source_repo: str,
+    hub_repo: str | None = None,
+    output: str | None = None,
+    lid_threshold: float = 0.9,
+    glotlid_threshold: float = 0.9,
+    comet_threshold: float = 0.5,
+    filter_emoji: bool = True,
+    filter_dots: bool = True,
+    filter_foreign_words: bool = True,
+    filter_parenthesis: bool = False,
+    filter_number_mismatch: bool = False,
+    load_wordlists: bool = True,
+    batch_size: int = 1000,
+    private: bool = False,
+) -> None:
+    """Full annotation + filtering pipeline for the NLLB eng↔mos dataset.
+
+    Args:
+        source_repo:            HF Hub dataset to load (must have GlotLID columns).
+        hub_repo:               HF Hub repo to push filtered results to.  If None,
+                                results are not pushed.
+        output:                 Local JSONL path to write filtered results to.
+                                If None, no local file is written.
+        lid_threshold:          Minimum ``target_sentence_lid``.
+        glotlid_threshold:      Minimum GlotLID probability for both sides.
+        comet_threshold:        Minimum COMET-QE score.
+        filter_emoji:           Drop rows with emoji in Mooré text.
+        filter_dots:            Drop rows with dots asymmetry.
+        filter_foreign_words:   Drop rows where Mooré has foreign words.
+        filter_parenthesis:     Drop rows with parenthesis asymmetry.
+        filter_number_mismatch: Drop rows with number mismatch.
+        load_wordlists:         Whether to load GlotLID wordlists for foreign-word detection.
+        batch_size:             Rows per batch for dataset.map.
+        private:                Whether to make the HF Hub dataset private.
+    """
+    from datasets import load_dataset
+
+    print(f"Loading dataset from '{source_repo}'…")
+    ds = load_dataset(source_repo, split="train")
+    print(f"Loaded {len(ds):,} rows.")
+
+    # Load foreign-language wordlists
+    foreign_wordlist: set[str] = set()
+    if load_wordlists and filter_foreign_words:
+        foreign_wordlist = _load_glotlid_wordlists()
+
+    # Annotate quality warnings
+    print("Annotating quality warnings…")
+    ds = ds.map(
+        lambda batch: annotate_warnings(batch, foreign_wordlist, lid_threshold=lid_threshold),
+        batched=True,
+        batch_size=batch_size,
+        desc="annotate warnings",
+        load_from_cache_file=False,
+    )
+
+    # Print warning summary before filtering
+    print("\nWarning counts (before hard filtering):")
+    for col in [
+        "has_emoji",
+        "has_dots_asymmetry",
+        "has_number_mismatch",
+        "has_parenthesis_asymmetry",
+        "has_bullet_asymmetry",
+        "has_foreign_words",
+        "identification_inconsistency",
+    ]:
+        if col in ds.column_names:
+            count = sum(ds[col])
+            print(f"  {col}: {count:,} ({100 * count / len(ds):.1f}%)")
+
+    # Apply hard filters
+    ds = apply_hard_filters(
+        ds,
+        lid_threshold=lid_threshold,
+        glotlid_threshold=glotlid_threshold,
+        comet_threshold=comet_threshold,
+        filter_emoji=filter_emoji,
+        filter_dots=filter_dots,
+        filter_foreign_words=filter_foreign_words,
+        filter_parenthesis=filter_parenthesis,
+        filter_number_mismatch=filter_number_mismatch,
+    )
+
+    # Write local output
+    if output:
+        import json
+        from pathlib import Path
+
+        print(f"\nWriting {len(ds):,} rows → {output}")
+        with Path(output).open("w", encoding="utf-8") as f:
+            for row in ds:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print("Done (local).")
+
+    # Push to Hub
+    if hub_repo:
+        from datasets import DatasetDict
+
+        print(f"\nPushing {len(ds):,} rows → '{hub_repo}'…")
+        DatasetDict({"train": ds}).push_to_hub(hub_repo, private=private)
+        print(f"Done. https://huggingface.co/datasets/{hub_repo}")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Multi-dimensional NLLB eng↔mos filtering pipeline.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--source-repo",
+        required=True,
+        help="HF Hub dataset to load (should already have GlotLID and COMET-QE columns).",
+    )
+    parser.add_argument(
+        "--hub-repo",
+        default=None,
+        help="HF Hub repo to push filtered dataset to.  Omit to skip pushing.",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Local JSONL path to write filtered rows to.  Omit to skip local write.",
+    )
+    parser.add_argument(
+        "--lid-threshold",
+        type=float,
+        default=0.9,
+        help="Minimum target_sentence_lid (NLLB built-in, default: %(default)s).",
+    )
+    parser.add_argument(
+        "--glotlid-threshold",
+        type=float,
+        default=0.9,
+        help="Minimum GlotLID probability for source and target (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--comet-threshold",
+        type=float,
+        default=0.5,
+        help="Minimum COMET-QE score (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--no-filter-emoji",
+        dest="filter_emoji",
+        action="store_false",
+        help="Do not hard-filter rows with emoji in Mooré.",
+    )
+    parser.add_argument(
+        "--no-filter-dots",
+        dest="filter_dots",
+        action="store_false",
+        help="Do not hard-filter rows with dots asymmetry.",
+    )
+    parser.add_argument(
+        "--no-filter-foreign-words",
+        dest="filter_foreign_words",
+        action="store_false",
+        help="Do not hard-filter rows with foreign words in Mooré.",
+    )
+    parser.add_argument(
+        "--filter-parenthesis",
+        dest="filter_parenthesis",
+        action="store_true",
+        help="Hard-filter rows with parenthesis asymmetry (default: warn only).",
+    )
+    parser.add_argument(
+        "--filter-number-mismatch",
+        dest="filter_number_mismatch",
+        action="store_true",
+        help="Hard-filter rows with number mismatch (default: warn only).",
+    )
+    parser.add_argument(
+        "--no-push",
+        dest="push",
+        action="store_false",
+        help="Skip pushing to HF Hub (useful with --output for local-only runs).",
+    )
+    parser.add_argument(
+        "--no-wordlists",
+        dest="load_wordlists",
+        action="store_false",
+        help="Skip loading GlotLID wordlists (faster, skips foreign-word detection).",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1000,
+        help="Rows per batch for dataset.map (default: %(default)s).",
+    )
+    parser.add_argument("--private", action="store_true", help="Make the HF Hub dataset private.")
+    return parser
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+
+    hub_repo = args.hub_repo if args.push else None
+
+    filter_nllb(
+        source_repo=args.source_repo,
+        hub_repo=hub_repo,
+        output=args.output,
+        lid_threshold=args.lid_threshold,
+        glotlid_threshold=args.glotlid_threshold,
+        comet_threshold=args.comet_threshold,
+        filter_emoji=args.filter_emoji,
+        filter_dots=args.filter_dots,
+        filter_foreign_words=args.filter_foreign_words,
+        filter_parenthesis=args.filter_parenthesis,
+        filter_number_mismatch=args.filter_number_mismatch,
+        load_wordlists=args.load_wordlists,
+        batch_size=args.batch_size,
+        private=args.private,
+    )
+
+
+if __name__ == "__main__":
+    main()
