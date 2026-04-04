@@ -145,7 +145,7 @@ def score_and_upload(
     dataset = Dataset.from_dict(
         {
             **{col: [r[col] for r in rows] for col in cols},
-            "comet_qe": comet_scores,
+            "comet_qe_en_mos": comet_scores,
         }
     )
 

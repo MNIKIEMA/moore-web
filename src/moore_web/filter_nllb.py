@@ -88,7 +88,7 @@ _COL_TARGET_GLOTLID_LANG = "target_glotlid_lang"
 _COL_TARGET_GLOTLID_PROB = "target_glotlid_prob"
 _COL_SOURCE_GLOTLID_LANG = "source_glotlid_lang"
 _COL_SOURCE_GLOTLID_PROB = "source_glotlid_prob"
-_COL_COMET_QE = "comet_qe"
+_COL_COMET_QE = "comet_qe_en_mos"
 
 # ---------------------------------------------------------------------------
 # Warning detectors (pure functions, operate on a single row dict)
@@ -171,7 +171,7 @@ def _load_glotlid_wordlists(languages: list[str] | None = None) -> set[str]:
 
     if languages is None:
         # Languages most likely to contaminate Mooré data in the NLLB corpus
-        languages = ["fra_Latn", "eng_Latn", "deu_Latn", "spa_Latn"]
+        languages = ["fra_Latn", "eng_Latn", "mos_Latn"]
 
     try:
         ds = load_dataset("cis-lmu/glotlid-wordlists", split="train")
@@ -321,7 +321,7 @@ def apply_hard_filters(
     if _COL_COMET_QE in dataset.column_names:
         dataset = _track(
             dataset,
-            "comet_qe",
+            "comet_qe_en_mos",
             lambda r: r[_COL_COMET_QE] is not None and r[_COL_COMET_QE] >= comet_threshold,
         )
 
