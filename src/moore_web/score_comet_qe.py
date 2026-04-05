@@ -42,6 +42,13 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 
+def load_model():
+    from comet import download_model, load_from_checkpoint
+
+    print("Loading McGill-NLP/ssa-comet-qe …")
+    return load_from_checkpoint(download_model("McGill-NLP/ssa-comet-qe"))
+
+
 def score_file(
     path: Path,
     output_path: Path,
@@ -49,6 +56,7 @@ def score_file(
     mt_field: str,
     batch_size: int,
     gpus: int,
+    model,
 ) -> None:
     rows = []
     with open(path, encoding="utf-8") as f:
@@ -60,11 +68,6 @@ def score_file(
     if not rows:
         print(f"[skip] {path} — empty file")
         return
-
-    from comet import download_model, load_from_checkpoint
-
-    model_path = download_model("McGill-NLP/ssa-comet-qe")
-    model = load_from_checkpoint(model_path)
 
     data = [{"src": r[src_field], "mt": r[mt_field]} for r in rows]
 
@@ -141,6 +144,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    model = load_model()
     single_input = len(args.inputs) == 1
 
     for input_str in args.inputs:
@@ -164,4 +168,5 @@ if __name__ == "__main__":
             mt_field=args.mt_field,
             batch_size=args.batch_size,
             gpus=args.gpus,
+            model=model,
         )
