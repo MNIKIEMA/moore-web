@@ -1,94 +1,108 @@
-"""Translation utilities using TranslateGemma (google/translategemma-*) via vLLM."""
+"""Translation utilities using a local vLLM OpenAI-compatible server.
+
+Usage
+-----
+    # Start vLLM server first:
+    vllm serve tencent/HY-MT1.5-7B --served-model-name hy-mt --port 8021 --max-model-len 32768
+
+    # Translate English segments to French and push to HF Hub:
+    python -m moore_web.translation --source-repo madoss/nllb-mos-filtered --hub-repo madoss/nllb-mos-fr
+"""
 
 from __future__ import annotations
 
+import argparse
+import asyncio
+
+from dotenv import load_dotenv
 from moore_web.upload_nllb_raw import _COLS as _TSV_COLS, _load_nllb_tsv
+from openai import AsyncOpenAI
+from tqdm.asyncio import tqdm
+
+load_dotenv()
+
+_SOURCE_COL = "eng_Latn"
+_TARGET_COL = "eng_Latn_to_fra_Latn"
+_INSTRUCTION = "Translate the following segment into French, without additional explanation."
 
 
-def translate(
+async def translate(
     sentences: list[str],
-    source_lang: str,
-    target_lang: str,
-    model: str = "google/translategemma-12b-it",
-    batch_size: int = 32,
-    max_new_tokens: int = 512,
-    tensor_parallel_size: int = 1,
+    model: str = "hy-mt",
+    base_url: str = "http://localhost:8021/v1",
+    concurrency: int = 128,
 ) -> list[str]:
-    """Translate a list of sentences using TranslateGemma via vLLM.
+    """Translate a list of sentences to French via a local vLLM server.
 
     Args:
-        sentences:            Texts to translate.
-        source_lang:          BCP-47 source language code (e.g. ``"en"``).
-        target_lang:          BCP-47 target language code (e.g. ``"fr-FR"``).
-        model:                HuggingFace model ID for TranslateGemma.
-        batch_size:           Sentences per vLLM generation call.
-        max_new_tokens:       Maximum tokens to generate per sentence.
-        tensor_parallel_size: Number of GPUs for tensor parallelism.
+        sentences:   Texts to translate.
+        model:       Model name as served by the vLLM server.
+        base_url:    Base URL of the OpenAI-compatible vLLM server.
+        concurrency: Maximum number of in-flight requests.
 
     Returns:
         List of translated strings in the same order as ``sentences``.
 
     Example::
 
+        import asyncio
         from moore_web.translation import translate
 
-        fra = translate(["Hello world"], source_lang="en", target_lang="fr-FR")
+        fra = asyncio.run(translate(["Hello world"]))
     """
-    from vllm import LLM, SamplingParams
+    client = AsyncOpenAI(api_key="EMPTY", base_url=base_url)
+    semaphore = asyncio.Semaphore(concurrency)
 
-    print(f"Loading translation model ({model})…")
-    llm = LLM(model=model, dtype="bfloat16", tensor_parallel_size=tensor_parallel_size)
-    sampling_params = SamplingParams(max_tokens=max_new_tokens, temperature=0.0)
-
-    translations: list[str] = []
-    for i in range(0, len(sentences), batch_size):
-        batch = sentences[i : i + batch_size]
-        conversations = [
-            [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "source_lang_code": source_lang,
-                            "target_lang_code": target_lang,
-                            "text": text,
-                        }
+    async def _translate_one(text: str) -> str:
+        async with semaphore:
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": _INSTRUCTION},
+                        {"role": "user", "content": text},
                     ],
-                }
-            ]
-            for text in batch
-        ]
-        outputs = llm.chat(conversations, sampling_params=sampling_params)
-        translations.extend(out.outputs[0].text.strip() for out in outputs)
-        print(f"Translated {min(i + batch_size, len(sentences))}/{len(sentences)} sentences…")
+                    temperature=0.0,
+                    top_p=0.9,
+                    extra_body={
+                        "top_k": 20,
+                        "repetition_penalty": 1.05,
+                    },
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"\nError translating example: {e}")
+                return ""
 
-    return translations
+    tasks = [_translate_one(text) for text in sentences]
+    return await tqdm.gather(*tasks, desc="Translating")
 
 
-def translate_and_upload(
+async def translate_and_upload(
     hub_repo: str = "madoss/nllb-mos-fr",
     source_repo: str | None = None,
-    model: str = "google/translategemma-12b-it",
-    batch_size: int = 32,
-    max_new_tokens: int = 512,
-    tensor_parallel_size: int = 1,
+    model: str = "hy-mt",
+    base_url: str = "http://localhost:8021/v1",
+    concurrency: int = 32,
+    source_col: str = _SOURCE_COL,
+    target_col: str = _TARGET_COL,
     private: bool = False,
 ) -> None:
     """Translate English segments to French and push the enriched dataset to HF Hub.
 
     Loads from ``source_repo`` if provided, otherwise re-downloads the raw TSV.
-    Adds a ``fra_Latn`` column with TranslateGemma translations.
+    Adds a ``target_col`` column with the translations.
 
     Args:
-        hub_repo:             HuggingFace repo to push the translated dataset to.
-        source_repo:          HF Hub repo to load the source dataset from.
-                              If None, the raw TSV is downloaded directly.
-        model:                TranslateGemma model ID.
-        batch_size:           Sentences per vLLM generation call.
-        max_new_tokens:       Maximum tokens to generate per sentence.
-        tensor_parallel_size: Number of GPUs for tensor parallelism.
-        private:              Whether to make the HF Hub dataset private.
+        hub_repo:     HuggingFace repo to push the translated dataset to.
+        source_repo:  HF Hub repo to load the source dataset from.
+                      If None, the raw TSV is downloaded directly.
+        model:        Model name as served by the vLLM server.
+        base_url:     Base URL of the OpenAI-compatible vLLM server.
+        concurrency:  Maximum number of in-flight requests.
+        source_col:   Column name containing source sentences.
+        target_col:   Column name to write translations into.
+        private:      Whether to make the HF Hub dataset private.
     """
     from datasets import Dataset, DatasetDict, load_dataset
 
@@ -99,23 +113,15 @@ def translate_and_upload(
     else:
         rows = _load_nllb_tsv()
 
-    eng_sentences = [r["eng_Latn"] for r in rows]
+    eng_sentences = [r[source_col] for r in rows]
 
-    fra_sentences = translate(
-        eng_sentences,
-        source_lang="en",
-        target_lang="fr-FR",
-        model=model,
-        batch_size=batch_size,
-        max_new_tokens=max_new_tokens,
-        tensor_parallel_size=tensor_parallel_size,
-    )
+    fra_sentences = await translate(eng_sentences, model=model, base_url=base_url, concurrency=concurrency)
 
     cols = list(rows[0].keys()) if rows else _TSV_COLS
     dataset = Dataset.from_dict(
         {
             **{col: [r[col] for r in rows] for col in cols},
-            "fra_Latn": fra_sentences,
+            target_col: fra_sentences,
         }
     )
 
@@ -124,3 +130,72 @@ def translate_and_upload(
     print(f"\nPushing translated dataset to HuggingFace Hub as '{hub_repo}'…")
     dataset_dict.push_to_hub(hub_repo, private=private)
     print(f"Done. Dataset available at https://huggingface.co/datasets/{hub_repo}")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    """Translate English segments to French and push to HF Hub."""
+    parser = argparse.ArgumentParser(
+        description="Translate English segments to French via a local vLLM server and push to HF Hub.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--hub-repo",
+        default="madoss/nllb-mos-fr",
+        help="HuggingFace Hub repo to push the translated dataset to (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--source-repo",
+        default="madoss/nllb-mos-filtered",
+        help="HF Hub repo to load the source dataset from. If omitted, re-downloads the TSV.",
+    )
+    parser.add_argument(
+        "--model",
+        default="hy-mt",
+        help="Model name as served by the vLLM server (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:8021/v1",
+        help="Base URL of the OpenAI-compatible vLLM server (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=128,
+        help="Maximum number of in-flight requests (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--source-col",
+        default=_SOURCE_COL,
+        help="Dataset column containing source sentences (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--target-col",
+        default=_TARGET_COL,
+        help="Dataset column to write translations into (default: %(default)s).",
+    )
+    parser.add_argument("--private", action="store_true", help="Make the dataset private.")
+
+    args = parser.parse_args()
+    asyncio.run(
+        translate_and_upload(
+            hub_repo=args.hub_repo,
+            source_repo=args.source_repo,
+            model=args.model,
+            base_url=args.base_url,
+            concurrency=args.concurrency,
+            source_col=args.source_col,
+            target_col=args.target_col,
+            private=args.private,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()
