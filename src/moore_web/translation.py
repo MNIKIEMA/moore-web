@@ -124,7 +124,7 @@ def translate_and_upload(
     dataset = Dataset.from_dict(
         {
             **{col: [r[col] for r in rows] for col in cols},
-            "fra_Latn": fra_sentences,
+            "eng_Latn_to_fra_Latn": fra_sentences,
         }
     )
 
@@ -149,12 +149,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--hub-repo",
-        default="madoss/nllb-mos-fr",
+        default="madoss/nllb-mos-filtered",
         help="HuggingFace Hub repo to push the translated dataset to (default: %(default)s).",
     )
     parser.add_argument(
         "--source-repo",
-        default=None,
+        default="madoss/nllb-mos-filtered",
         help="HF Hub repo to load the source dataset from. If omitted, re-downloads the TSV.",
     )
     parser.add_argument(
