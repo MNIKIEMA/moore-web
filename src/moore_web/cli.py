@@ -112,13 +112,13 @@ def _dedup_aligned(aligned):
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
     from moore_web.flatten import AlignedCorpus
 
-    pairs = [{"fr": f, "mo": m, "score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)]
+    pairs = [{"fr": f, "mo": m, "laser_score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)]
     typer.echo("      Running COMET-QE deduplication…")
     pairs = deduplicate_by_comet(pairs)
     return AlignedCorpus(
         french=[p["fr"] for p in pairs],
         moore=[p["mo"] for p in pairs],
-        scores=[p["score"] for p in pairs],
+        scores=[p["laser_score"] for p in pairs],
         source=aligned.source,
     )
 
