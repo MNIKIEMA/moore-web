@@ -72,7 +72,7 @@ def score_file(
     output = model.predict(data, batch_size=batch_size, gpus=gpus)
 
     for row, qe_score in zip(rows, output.scores):
-        row["comet_qe"] = round(float(qe_score), 6)
+        row["comet_qe"] = round(float(qe_score), 4)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -107,11 +107,15 @@ if __name__ == "__main__":
         help="One or more *_aligned.jsonl files to score.",
     )
     parser.add_argument(
-        "--output-dir",
+        "--output",
         "-o",
         default=None,
-        metavar="DIR",
-        help="Write scored files here (default: overwrite inputs in-place).",
+        metavar="PATH",
+        help=(
+            "Output path. With a single input: treated as a file path. "
+            "With multiple inputs: treated as a directory (files keep their original names). "
+            "Default: overwrite inputs in-place."
+        ),
     )
     parser.add_argument(
         "--src-field",
@@ -137,14 +141,19 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    single_input = len(args.inputs) == 1
+
     for input_str in args.inputs:
         input_path = Path(input_str)
         if not input_path.exists():
             print(f"[warn] {input_path} not found, skipping.")
             continue
 
-        if args.output_dir:
-            out_path = Path(args.output_dir) / input_path.name
+        if args.output:
+            out = Path(args.output)
+            # Single input + explicit path → use it directly as the output file.
+            # Multiple inputs → treat as a directory.
+            out_path = out if single_input else out / input_path.name
         else:
             out_path = input_path  # in-place
 

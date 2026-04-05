@@ -35,7 +35,7 @@ def _():
 @app.cell
 def _(mo):
     file_path_input = mo.ui.text(
-        value="final_data_hf/conseils_ministres_aligned.jsonl",
+        value="sida_aligned_with_qe.jsonl/sida_aligned.jsonl",
         label="Aligned JSON path",
         placeholder="aligned.jsonl",
         full_width=True,
@@ -61,7 +61,7 @@ def _(Path, file_path_input, mo, pd):
 
 @app.cell
 def _(df, mo, source):
-    _sc = df["laser_score"]
+    _sc = df["score"]
     mo.hstack(
         [
             mo.stat(label="Pairs", value=str(len(df)), bordered=True),
@@ -78,7 +78,7 @@ def _(df, mo, source):
 
 @app.cell
 def _(df, mo):
-    _sc = df["laser_score"]
+    _sc = df["score"]
     threshold_slider = mo.ui.slider(
         start=float(_sc.min()),
         stop=float(_sc.max()),
@@ -95,7 +95,7 @@ def _(df, mo):
 @app.cell
 def _(df, mo, mticker, plt, threshold_slider):
     fig, ax = plt.subplots(figsize=(8, 3.5))
-    ax.hist(df["laser_score"], bins=40, color="#4C72B0", edgecolor="white", linewidth=0.4)
+    ax.hist(df["score"], bins=40, color="#4C72B0", edgecolor="white", linewidth=0.4)
     ax.axvline(
         threshold_slider.value,
         color="#DD4444",
@@ -115,7 +115,7 @@ def _(df, mo, mticker, plt, threshold_slider):
 
 @app.cell
 def _(df, mo, plt, threshold_slider):
-    _filtered = df[df["laser_score"] >= threshold_slider.value]
+    _filtered = df[df["score"] >= threshold_slider.value]
 
     fig2, ax2 = plt.subplots(figsize=(7, 4))
     sc2 = ax2.scatter(
