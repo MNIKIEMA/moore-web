@@ -183,16 +183,18 @@ def main() -> None:
     parser.add_argument("--private", action="store_true", help="Make the dataset private.")
 
     args = parser.parse_args()
-    asyncio.run(translate_and_upload(
-        hub_repo=args.hub_repo,
-        source_repo=args.source_repo,
-        model=args.model,
-        base_url=args.base_url,
-        concurrency=args.concurrency,
-        source_col=args.source_col,
-        target_col=args.target_col,
-        private=args.private,
-    ))
+    asyncio.run(
+        translate_and_upload(
+            hub_repo=args.hub_repo,
+            source_repo=args.source_repo,
+            model=args.model,
+            base_url=args.base_url,
+            concurrency=args.concurrency,
+            source_col=args.source_col,
+            target_col=args.target_col,
+            private=args.private,
+        )
+    )
 
 
 if __name__ == "__main__":
