@@ -40,7 +40,7 @@ EXTRA_FIELDS = [
     ),
     (
         "sg",
-        r"sg\.?:\s*(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|Inaccompli)",
+        r"sg\.?:?\s+(.*?)\s*(?=$|syn|var|Nominal|scient|Racine|catégorie|infinitif|Empr|Inaccompli)",
     ),
     (
         "inaccompli",
