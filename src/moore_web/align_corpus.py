@@ -23,7 +23,7 @@ Input JSON  (ParallelText)
 
 Output JSON
 -----------
-    [{"fr": "...", "mo": "...", "score": 0.85}, ...]
+    [{"fr": "...", "mo": "...", "laser_score": 0.85}, ...]
 """
 
 from __future__ import annotations

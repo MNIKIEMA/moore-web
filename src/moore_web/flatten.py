@@ -77,11 +77,11 @@ class AlignedCorpus(ParallelText):
 
     @classmethod
     def from_pairs(cls, pairs: list[dict], source: str = "") -> AlignedCorpus:
-        """Build from a list of ``{"fr", "mo", "score"}`` dicts."""
+        """Build from a list of ``{"fr", "mo", "laser_score"}`` dicts."""
         return cls(
             french=[p["fr"] for p in pairs],
             moore=[p["mo"] for p in pairs],
-            scores=[p["score"] for p in pairs],
+            scores=[p["laser_score"] for p in pairs],
             source=source,
         )
 
@@ -94,7 +94,7 @@ class AlignedCorpus(ParallelText):
                     "french": french,
                     "moore": moore,
                     "english": english,
-                    "score": score,
+                    "laser_score": round(score, 4),
                     "source": self.source,
                 }
                 for i, (french, moore, english, score) in enumerate(
@@ -102,7 +102,7 @@ class AlignedCorpus(ParallelText):
                 )
             ]
         return [
-            {"french": french, "moore": moore, "score": score, "source": self.source}
+            {"french": french, "moore": moore, "laser_score": round(score, 4), "source": self.source}
             for french, moore, score in zip(self.french, self.moore, self.scores)
         ]
 
