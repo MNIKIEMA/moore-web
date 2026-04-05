@@ -37,6 +37,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 SOURCES: dict[str, str] = {
     "conseils": "final_data_hf/conseils_ministres_aligned.jsonl",
