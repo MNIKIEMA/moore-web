@@ -21,6 +21,8 @@ from tqdm.asyncio import tqdm
 
 load_dotenv()
 
+_SOURCE_COL = "eng_Latn"
+_TARGET_COL = "eng_Latn_to_fra_Latn"
 _INSTRUCTION = "Translate the following segment into French, without additional explanation."
 
 
@@ -82,12 +84,14 @@ async def translate_and_upload(
     model: str = "hy-mt",
     base_url: str = "http://localhost:8021/v1",
     concurrency: int = 32,
+    source_col: str = _SOURCE_COL,
+    target_col: str = _TARGET_COL,
     private: bool = False,
 ) -> None:
     """Translate English segments to French and push the enriched dataset to HF Hub.
 
     Loads from ``source_repo`` if provided, otherwise re-downloads the raw TSV.
-    Adds an ``eng_Latn_to_fra_Latn`` column with the translations.
+    Adds a ``target_col`` column with the translations.
 
     Args:
         hub_repo:     HuggingFace repo to push the translated dataset to.
@@ -96,6 +100,8 @@ async def translate_and_upload(
         model:        Model name as served by the vLLM server.
         base_url:     Base URL of the OpenAI-compatible vLLM server.
         concurrency:  Maximum number of in-flight requests.
+        source_col:   Column name containing source sentences.
+        target_col:   Column name to write translations into.
         private:      Whether to make the HF Hub dataset private.
     """
     from datasets import Dataset, DatasetDict, load_dataset
@@ -107,7 +113,7 @@ async def translate_and_upload(
     else:
         rows = _load_nllb_tsv()
 
-    eng_sentences = [r["eng_Latn"] for r in rows]
+    eng_sentences = [r[source_col] for r in rows]
 
     fra_sentences = await translate(eng_sentences, model=model, base_url=base_url, concurrency=concurrency)
 
@@ -115,7 +121,7 @@ async def translate_and_upload(
     dataset = Dataset.from_dict(
         {
             **{col: [r[col] for r in rows] for col in cols},
-            "eng_Latn_to_fra_Latn": fra_sentences,
+            target_col: fra_sentences,
         }
     )
 
@@ -164,6 +170,16 @@ def main() -> None:
         default=128,
         help="Maximum number of in-flight requests (default: %(default)s).",
     )
+    parser.add_argument(
+        "--source-col",
+        default=_SOURCE_COL,
+        help="Dataset column containing source sentences (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--target-col",
+        default=_TARGET_COL,
+        help="Dataset column to write translations into (default: %(default)s).",
+    )
     parser.add_argument("--private", action="store_true", help="Make the dataset private.")
 
     args = parser.parse_args()
@@ -173,6 +189,8 @@ def main() -> None:
         model=args.model,
         base_url=args.base_url,
         concurrency=args.concurrency,
+        source_col=args.source_col,
+        target_col=args.target_col,
         private=args.private,
     ))
 
