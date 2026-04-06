@@ -53,7 +53,6 @@ def _(Path, file_path_input, mo, pd):
 
     lines = _path.suffix == ".jsonl"
 
-
     df = pd.read_json(_path, lines=lines)
     source = "unknown"
     return df, source
@@ -151,7 +150,9 @@ def _(df, mo, pd):
 @app.cell
 def _(df, mo, threshold_slider):
     _filtered = (
-        df[df["laser_score"] >= threshold_slider.value].sort_values("laser_score", ascending=False).reset_index(drop=True)
+        df[df["laser_score"] >= threshold_slider.value]
+        .sort_values("laser_score", ascending=False)
+        .reset_index(drop=True)
     )
     _display = _filtered[["laser_score", "french", "moore"]].copy()
     _display["laser_score"] = _display["laser_score"].map("{:.4f}".format)
