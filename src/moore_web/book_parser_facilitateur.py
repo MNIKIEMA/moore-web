@@ -352,6 +352,7 @@ def split_and_parse_by_sections(
     section_regexes: list[re.Pattern],
     section_titles: list[str] | None = None,
     subsection_map: dict[str, tuple[list[re.Pattern], list[str]]] | None = None,
+    stop_before: Optional[re.Pattern] = None,
 ) -> list[Section]:
     """Split text by section patterns and parse each section's content.
 
@@ -361,6 +362,12 @@ def split_and_parse_by_sections(
         section_titles: Canonical titles matching each pattern (same length).
         subsection_map: Optional map of section title → (patterns, titles)
             for splitting that section further into subsections.
+        stop_before: Optional pattern that acts as a hard stop. When a line
+            matches, parsing halts immediately and no further sections are
+            collected. Used to exclude back-matter (bibliography, credits)
+            that follows the last real section of each language variant:
+            Mooré stops at "Tʋʋm teedo" (p. 55), French at
+            "Matériels de formation" (p. 57).
 
     Returns:
         List of Section objects with body text, items, and optional subsections.
@@ -398,6 +405,9 @@ def split_and_parse_by_sections(
     for line in lines:
         norm_line = normalize(line)
 
+        if stop_before and stop_before.match(norm_line):
+            break
+
         matched = False
         for regex, canonical_title in zip(section_regexes, _titles):
             if regex.match(norm_line):
@@ -426,6 +436,7 @@ def parse_with_chapters(
     intro_section_regexes: list[re.Pattern] | None = None,
     intro_section_titles: list[str] | None = None,
     intro_subsection_map: dict[str, tuple[list[re.Pattern], list[str]]] | None = None,
+    stop_before: Optional[re.Pattern] = None,
 ) -> Book:
     """Two-pass parse: soft chapter split, then reliable section split per chapter.
 
@@ -436,6 +447,8 @@ def parse_with_chapters(
         intro_section_regexes: Optional patterns for splitting the preamble (Chapter 0).
         intro_section_titles: Canonical titles for intro sections.
         intro_subsection_map: Optional map of intro section title → (patterns, titles).
+        stop_before: Forwarded to :func:`split_and_parse_by_sections` for each
+            chapter. See that function for details.
 
     Returns:
         A Book whose chapters each contain parsed sections.
@@ -469,7 +482,9 @@ def parse_with_chapters(
                 title = first_line
 
             ch = Chapter(number=num, title=title, raw_text=content)
-            ch.sections = split_and_parse_by_sections(content, section_regexes, section_titles)
+            ch.sections = split_and_parse_by_sections(
+                content, section_regexes, section_titles, stop_before=stop_before
+            )
 
         if ch.number in seen:
             existing = seen[ch.number]

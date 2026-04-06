@@ -112,7 +112,9 @@ def _dedup_aligned(aligned):
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
     from moore_web.flatten import AlignedCorpus
 
-    pairs = [{"fr": f, "mo": m, "laser_score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)]
+    pairs = [
+        {"fr": f, "mo": m, "laser_score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)
+    ]
     typer.echo("      Running COMET-QE deduplication…")
     pairs = deduplicate_by_comet(pairs)
     return AlignedCorpus(
@@ -143,11 +145,15 @@ def _parse_kade_file(input_path: Path, lang: KadeLang):
         intro_titles = MOORE_INTRO_SECTION_TITLES
         intro_sub_titles = MOORE_INTRO_SUBSECTION_TITLES
         intro_sub_key = "Sẽn n kẽed ne seb kãngã"
+        stop_title = "Tʋʋm teedo"
     else:
         sec_titles = SECTION_TITLES
         intro_titles = FRENCH_INTRO_SECTION_TITLES
         intro_sub_titles = FRENCH_INTRO_SUBSECTION_TITLES
         intro_sub_key = "Comment utiliser ce manuel"
+        stop_title = "Matériels de formation"
+
+    stop_before_re = _re.compile(_re.escape(stop_title), _re.IGNORECASE)
 
     sec_patterns = [_re.compile(_re.escape(t), _re.IGNORECASE) for t in sec_titles]
     intro_patterns = [_re.compile(_re.escape(t), _re.IGNORECASE) for t in intro_titles]
@@ -170,6 +176,7 @@ def _parse_kade_file(input_path: Path, lang: KadeLang):
         intro_section_regexes=intro_patterns,
         intro_section_titles=intro_titles,
         intro_subsection_map=intro_sub_map,
+        stop_before=stop_before_re,
     )
 
 
