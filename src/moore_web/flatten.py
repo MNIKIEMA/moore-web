@@ -35,6 +35,10 @@ _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SENT_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 _NUMBER_ONLY_RE = re.compile(r"^\d+\.+$")
 _MISSING_SPACE_RE = re.compile(r"(?<=[.!?])(?=[A-ZÀ-Ö][a-zà-öø-ÿ])")
+_PAGE_REF_RE = re.compile(r"\(p\.?\s*\d+\)", re.IGNORECASE)
+_STANDALONE_NUM_RE = re.compile(r"^\s*\d+(?:[-–]\d+)?(?:[.,;:\s]+\d+(?:[-–]\d+)?)*[.,;:]?\s*$")
+_URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+_COPYRIGHT_RE = re.compile(r"©")
 
 
 # ---------------------------------------------------------------------------
@@ -310,14 +314,30 @@ def flatten_facilitateur_pair(
     fr_list = flatten_book_to_list(fr_book)
     mo_list = flatten_book_to_list(mo_book)
 
+    def _keep(s: str) -> bool:
+        return (
+            bool(s.strip())
+            and not _STANDALONE_NUM_RE.match(s)
+            and not _URL_RE.search(s)
+            and not _COPYRIGHT_RE.search(s)
+        )
+
     if segment:
         for s in fr_list:
-            result.french.extend(normalize_fr(sent) for sent in segment_fr(replace_facilitateur_names_fr(s)))
+            result.french.extend(
+                normalize_fr(sent)
+                for sent in segment_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", s)))
+                if _keep(sent)
+            )
         for s in mo_list:
-            result.moore.extend(normalize_mo(sent) for sent in segment_mo(s))
+            result.moore.extend(
+                normalize_mo(sent) for sent in segment_mo(_PAGE_REF_RE.sub("", s)) if _keep(sent)
+            )
     else:
-        result.french.extend(normalize_fr(replace_facilitateur_names_fr(s)) for s in fr_list if s.strip())
-        result.moore.extend(normalize_mo(s) for s in mo_list if s.strip())
+        result.french.extend(
+            normalize_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", s))) for s in fr_list if _keep(s)
+        )
+        result.moore.extend(normalize_mo(_PAGE_REF_RE.sub("", s)) for s in mo_list if _keep(s))
 
     return result
 
