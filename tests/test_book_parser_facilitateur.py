@@ -16,10 +16,14 @@ from moore_web.book_parser_facilitateur import (
 
 class TestNumberedItemRE:
     def test_plain_number(self):
-        m = NUMBERED_ITEM_RE.match("3. Some item text")
+        s = """2. 
+Yãmb sãn tʋm ne pĩim b sẽn zoe n dɩk n tʋm ne ned sẽn tar
+
+SIDAwã n yaol n ka dʋg-a ? (Nyẽe)"""
+        m = NUMBERED_ITEM_RE.match(s)
         assert m is not None
-        assert m.group(1) == "3"
-        assert m.group(2) == "Some item text"
+        assert m.group(1) == "2"
+        assert m.group(2) == "Yãmb sãn tʋm ne pĩim b sẽn zoe n dɩk n tʋm ne ned sẽn tar SIDAwã n yaol n ka dʋg-a ? (Nyẽe)"
 
     def test_role_prefix_ayo(self):
         m = NUMBERED_ITEM_RE.match("(Ayo) 2. Tɩ ges pʋg-kõapa la kɩɩbsa yelle")

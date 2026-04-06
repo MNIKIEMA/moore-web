@@ -116,9 +116,7 @@ def annotate_file(
 def _annotate_batch(batch: dict[str, list], src_field: str, tgt_field: str) -> dict[str, list]:
     src_texts = batch[src_field]
     tgt_texts = batch[tgt_field]
-    batch["len_ratio"] = [
-        _len_ratio(s or "", t or "") for s, t in zip(src_texts, tgt_texts)
-    ]
+    batch["len_ratio"] = [_len_ratio(s or "", t or "") for s, t in zip(src_texts, tgt_texts)]
     return batch
 
 
