@@ -123,3 +123,31 @@ Other
 ```json
 {"lemma":"gẽ[é]","ipa":"","pos":"v"}
 ```
+
+## Kadé
+
+```
+(Ayo) 2. Tɩ ges pʋg-kõapa la kɩɩbsa yelle A na yɩ sõama wẽndooga sã n tõe wa ne sõngr n kõ pʋg-kõapa la kɩɩbsa tɩ b vɩɩma manege.
+
+(Nyẽe) 3. Yãmb sãn n dɩk a wamdã bɩ a laagã n yõng koom n yũ ?
+
+(Nyẽe) 6. Rũng sẽn deng n dum bãada sãn n wa rũm yãmba ?
+
+53 Appendice Les aspects de notre culture que nous devons comprendre • Les croyances concernant la virginité: est-ce que les gens en sont fiers ou honteux?
+
+Tõnd na n vɩɩmda wãn wãnã?" Dẽe, a ma leok-a lame yaa: "Wẽnnaam na n sõng-d lame." Dẽe, bãmb b yiibã zĩndame n yãbe . Sẽn deng sigra taabo, a Pok baaba maana kaalem. Dẽe, bũudã, zo-rãmbã ne neb wʋsog waame n wa kʋm-ba. A soka a meng yaa: "Maana a wãn tɩ nin- kãensa fãa ka wa m baaba sẽn wa n ya bãada wakate wala b sẽn wa n da ya b yembra wakate?" B saka pʋgẽ, Wẽndoog n be be. Ya wẽndo-kãng taor soaba bala n wa n ges a Pok baaba sẽn deng b kũuma . 8 Kiuug a wãn zugẽ, a Pok ne a ma kẽnga weoogẽ n na n tɩ bao raado. A ma vʋʋsma wa n lebga toogo tɩ ya wa a pãnga saame. Dẽe, a Pok gãda a nugã tɩ b tɩ zĩnd n vʋʋse. A ma yeelame yaa: "Masã, mam ka le tar pãng n tʋmd wa pĩnda ye" .
+```
+
+## SIDA
+
+```
+" Kiiba ", a-t-elle dit, ce qui veut dire " orphelin ". Maman est morte quelques jours plus tard et Poko a donné le nom de Yõdi à l'enfant.
+
+Yembi demande: " Maman, as-tu un secret? " Maman place sa main sur son ventre et dit: " Notre famille devient plus grande. "
+
+Yembi demande: " Maman, as-tu un secret? " Maman place sa main sur son ventre et dit: " Notre famille devient plus grande. "
+
+Yembi s'est alors demandé: " L'homme qui m'a donné ce bracelet, est-ce qu'il essaie de me persuader de coucher avec lui? " Poko, Yembi et Aminata se sont promis qu'elles attendraient le mariage avant d'avoir des rapports sexuels.
+
+A yao-poaka a Yembi zoe n waa a nẽngẽ n bool-a n yeel yaa: "Poko! Poko! M wʋma pagba sẽn gomd bũmb a ye yelle; b yeelame tɩ m ma solga bũmbu. Yaa boẽ la rẽnda? Fo tagsdame tɩ yaa boẽ?"
+```

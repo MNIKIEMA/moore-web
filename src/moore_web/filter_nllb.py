@@ -12,12 +12,13 @@ Filters applied
 8. Parenthesis asymmetry                 — parenthetical content in English absent in Mooré
 9. Number mismatch                       — digit sequences present on one side but not the other
 10. Foreign word list                    — Mooré contains words from non-Mooré GlotLID wordlists
+11. Length ratio                         — min(len(src), len(tgt)) / max(len(src), len(tgt)) below threshold
 
 Quality warnings added per row (before hard filtering)
 -------------------------------------------------------
 ``has_emoji``, ``has_dots_asymmetry``, ``has_number_mismatch``,
 ``has_parenthesis_asymmetry``, ``has_bullet_asymmetry``,
-``has_foreign_words``, ``identification_inconsistency``
+``has_foreign_words``, ``identification_inconsistency``, ``len_ratio``
 
 Usage
 -----
@@ -146,6 +147,18 @@ def _has_parenthesis_asymmetry(src: str, tgt: str) -> bool:
     return bool(src_parens) and not bool(tgt_parens)
 
 
+def _len_ratio(src: str, tgt: str) -> float:
+    """Return min(len(src), len(tgt)) / max(len(src), len(tgt)).
+
+    A ratio close to 1.0 means the two sentences are similar in length.
+    Returns 0.0 when either side is empty.
+    """
+    a, b = len(src), len(tgt)
+    if not a or not b:
+        return 0.0
+    return round(min(a, b) / max(a, b), 4)
+
+
 def _has_bullet_asymmetry(src: str, tgt: str) -> bool:
     """True when a bullet/special char leads one side but not the other."""
     src_first = src.strip()[:1]
@@ -267,6 +280,8 @@ def annotate_warnings(
 
     ``identification_consistency`` is a float in [0, 1]: fraction of Mooré
     tokens that do NOT appear in the foreign (French/English) word list.
+
+    ``len_ratio`` is a float in [0, 1]: min(len(src), len(tgt)) / max(len(src), len(tgt)).
     """
     src_texts = batch[_COL_ENG]
     tgt_texts = batch[_COL_MOS]
@@ -274,6 +289,7 @@ def annotate_warnings(
 
     quality_warnings = []
     id_consistency = []
+    len_ratios = []
 
     for i in range(n):
         src = src_texts[i] or ""
@@ -295,9 +311,11 @@ def annotate_warnings(
 
         quality_warnings.append(warnings)
         id_consistency.append(_lang_consistency_score(tgt, foreign_wordlist))
+        len_ratios.append(_len_ratio(src, tgt))
 
     batch["quality_warnings"] = quality_warnings
     batch["identification_consistency"] = id_consistency
+    batch["len_ratio"] = len_ratios
 
     return batch
 
@@ -318,6 +336,7 @@ def apply_hard_filters(
     filter_parenthesis: bool = False,
     filter_number_mismatch: bool = False,
     consistency_threshold: float = 0.0,
+    len_ratio_threshold: float = 0.0,
 ):
     """Remove rows that fail any hard quality criterion.
 
@@ -337,6 +356,8 @@ def apply_hard_filters(
         consistency_threshold:    Minimum ``identification_consistency`` score (fraction of
                                   Mooré tokens found in the Mooré word list).  0.0 disables
                                   this filter.
+        len_ratio_threshold:      Minimum length ratio min(len(src), len(tgt)) /
+                                  max(len(src), len(tgt)).  0.0 disables this filter.
 
     Returns:
         Filtered HF Dataset.
@@ -416,6 +437,13 @@ def apply_hard_filters(
             lambda r: (r["identification_consistency"] or 0.0) >= consistency_threshold,
         )
 
+    if len_ratio_threshold > 0.0 and "len_ratio" in dataset.column_names:
+        dataset = _track(
+            dataset,
+            "len_ratio",
+            lambda r: (r["len_ratio"] or 0.0) >= len_ratio_threshold,
+        )
+
     after = len(dataset)
     print(f"\nFiltering summary ({before:,} → {after:,} rows kept, {before - after:,} dropped):")
     for name, dropped in stats.items():
@@ -442,6 +470,7 @@ def filter_nllb(
     filter_parenthesis: bool = False,
     filter_number_mismatch: bool = False,
     consistency_threshold: float = 0.0,
+    len_ratio_threshold: float = 0.0,
     load_wordlists: bool = True,
     batch_size: int = 1000,
     private: bool = False,
@@ -463,6 +492,8 @@ def filter_nllb(
         filter_parenthesis:       Drop rows with parenthesis asymmetry.
         filter_number_mismatch:   Drop rows with number mismatch.
         consistency_threshold:    Minimum ``identification_consistency`` score. 0.0 disables.
+        len_ratio_threshold:      Minimum length ratio min(len(src), len(tgt)) /
+                                  max(len(src), len(tgt)). 0.0 disables.
         load_wordlists:           Whether to load GlotLID wordlists.
         batch_size:               Rows per batch for dataset.map.
         private:                  Whether to make the HF Hub dataset private.
@@ -516,6 +547,10 @@ def filter_nllb(
         scores = ds["identification_consistency"]
         mean_score = sum(scores) / len(scores) if scores else 0.0
         print(f"  identification_consistency (mean): {mean_score:.3f}")
+    if "len_ratio" in ds.column_names:
+        ratios = ds["len_ratio"]
+        mean_ratio = sum(ratios) / len(ratios) if ratios else 0.0
+        print(f"  len_ratio (mean): {mean_ratio:.3f}")
 
     # Apply hard filters
     ds = apply_hard_filters(
@@ -529,6 +564,7 @@ def filter_nllb(
         filter_parenthesis=filter_parenthesis,
         filter_number_mismatch=filter_number_mismatch,
         consistency_threshold=consistency_threshold,
+        len_ratio_threshold=len_ratio_threshold,
     )
 
     # Write local output
@@ -634,6 +670,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "word list). 0.0 disables this filter (default: %(default)s).",
     )
     parser.add_argument(
+        "--len-ratio-threshold",
+        type=float,
+        default=0.0,
+        help="Minimum length ratio min(len(src), len(tgt)) / max(len(src), len(tgt)). "
+        "0.0 disables this filter (default: %(default)s).",
+    )
+    parser.add_argument(
         "--no-push",
         dest="push",
         action="store_false",
@@ -673,6 +716,7 @@ def main() -> None:
         filter_parenthesis=args.filter_parenthesis,
         filter_number_mismatch=args.filter_number_mismatch,
         consistency_threshold=args.consistency_threshold,
+        len_ratio_threshold=args.len_ratio_threshold,
         load_wordlists=args.load_wordlists,
         batch_size=args.batch_size,
         private=args.private,
