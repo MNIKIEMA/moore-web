@@ -35,7 +35,7 @@ _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SENT_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 _NUMBER_ONLY_RE = re.compile(r"^\d+\.+$")
 _MISSING_SPACE_RE = re.compile(r"(?<=[.!?])(?=[A-ZÀ-Ö][a-zà-öø-ÿ])")
-_PAGE_REF_RE = re.compile(r"\(p\.?\s*\d+\)", re.IGNORECASE)
+_PAGE_REF_RE = re.compile(r"\([^)]*\bp\.?\s*\d+\)", re.IGNORECASE)
 _STANDALONE_NUM_RE = re.compile(r"^\s*\d+(?:[-–]\d+)?(?:[.,;:\s]+\d+(?:[-–]\d+)?)*[.,;:]?\s*$")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 _COPYRIGHT_RE = re.compile(r"©")
@@ -292,23 +292,29 @@ def flatten_facilitateur_pair(
 
     result = ParallelText(source="kade")
 
+    def _clean_title_fr(t: str) -> str:
+        return normalize_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", t).strip()))
+
+    def _clean_title_mo(t: str) -> str:
+        return normalize_mo(_PAGE_REF_RE.sub("", t).strip())
+
     # Titles as alignment anchors
     for ch in fr_book.chapters:
         if ch.title.strip():
-            result.french.append(normalize_fr(replace_facilitateur_names_fr(ch.title.strip())))
+            result.french.append(_clean_title_fr(ch.title))
         for sec in ch.sections:
             if sec.title.strip():
-                result.french.append(normalize_fr(replace_facilitateur_names_fr(sec.title.strip())))
+                result.french.append(_clean_title_fr(sec.title))
             for sub in sec.subsections:
                 if sub.title.strip():
-                    result.french.append(normalize_fr(replace_facilitateur_names_fr(sub.title.strip())))
+                    result.french.append(_clean_title_fr(sub.title))
 
     for ch in mo_book.chapters:
         if ch.title.strip():
-            result.moore.append(normalize_mo(ch.title.strip()))
+            result.moore.append(_clean_title_mo(ch.title))
         for sec in ch.sections:
             if sec.title.strip():
-                result.moore.append(normalize_mo(sec.title.strip()))
+                result.moore.append(_clean_title_mo(sec.title))
 
     # Section content
     fr_list = flatten_book_to_list(fr_book)
