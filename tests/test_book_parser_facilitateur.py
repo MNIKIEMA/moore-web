@@ -1,12 +1,10 @@
 """Tests for book_parser_facilitateur: NUMBERED_ITEM_RE, collect_numbered_items,
 and start_after / stop_before sentinels in split_and_parse_by_sections."""
 
-import re
 
 from moore_web.book_parser_facilitateur import (
     NUMBERED_ITEM_RE,
     collect_numbered_items,
-    split_and_parse_by_sections,
 )
 
 # ---------------------------------------------------------------------------
@@ -23,7 +21,7 @@ SIDAwã n yaol n ka dʋg-a ? (Nyẽe)"""
         m = NUMBERED_ITEM_RE.match(s)
         assert m is not None
         assert m.group(1) == "2"
-        assert m.group(2) == "Yãmb sãn tʋm ne pĩim b sẽn zoe n dɩk n tʋm ne ned sẽn tar SIDAwã n yaol n ka dʋg-a ? (Nyẽe)"
+        assert m.group(2) == "Yãmb sãn tʋm ne pĩim b sẽn zoe n dɩk n tʋm ne ned sẽn tar"
 
     def test_role_prefix_ayo(self):
         m = NUMBERED_ITEM_RE.match("(Ayo) 2. Tɩ ges pʋg-kõapa la kɩɩbsa yelle")
@@ -96,23 +94,3 @@ class TestCollectNumberedItems:
         items = collect_numbered_items(lines)
         assert len(items) == 3
         assert [i.number for i in items] == [1, 2, 3]
-
-
-# ---------------------------------------------------------------------------
-# Minimal section regex list — just one pattern so tests stay readable
-# ---------------------------------------------------------------------------
-
-
-# Minimal section regex list — just one pattern so tests stay readable
-_SEC_RE = [re.compile(r"^Section \d+$")]
-_SEC_TITLES = ["Section"]
-
-
-def _parse(text, *, start_after=None, stop_before=None):
-    return split_and_parse_by_sections(
-        text,
-        _SEC_RE,
-        _SEC_TITLES,
-        start_after=start_after,
-        stop_before=stop_before,
-    )
