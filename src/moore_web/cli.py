@@ -125,7 +125,19 @@ def _dedup_aligned(aligned):
     )
 
 
-def _parse_kade_file(input_path: Path, lang: KadeLang):
+# Default page ranges for Kadé PDFs (content pages only, excludes front/back matter).
+# Not exposed as CLI options for now — override by calling _parse_kade_file directly.
+_KADE_PAGE_RANGES: dict[KadeLang, tuple[int, int]] = {
+    KadeLang.french: (3, 57),
+    KadeLang.moore: (3, 55),
+}
+
+
+def _parse_kade_file(
+    input_path: Path,
+    lang: KadeLang,
+    page_range: Optional[tuple[int, int]] = None,
+):
     """Parse a single Kadé PDF or TXT file and return a Book."""
     import re as _re
 
@@ -165,7 +177,8 @@ def _parse_kade_file(input_path: Path, lang: KadeLang):
     if input_path.suffix.lower() == ".pdf":
         from moore_web.pdf_extractor import extract_pdf_blocks
 
-        text = extract_pdf_blocks(str(input_path))
+        effective_range = page_range if page_range is not None else _KADE_PAGE_RANGES[lang]
+        text = extract_pdf_blocks(str(input_path), page_range=effective_range)
     else:
         text = input_path.read_text(encoding="utf-8")
 
