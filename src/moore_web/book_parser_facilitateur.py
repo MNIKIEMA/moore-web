@@ -148,7 +148,7 @@ def replace_facilitateur_names_fr(text: str) -> str:
     return _FR_NAME_RE.sub(lambda m: FACILITATEUR_NAME_MAP[m.group(0)], text)
 
 
-NUMBERED_ITEM_RE = re.compile(r"^\s*(\d+)\.\s+(.+)")
+NUMBERED_ITEM_RE = re.compile(r"^\s*(?:\([^)]+\)\s+)?(\d+)\.\s+(.+)")
 BULLET_ITEM_RE = re.compile(r"^\s*•\s+(.+)")
 
 LISEZ_RE = re.compile(r"^Lisez\s+.+", re.IGNORECASE)

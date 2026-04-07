@@ -65,7 +65,9 @@ def migrate_file(path: Path, dry_run: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Rename "score" → "laser_score" in JSONL files.')
-    parser.add_argument("--dir", "-d", default="final_data_hf", help="Directory to migrate (default: %(default)s).")
+    parser.add_argument(
+        "--dir", "-d", default="final_data_hf", help="Directory to migrate (default: %(default)s)."
+    )
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without writing.")
     args = parser.parse_args()
 
