@@ -205,7 +205,9 @@ def _lang_consistency_score(text: str, foreign_words: set[str]) -> float:
 def _terminal_punctuation_score(src: str, tgt: str) -> float:
     """Return an OpusFilter-style terminal punctuation score.
 
-    Counts ``.``, ``?``, ``!``, ``…`` across the full sentence (not just the end).
+    Borrowed from OpusFilter's ``TerminalPunctuationFilter``
+    (vazquez-etal-2019-university). Counts ``.``, ``?``, ``!``, ``…`` across
+    the full sentence (not just the end).
     Score = ``-log(abs(spun - tpun) + extra_penalty + 1)`` where *extra_penalty*
     accounts for each side having more than one terminal punctuation mark.
     Score of ``0.0`` means a perfect match; more negative = worse.
