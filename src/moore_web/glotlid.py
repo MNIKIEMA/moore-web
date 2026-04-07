@@ -37,7 +37,7 @@ def predict(model: fasttext.FastText._FastText, texts: list[str], k: int = 1) ->
     labels, probs = model.predict(cleaned, k=k)
     # labels are like ['__label__mos_Latn'], strip the prefix
     langs = pd.Series([line[0].replace("__label__", "") for line in labels], name="predicted_language")
-    scores = pd.Series([round(p[0], 4) for p in probs], name="predicted_probability")
+    scores = pd.Series([round(float(p[0]), 4) for p in probs], name="predicted_probability")
     return langs, scores
 
 
