@@ -239,42 +239,45 @@ def run_laser(
     dataset,
     src_field: str = "french",
     tgt_field: str = "moore",
+    src_lang: str = "fra",
+    tgt_lang: str = "mos",
+    output_field: str | None = None,
+    encoder_src=None,
+    encoder_tgt=None,
 ):
     """Add LASER cosine-similarity scores between source and target sentences.
 
-    Adds one column: ``laser_score`` (float in [-1, 1], typically [0, 1]).
+    Adds one column named ``output_field`` (default: ``"laser_{src_lang}_{tgt_lang}"``).
 
     Unlike :func:`~moore_web.score_mt_datasets.score_aligned_pairs`, this function
     does **not** drop rows — it annotates every row unconditionally.
 
     Args:
-        dataset:    Input ``datasets.Dataset``.
-        src_field:  Source column name (default: ``"french"``).
-        tgt_field:  Target column name (default: ``"moore"``).
-        batch_size: Passed to ``LaserEncoderPipeline.encode_sentences``.
+        dataset:      Input ``datasets.Dataset``.
+        src_field:    Source column name (default: ``"french"``).
+        tgt_field:    Target column name (default: ``"moore"``).
+        src_lang:     LASER language code for the source encoder (default: ``"fra"``).
+        tgt_lang:     LASER language code for the target encoder (default: ``"mos"``).
+        output_field: Name for the new score column. Defaults to
+                      ``"laser_{src_lang}_{tgt_lang}"`` when ``None``.
+        encoder_src:  Pre-loaded source encoder; loaded automatically if ``None``.
+        encoder_tgt:  Pre-loaded target encoder; loaded automatically if ``None``.
 
     Returns:
         Annotated ``datasets.Dataset``.
     """
-    import numpy as np
-    from laser_encoders import LaserEncoderPipeline
+    from moore_web.score_laser import score_dataset
 
-    src_texts: list[str] = dataset[src_field]
-    tgt_texts: list[str] = dataset[tgt_field]
-
-    print("Loading LASER fra model…")
-    laser_src = LaserEncoderPipeline(lang="fra")
-    print("Loading LASER mos model…")
-    laser_tgt = LaserEncoderPipeline(lang="mos")
-
-    print(f"Encoding {len(src_texts):,} source sentences…")
-    src_embs: np.ndarray = laser_src.encode_sentences(src_texts, normalize_embeddings=True)
-    print(f"Encoding {len(tgt_texts):,} target sentences…")
-    tgt_embs: np.ndarray = laser_tgt.encode_sentences(tgt_texts, normalize_embeddings=True)
-
-    # Dot product on unit vectors == cosine similarity
-    scores = [round(float(s), 4) for s in (src_embs * tgt_embs).sum(axis=1).tolist()]
-    return dataset.add_column("laser_score", scores)
+    return score_dataset(
+        dataset,
+        src_field=src_field,
+        tgt_field=tgt_field,
+        src_lang=src_lang,
+        tgt_lang=tgt_lang,
+        output_field=output_field,
+        encoder_src=encoder_src,
+        encoder_tgt=encoder_tgt,
+    )
 
 
 # ---------------------------------------------------------------------------
