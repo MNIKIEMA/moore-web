@@ -60,20 +60,25 @@ def annotate_dataset(
 ):
     """Add GlotLID predictions to a HuggingFace Dataset.
 
-    Adds four new columns:
-      source_glotlid_lang, source_glotlid_prob,
-      target_glotlid_lang, target_glotlid_prob.
+    Adds four new columns derived from the input column names:
+      ``{source_col}_glotlid_lang``, ``{source_col}_glotlid_prob``,
+      ``{target_col}_glotlid_lang``, ``{target_col}_glotlid_prob``.
     """
     if model is None:
         model = load_model()
 
+    src_lang_col = f"{source_col}_glotlid_lang"
+    src_prob_col = f"{source_col}_glotlid_prob"
+    tgt_lang_col = f"{target_col}_glotlid_lang"
+    tgt_prob_col = f"{target_col}_glotlid_prob"
+
     def _batch_predict(batch):
         src_langs, src_probs = predict(model, batch[source_col])
         tgt_langs, tgt_probs = predict(model, batch[target_col])
-        batch["source_glotlid_lang"] = src_langs.tolist()
-        batch["source_glotlid_prob"] = src_probs.tolist()
-        batch["target_glotlid_lang"] = tgt_langs.tolist()
-        batch["target_glotlid_prob"] = tgt_probs.tolist()
+        batch[src_lang_col] = src_langs.tolist()
+        batch[src_prob_col] = src_probs.tolist()
+        batch[tgt_lang_col] = tgt_langs.tolist()
+        batch[tgt_prob_col] = tgt_probs.tolist()
         return batch
 
     return dataset.map(_batch_predict, batched=True, batch_size=batch_size, load_from_cache_file=False)

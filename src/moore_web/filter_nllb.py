@@ -216,6 +216,8 @@ def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
 def annotate_warnings(
     batch: dict[str, list],
     foreign_wordlist: set[str],
+    src_col: str = _COL_ENG,
+    tgt_col: str = _COL_MOS,
 ) -> dict[str, list]:
     """Add ``quality_warnings`` and ``identification_consistency`` columns.
 
@@ -227,9 +229,15 @@ def annotate_warnings(
     tokens that do NOT appear in the foreign (French/English) word list.
 
     ``len_ratio`` is a float in [0, 1]: min(len(src), len(tgt)) / max(len(src), len(tgt)).
+
+    Args:
+        batch:            Batched dict of column lists.
+        foreign_wordlist: Set of foreign tokens to check against.
+        src_col:          Column name for the source text (default: ``"eng_Latn"``).
+        tgt_col:          Column name for the target text (default: ``"mos_Latn"``).
     """
-    src_texts = batch[_COL_ENG]
-    tgt_texts = batch[_COL_MOS]
+    src_texts = batch[src_col]
+    tgt_texts = batch[tgt_col]
     n = len(src_texts)
 
     quality_warnings = []

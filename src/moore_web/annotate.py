@@ -9,8 +9,9 @@ HuggingFace Hub datasets via ``hf://owner/repo`` URIs.
 
 New columns per function
 ------------------------
-- :func:`run_lang_id`          → ``source_glotlid_lang``, ``source_glotlid_prob``,
-                                  ``target_glotlid_lang``, ``target_glotlid_prob``
+- :func:`run_lang_id`          → ``{src}_glotlid_lang``, ``{src}_glotlid_prob``,
+                                  ``{tgt}_glotlid_lang``, ``{tgt}_glotlid_prob``
+                                  (column names derived from ``src_field`` / ``tgt_field``)
 - :func:`run_quality_warnings` → ``quality_warnings`` (list[str]), ``identification_consistency`` (float),
                                   ``len_ratio`` (float)
 - :func:`run_laser`            → ``laser_score`` (float)
@@ -127,8 +128,9 @@ def run_lang_id(
 ):
     """Add GlotLID language-ID predictions for source and target columns.
 
-    Adds four columns: ``source_glotlid_lang``, ``source_glotlid_prob``,
-    ``target_glotlid_lang``, ``target_glotlid_prob``.
+    Adds four columns derived from the field names:
+    ``{src_field}_glotlid_lang``, ``{src_field}_glotlid_prob``,
+    ``{tgt_field}_glotlid_lang``, ``{tgt_field}_glotlid_prob``.
 
     Args:
         dataset:    Input ``datasets.Dataset``.
@@ -174,7 +176,6 @@ def run_quality_warnings(
     dataset,
     src_field: str = "french",
     tgt_field: str = "moore",
-    batch_size: int = 1000,
     load_wordlists: bool = True,
 ):
     """Add quality-warning annotations to each row.
@@ -192,7 +193,6 @@ def run_quality_warnings(
         dataset:        Input ``datasets.Dataset``.
         src_field:      Source column name (default: ``"french"``).
         tgt_field:      Target column name (default: ``"moore"``).
-        batch_size:     Rows per batch for ``dataset.map``.
         load_wordlists: Load GlotLID + spellchecker foreign-word lists for richer
                         detection.  Set to ``False`` to skip (faster, no HF download).
 
@@ -203,29 +203,10 @@ def run_quality_warnings(
 
     foreign_wordlist = _build_foreign_wordlist(load_wordlists)
 
-    # annotate_warnings uses hardcoded column names "eng_Latn" / "mos_Latn".
-    # Inject temporary mappings and remove them from the output when the caller
-    # uses different field names.
-    _SRC_KEY = "eng_Latn"
-    _TGT_KEY = "mos_Latn"
-    src_injected = src_field != _SRC_KEY
-    tgt_injected = tgt_field != _TGT_KEY
-
-    def _batch_fn(batch: dict) -> dict:
-        batch[_SRC_KEY] = batch[src_field]
-        batch[_TGT_KEY] = batch[tgt_field]
-        result = annotate_warnings(batch, foreign_wordlist)
-        if src_injected:
-            result.pop(_SRC_KEY, None)
-        if tgt_injected:
-            result.pop(_TGT_KEY, None)
-        return result
-
     print(f"Annotating quality warnings ({len(dataset):,} rows)…")
     return dataset.map(
-        _batch_fn,
+        lambda batch: annotate_warnings(batch, foreign_wordlist, src_col=src_field, tgt_col=tgt_field),
         batched=True,
-        batch_size=batch_size,
         desc="quality warnings",
     )
 
@@ -378,7 +359,6 @@ def annotate(
             dataset,
             src_field=src_field,
             tgt_field=tgt_field,
-            batch_size=batch_size,
             load_wordlists=load_wordlists,
         )
 
