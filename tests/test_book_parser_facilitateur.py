@@ -1,6 +1,7 @@
 """Tests for book_parser_facilitateur: NUMBERED_ITEM_RE, collect_numbered_items,
 and start_after / stop_before sentinels in split_and_parse_by_sections."""
 
+
 from moore_web.book_parser_facilitateur import (
     NUMBERED_ITEM_RE,
     collect_numbered_items,
