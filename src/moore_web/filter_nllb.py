@@ -13,6 +13,7 @@ Filters applied
 9. Number mismatch                       — digit sequences present on one side but not the other
 10. Foreign word list                    — Mooré contains words from non-Mooré GlotLID wordlists
 11. Length ratio                         — min(len(src), len(tgt)) / max(len(src), len(tgt)) below threshold
+12. Terminal punctuation                 — OpusFilter-style mismatch in ``.``, ``?``, ``!``, ``…`` counts
 
 Quality warnings added per row (before hard filtering)
 -------------------------------------------------------
@@ -41,6 +42,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import math
 import re
 
 from dotenv import load_dotenv
@@ -200,6 +202,24 @@ def _lang_consistency_score(text: str, foreign_words: set[str]) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _terminal_punctuation_score(src: str, tgt: str) -> float:
+    """Return an OpusFilter-style terminal punctuation score.
+
+    Counts ``.``, ``?``, ``!``, ``…`` across the full sentence (not just the end).
+    Score = ``-log(abs(spun - tpun) + extra_penalty + 1)`` where *extra_penalty*
+    accounts for each side having more than one terminal punctuation mark.
+    Score of ``0.0`` means a perfect match; more negative = worse.
+    """
+    spun = sum(c in ".?!…" for c in src)
+    tpun = sum(c in ".?!…" for c in tgt)
+    score = abs(spun - tpun)
+    if spun > 1:
+        score += spun - 1
+    if tpun > 1:
+        score += tpun - 1
+    return -math.log(score + 1)
+
+
 def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
     """True when *text* contains at least one token (length >= 3) present in the foreign wordlist."""
     if not wordlist:
@@ -223,7 +243,8 @@ def annotate_warnings(
 
     ``quality_warnings`` is a ``list[str]`` of active warning labels per row:
       ``"emoji"``, ``"dots_asymmetry"``, ``"number_mismatch"``,
-      ``"parenthesis_asymmetry"``, ``"bullet_asymmetry"``, ``"foreign_words"``
+      ``"parenthesis_asymmetry"``, ``"bullet_asymmetry"``, ``"foreign_words"``,
+      ``"terminal_punctuation"``
 
     ``identification_consistency`` is a float in [0, 1]: fraction of Mooré
     tokens that do NOT appear in the foreign (French/English) word list.
@@ -261,6 +282,8 @@ def annotate_warnings(
             warnings.append("bullet_asymmetry")
         if _has_foreign_words(tgt, foreign_wordlist):
             warnings.append("foreign_words")
+        if _terminal_punctuation_score(src, tgt) < -2:
+            warnings.append("terminal_punctuation")
 
         quality_warnings.append(warnings)
         id_consistency.append(_lang_consistency_score(tgt, foreign_wordlist))
