@@ -661,6 +661,9 @@ def annotate(
     comet_qe: Annotated[
         bool, typer.Option("--comet-qe", is_flag=True, help="Add COMET-QE translation quality score.")
     ] = False,
+    all_annotations: Annotated[
+        bool, typer.Option("--all", is_flag=True, help="Enable all annotation flags.")
+    ] = False,
     hf_private: Annotated[
         bool, typer.Option("--hf-private", is_flag=True, help="Push to HuggingFace as private dataset.")
     ] = False,
@@ -670,9 +673,13 @@ def annotate(
     All annotation flags are off by default — opt in to what you need.
 
     [bold]Local:[/bold]  moore-web annotate -i data.jsonl -o out.jsonl --consistency --quality-warn
-    [bold]HF:[/bold]     moore-web annotate -i hf://owner/src -o hf://owner/dst --lang-id --comet-qe
+    [bold]All:[/bold]    moore-web annotate -i data.jsonl -o out.jsonl --all
+    [bold]HF:[/bold]     moore-web annotate -i hf://owner/src -o hf://owner/dst --all
     """
     from moore_web import annotate as _ann
+
+    if all_annotations:
+        lang_id = consistency = quality_warn = laser_score = comet_qe = True
 
     if not any([lang_id, consistency, quality_warn, laser_score, comet_qe]):
         _err("No annotation flags specified. Pass at least one of: --lang-id, --consistency, "
@@ -714,7 +721,12 @@ def e2e(
             "-i",
             exists=True,
             dir_okay=False,
-            help="Input file (sida PDF, news JSON, or simple PDF).",
+            help=(
+                "Input file (sida PDF, news/conseils JSON, or simple PDF). "
+                "Must be a local path. For news/conseils corpora hosted on HuggingFace, "
+                "download the file first: "
+                "huggingface-cli download owner/repo corpus.json --repo-type dataset --local-dir ."
+            ),
         ),
     ] = None,
     fr_input: Annotated[
