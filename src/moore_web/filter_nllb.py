@@ -13,6 +13,7 @@ Filters applied
 9. Number mismatch                       — digit sequences present on one side but not the other
 10. Foreign word list                    — Mooré contains words from non-Mooré GlotLID wordlists
 11. Length ratio                         — min(len(src), len(tgt)) / max(len(src), len(tgt)) below threshold
+12. Terminal punctuation                 — OpusFilter-style mismatch in ``.``, ``?``, ``!``, ``…`` counts
 
 Quality warnings added per row (before hard filtering)
 -------------------------------------------------------
@@ -41,9 +42,12 @@ Usage
 from __future__ import annotations
 
 import argparse
+import math
 import re
 
 from dotenv import load_dotenv
+
+from moore_web.wordlists import build_foreign_wordlist
 
 try:
     from datatrove.utils.text import TextNormConfig, simplify_text as _simplify_text
@@ -198,61 +202,24 @@ def _lang_consistency_score(text: str, foreign_words: set[str]) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _load_glotlid_wordlists(languages: list[str]) -> set[str]:
-    """Load word lists from ``madoss/mos-eng-fra-wordlists`` for the given language configs.
+def _terminal_punctuation_score(src: str, tgt: str) -> float:
+    """Return an OpusFilter-style terminal punctuation score.
 
-    Each language is a separate dataset config (e.g. ``"fra_Latn"``).
-    Returns a flat union of all words across the requested languages.
+    Borrowed from OpusFilter's ``TerminalPunctuationFilter``
+    (vazquez-etal-2019-university). Counts ``.``, ``?``, ``!``, ``…`` across
+    the full sentence (not just the end).
+    Score = ``-log(abs(spun - tpun) + extra_penalty + 1)`` where *extra_penalty*
+    accounts for each side having more than one terminal punctuation mark.
+    Score of ``0.0`` means a perfect match; more negative = worse.
     """
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        print("Warning: 'datasets' not installed — skipping wordlist filter.")
-        return set()
-
-    words: set[str] = set()
-    for lang in languages:
-        try:
-            ds = load_dataset("madoss/mos-eng-fra-wordlists", split=lang)
-            for row in ds:
-                word = row.get("text") or row.get("word", "")
-                if word:
-                    words.add(word.lower())
-            print(f"  Loaded {lang} wordlist ({len(words):,} words total so far).")
-        except Exception as e:
-            print(f"Warning: could not load glotlid-wordlists[{lang}] ({e}) — skipping.")
-    return words
-
-
-# GlotLID language code → pyspellchecker language code
-_SPELLCHECKER_LANG_MAP = {"fra_Latn": "fr", "eng_Latn": "en", "spa_Latn": "es", "deu_Latn": "de"}
-
-
-def _load_spellchecker_words(languages: list[str]) -> set[str]:
-    """Load full vocabulary from pyspellchecker for the given GlotLID language codes.
-
-    pyspellchecker ships with comprehensive word-frequency dictionaries (~100k+ words),
-    unlike the GlotLID discriminative lists (~14–25k n-grams).  This catches common
-    words like 'comment', 'game', 'pesée' that GlotLID lists omit.
-    """
-    try:
-        from spellchecker import SpellChecker
-    except ImportError:
-        print("Warning: 'pyspellchecker' not installed — falling back to GlotLID wordlists only.")
-        return set()
-
-    words: set[str] = set()
-    for lang in languages:
-        sc_lang = _SPELLCHECKER_LANG_MAP.get(lang)
-        if sc_lang is None:
-            continue
-        try:
-            sc = SpellChecker(language=sc_lang)
-            words.update(sc.word_frequency.keys())
-            print(f"  Loaded spellchecker[{sc_lang}] ({len(words):,} words total so far).")
-        except Exception as e:
-            print(f"Warning: could not load spellchecker[{sc_lang}] ({e}) — skipping.")
-    return words
+    spun = sum(c in ".?!…" for c in src)
+    tpun = sum(c in ".?!…" for c in tgt)
+    score = abs(spun - tpun)
+    if spun > 1:
+        score += spun - 1
+    if tpun > 1:
+        score += tpun - 1
+    return -math.log(score + 1)
 
 
 def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
@@ -271,20 +238,29 @@ def _has_foreign_words(text: str, wordlist: set[str]) -> bool:
 def annotate_warnings(
     batch: dict[str, list],
     foreign_wordlist: set[str],
+    src_col: str = _COL_ENG,
+    tgt_col: str = _COL_MOS,
 ) -> dict[str, list]:
     """Add ``quality_warnings`` and ``identification_consistency`` columns.
 
     ``quality_warnings`` is a ``list[str]`` of active warning labels per row:
       ``"emoji"``, ``"dots_asymmetry"``, ``"number_mismatch"``,
-      ``"parenthesis_asymmetry"``, ``"bullet_asymmetry"``, ``"foreign_words"``
+      ``"parenthesis_asymmetry"``, ``"bullet_asymmetry"``, ``"foreign_words"``,
+      ``"terminal_punctuation"``
 
     ``identification_consistency`` is a float in [0, 1]: fraction of Mooré
     tokens that do NOT appear in the foreign (French/English) word list.
 
     ``len_ratio`` is a float in [0, 1]: min(len(src), len(tgt)) / max(len(src), len(tgt)).
+
+    Args:
+        batch:            Batched dict of column lists.
+        foreign_wordlist: Set of foreign tokens to check against.
+        src_col:          Column name for the source text (default: ``"eng_Latn"``).
+        tgt_col:          Column name for the target text (default: ``"mos_Latn"``).
     """
-    src_texts = batch[_COL_ENG]
-    tgt_texts = batch[_COL_MOS]
+    src_texts = batch[src_col]
+    tgt_texts = batch[tgt_col]
     n = len(src_texts)
 
     quality_warnings = []
@@ -308,6 +284,8 @@ def annotate_warnings(
             warnings.append("bullet_asymmetry")
         if _has_foreign_words(tgt, foreign_wordlist):
             warnings.append("foreign_words")
+        if _terminal_punctuation_score(src, tgt) < -2:
+            warnings.append("terminal_punctuation")
 
         quality_warnings.append(warnings)
         id_consistency.append(_lang_consistency_score(tgt, foreign_wordlist))
@@ -507,20 +485,11 @@ def filter_nllb(
     # Load wordlists
     foreign_wordlist: set[str] = set()
     if load_wordlists:
-        # GlotLID discriminative n-grams (~14–25k, misses common words like 'comment', 'game')
-        glotlid_foreign = _load_glotlid_wordlists(["fra_Latn", "eng_Latn"])
-        # pyspellchecker full dictionaries (~100k+, covers common vocabulary)
-        spell_foreign = _load_spellchecker_words(["fra_Latn", "eng_Latn"])
-        raw_foreign = glotlid_foreign | spell_foreign
-        moore_wordlist = _load_glotlid_wordlists(["mos_Latn"])
         # NOTE: the GlotLID Mooré wordlist is very small (~1 000 discriminative n-grams),
         # so it cannot be used to positively identify Mooré words.  We use it only to
         # subtract any overlap from the foreign wordlist, avoiding false positives for
         # loanwords or short tokens shared between languages.
-        foreign_wordlist = raw_foreign - moore_wordlist
-        print(
-            f"  Exclusive foreign wordlist: {len(foreign_wordlist):,} words ({len(raw_foreign) - len(foreign_wordlist):,} removed as Mooré overlap)."
-        )
+        foreign_wordlist = build_foreign_wordlist()
 
     # Annotate quality warnings
     print("Annotating quality warnings…")

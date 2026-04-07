@@ -107,6 +107,55 @@ def _write_aligned(aligned, out: Path, use_jsonl: bool) -> None:
     typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
 
 
+def _finalize_aligned(
+    aligned,
+    out,  # str | Path
+    jsonl: bool,
+    hf_private: bool,
+    add_lang_id: bool,
+    add_consistency: bool,
+    add_quality_warn: bool,
+    add_laser_score: bool,
+    add_comet_qe: bool,
+) -> None:
+    """Write aligned corpus, optionally annotating and/or pushing to HF Hub."""
+    out_str = str(out)
+    needs_annotation = any([add_lang_id, add_consistency, add_quality_warn, add_laser_score, add_comet_qe])
+    is_hf = out_str.startswith("hf://")
+
+    if needs_annotation or is_hf:
+        from datasets import Dataset
+
+        from moore_web import annotate as _ann
+
+        rows = [
+            {"french": f, "moore": m, "laser_score": s}
+            for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)
+        ]
+        if aligned.english:
+            for row, en in zip(rows, aligned.english):
+                row["english"] = en
+        dataset = Dataset.from_list(rows)
+
+        if needs_annotation:
+            dataset = _ann.annotate(
+                dataset,
+                lang_id=add_lang_id,
+                quality_warn=add_quality_warn,
+                consistency=add_consistency,
+                laser=add_laser_score,
+                comet_qe=add_comet_qe,
+            )
+            if not add_quality_warn and "quality_warnings" in dataset.column_names:
+                dataset = dataset.remove_columns(["quality_warnings"])
+            if not add_consistency and "identification_consistency" in dataset.column_names:
+                dataset = dataset.remove_columns(["identification_consistency"])
+
+        _ann.save_data(dataset, out_str, private=hf_private)
+    else:
+        _write_aligned(aligned, Path(out_str), jsonl)
+
+
 def _dedup_aligned(aligned):
     """Deduplicate an AlignedCorpus using COMET-QE and return a new one."""
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
@@ -271,7 +320,7 @@ def parse(
         corpus = json.loads(input.read_text(encoding="utf-8"))
 
         if lang_id:
-            from moore_web.lang_id import annotate_text_units
+            from moore_web.glotlid import annotate_text_units
 
             typer.echo("Running language ID…")
             corpus = annotate_text_units(corpus)
@@ -509,7 +558,7 @@ def parse_flat(
         corpus = json.loads(input.read_text(encoding="utf-8"))
 
         if lang_id:
-            from moore_web.lang_id import annotate_text_units
+            from moore_web.glotlid import annotate_text_units
 
             typer.echo("Running language ID…")
             corpus = annotate_text_units(corpus)
@@ -557,7 +606,7 @@ def align(
     ] = None,
     min_score: Annotated[
         float,
-        typer.Option("--min-score", min=0.0, max=1.0, help="Drop pairs below this cosine similarity."),
+        typer.Option("--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."),
     ] = 0.0,
     jsonl: Annotated[
         bool,
@@ -566,7 +615,7 @@ def align(
 ) -> None:
     """Align a ParallelText JSON using LASER embeddings + FastDTW.
 
-    Example: moore-web align parallel.json -o aligned.json --min-score 0.6
+    Example: moore-web align parallel.json -o aligned.json --min-laser-score 0.6
     """
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import ParallelText
@@ -587,6 +636,89 @@ def align(
 
 
 # ---------------------------------------------------------------------------
+# annotate
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def annotate(
+    input: Annotated[str, typer.Option("--input", "-i", help="Local JSONL or hf://owner/repo.")],
+    output: Annotated[str, typer.Option("--output", "-o", help="Local JSONL or hf://owner/repo.")],
+    src: Annotated[str, typer.Option("--src", help="Source field name in the dataset.")] = "french",
+    tgt: Annotated[str, typer.Option("--tgt", help="Target field name in the dataset.")] = "moore",
+    lang_id: Annotated[
+        bool, typer.Option("--lang-id", is_flag=True, help="Add GlotLID language-ID scores.")
+    ] = False,
+    consistency: Annotated[
+        bool, typer.Option("--consistency", is_flag=True, help="Add identification_consistency score.")
+    ] = False,
+    quality_warn: Annotated[
+        bool, typer.Option("--quality-warn", is_flag=True, help="Add quality_warnings list.")
+    ] = False,
+    laser_score: Annotated[
+        bool, typer.Option("--laser-score", is_flag=True, help="Add LASER cosine similarity.")
+    ] = False,
+    src_lang: Annotated[
+        Optional[str],
+        typer.Option("--src-lang", help="LASER language code for the source encoder (e.g. fra, eng). "
+                     "Inferred from --src when known; required for unrecognized fields."),
+    ] = None,
+    tgt_lang: Annotated[
+        Optional[str],
+        typer.Option("--tgt-lang", help="LASER language code for the target encoder (e.g. mos). "
+                     "Inferred from --tgt when known; required for unrecognized fields."),
+    ] = None,
+    comet_qe: Annotated[
+        bool, typer.Option("--comet-qe", is_flag=True, help="Add COMET-QE translation quality score.")
+    ] = False,
+    all_annotations: Annotated[
+        bool, typer.Option("--all", is_flag=True, help="Enable all annotation flags.")
+    ] = False,
+    hf_private: Annotated[
+        bool, typer.Option("--hf-private", is_flag=True, help="Push to HuggingFace as private dataset.")
+    ] = False,
+) -> None:
+    """Enrich an aligned dataset with quality signals.
+
+    All annotation flags are off by default — opt in to what you need.
+
+    [bold]Local:[/bold]  moore-web annotate -i data.jsonl -o out.jsonl --consistency --quality-warn
+    [bold]All:[/bold]    moore-web annotate -i data.jsonl -o out.jsonl --all
+    [bold]HF:[/bold]     moore-web annotate -i hf://owner/src -o hf://owner/dst --all
+    """
+    from moore_web import annotate as _ann
+
+    if all_annotations:
+        lang_id = consistency = quality_warn = laser_score = comet_qe = True
+
+    if not any([lang_id, consistency, quality_warn, laser_score, comet_qe]):
+        _err("No annotation flags specified. Pass at least one of: --lang-id, --consistency, "
+             "--quality-warn, --laser-score, --comet-qe.")
+        raise typer.Exit(1)
+
+    dataset = _ann.load_data(input)
+    dataset = _ann.annotate(
+        dataset,
+        src_field=src,
+        tgt_field=tgt,
+        lang_id=lang_id,
+        quality_warn=quality_warn,
+        consistency=consistency,
+        laser=laser_score,
+        comet_qe=comet_qe,
+        src_lang=src_lang,
+        tgt_lang=tgt_lang,
+    )
+    # Drop the column not requested when only one of the shared pair is selected.
+    if not quality_warn and "quality_warnings" in dataset.column_names:
+        dataset = dataset.remove_columns(["quality_warnings"])
+    if not consistency and "identification_consistency" in dataset.column_names:
+        dataset = dataset.remove_columns(["identification_consistency"])
+
+    _ann.save_data(dataset, output, private=hf_private)
+
+
+# ---------------------------------------------------------------------------
 # e2e
 # ---------------------------------------------------------------------------
 
@@ -601,7 +733,12 @@ def e2e(
             "-i",
             exists=True,
             dir_okay=False,
-            help="Input file (sida PDF, news JSON, or simple PDF).",
+            help=(
+                "Input file (sida PDF, news/conseils JSON, or simple PDF). "
+                "Must be a local path. For news/conseils corpora hosted on HuggingFace, "
+                "download the file first: "
+                "huggingface-cli download owner/repo corpus.json --repo-type dataset --local-dir ."
+            ),
         ),
     ] = None,
     fr_input: Annotated[
@@ -613,8 +750,8 @@ def e2e(
         typer.Option("--mo-input", exists=True, dir_okay=False, help="Mooré PDF/TXT (kade only)."),
     ] = None,
     output: Annotated[
-        Optional[Path],
-        typer.Option("--output", "-o", help="Output aligned JSON (default: derived from input)."),
+        Optional[str],
+        typer.Option("--output", "-o", help="Output path or hf://owner/repo (default: derived from input)."),
     ] = None,
     segment: Annotated[
         bool,
@@ -622,7 +759,7 @@ def e2e(
     ] = True,
     min_score: Annotated[
         float,
-        typer.Option("--min-score", min=0.0, max=1.0, help="Drop pairs below this cosine similarity."),
+        typer.Option("--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."),
     ] = 0.0,
     lang_id: Annotated[
         bool,
@@ -656,6 +793,34 @@ def e2e(
         bool,
         typer.Option("--jsonl", is_flag=True, help="Write output as JSONL instead of JSON."),
     ] = False,
+    add_lang_id: Annotated[
+        bool,
+        typer.Option("--add-lang-id", is_flag=True, help="Annotate aligned output with GlotLID scores."),
+    ] = False,
+    add_consistency: Annotated[
+        bool,
+        typer.Option("--add-consistency", is_flag=True, help="Annotate aligned output with identification_consistency."),
+    ] = False,
+    add_quality_warn: Annotated[
+        bool,
+        typer.Option("--add-quality-warn", is_flag=True, help="Annotate aligned output with quality_warnings."),
+    ] = False,
+    add_laser_score: Annotated[
+        bool,
+        typer.Option("--add-laser-score", is_flag=True, help="Annotate aligned output with LASER similarity."),
+    ] = False,
+    add_comet_qe: Annotated[
+        bool,
+        typer.Option("--add-comet-qe", is_flag=True, help="Annotate aligned output with COMET-QE score."),
+    ] = False,
+    do_annotate: Annotated[
+        bool,
+        typer.Option("--annotate", is_flag=True, help="Shorthand: enable all --add-* annotation flags."),
+    ] = False,
+    hf_private: Annotated[
+        bool,
+        typer.Option("--hf-private", is_flag=True, help="Push to HuggingFace as private dataset."),
+    ] = False,
 ) -> None:
     """End-to-end pipeline: parse → flatten → align.
 
@@ -663,7 +828,20 @@ def e2e(
     [bold]kade:[/bold]    moore-web e2e -s kade --fr-input fr.pdf --mo-input mo.pdf -o aligned.json
     [bold]news:[/bold]    moore-web e2e -s news -i corpus.json -o aligned.json
     [bold]simple:[/bold]  moore-web e2e -s simple -i dict.pdf -o aligned.json
+    [bold]HF output:[/bold] moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
+    if do_annotate:
+        add_lang_id = add_consistency = add_quality_warn = add_laser_score = add_comet_qe = True
+
+    _ann_kwargs: dict = dict(
+        add_lang_id=add_lang_id,
+        add_consistency=add_consistency,
+        add_quality_warn=add_quality_warn,
+        add_laser_score=add_laser_score,
+        add_comet_qe=add_comet_qe,
+        hf_private=hf_private,
+    )
+
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import (
         flatten_facilitateur_pair,
@@ -704,7 +882,7 @@ def e2e(
         corpus = json.loads(input.read_text(encoding="utf-8"))
 
         if lang_id:
-            from moore_web.lang_id import annotate_text_units
+            from moore_web.glotlid import annotate_text_units
 
             typer.echo("      Running language ID…")
             corpus = annotate_text_units(corpus)
@@ -751,7 +929,7 @@ def e2e(
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
-        _write_aligned(aligned, out, jsonl)
+        _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
     elif source == Source.simple:
@@ -768,7 +946,7 @@ def e2e(
             pages = parse_doc(doc)
         typer.echo("[2/2] Flattening…")
 
-        def _write_simple(inc_examples: bool, inc_entries: bool, dest: Path) -> None:
+        def _write_simple(inc_examples: bool, inc_entries: bool, dest) -> None:
             p = flatten_simple_parser(pages, include_examples=inc_examples, include_entries=inc_entries)
             typer.echo(f"      FR: {len(p.french)}  MO: {len(p.moore)}  EN: {len(p.english)}  → {dest}")
             a = AlignedCorpus(
@@ -778,7 +956,7 @@ def e2e(
                 scores=[1.0] * len(p.french),
                 source=p.source,
             )
-            _write_aligned(a, dest, jsonl)
+            _finalize_aligned(a, dest, jsonl, **_ann_kwargs)
 
         out = output or _default_output(input, f"_aligned{_ext}")
         if entries_output is not None:
@@ -836,7 +1014,7 @@ def e2e(
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
-        _write_aligned(aligned, out, jsonl)
+        _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
     typer.echo(f"      FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences")
@@ -848,7 +1026,7 @@ def e2e(
     if drop_duplicate:
         aligned = _dedup_aligned(aligned)
 
-    _write_aligned(aligned, out, jsonl)
+    _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
 
 
 # ---------------------------------------------------------------------------
