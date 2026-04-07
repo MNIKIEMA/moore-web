@@ -606,7 +606,7 @@ def align(
     ] = None,
     min_score: Annotated[
         float,
-        typer.Option("--min-score", min=0.0, max=1.0, help="Drop pairs below this cosine similarity."),
+        typer.Option("--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."),
     ] = 0.0,
     jsonl: Annotated[
         bool,
@@ -615,7 +615,7 @@ def align(
 ) -> None:
     """Align a ParallelText JSON using LASER embeddings + FastDTW.
 
-    Example: moore-web align parallel.json -o aligned.json --min-score 0.6
+    Example: moore-web align parallel.json -o aligned.json --min-laser-score 0.6
     """
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import ParallelText
@@ -747,7 +747,7 @@ def e2e(
     ] = True,
     min_score: Annotated[
         float,
-        typer.Option("--min-score", min=0.0, max=1.0, help="Drop pairs below this cosine similarity."),
+        typer.Option("--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."),
     ] = 0.0,
     lang_id: Annotated[
         bool,
