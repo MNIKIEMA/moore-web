@@ -326,6 +326,8 @@ def annotate(
     batch_size: int = 1000,
     comet_batch_size: int = 8,
     gpus: int = 1,
+    src_lang: str | None = None,
+    tgt_lang: str | None = None,
 ):
     """Run any combination of annotation steps on a dataset.
 
@@ -345,6 +347,10 @@ def annotate(
         batch_size:        Rows per batch for lang-ID and warning annotation.
         comet_batch_size:  Rows per inference batch for COMET-QE.
         gpus:              Number of GPUs for COMET-QE (0 = CPU).
+        src_lang:          LASER language code for the source encoder. Falls back to
+                           ``FIELD_TO_LANG`` then the ``run_laser`` default.
+        tgt_lang:          LASER language code for the target encoder. Falls back to
+                           ``FIELD_TO_LANG`` then the ``run_laser`` default.
 
     Returns:
         Annotated ``datasets.Dataset``.
@@ -361,7 +367,12 @@ def annotate(
         )
 
     if laser:
-        dataset = run_laser(dataset, src_field=src_field, tgt_field=tgt_field)
+        laser_kwargs = {}
+        if src_lang is not None:
+            laser_kwargs["src_lang"] = src_lang
+        if tgt_lang is not None:
+            laser_kwargs["tgt_lang"] = tgt_lang
+        dataset = run_laser(dataset, src_field=src_field, tgt_field=tgt_field, **laser_kwargs)
 
     if comet_qe:
         dataset = run_comet_qe(

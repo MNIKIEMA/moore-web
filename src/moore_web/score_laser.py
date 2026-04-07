@@ -17,6 +17,28 @@ from __future__ import annotations
 
 import numpy as np
 
+# Known field-name → LASER language code mappings for this project.
+# Only covers our use-case columns; for any other field the caller must
+# pass the correct LASER code explicitly via src_lang / tgt_lang.
+_FIELD_TO_LANG: dict[str, str] = {
+    # French
+    "french": "fra",
+    "fr": "fra",
+    "fra": "fra",
+    "fra_Latn": "fra_Latn",
+    # English
+    "english": "eng",
+    "en": "eng",
+    "eng": "eng",
+    "eng_Latn": "eng_Latn",
+    # Mooré
+    "moore": "mos",
+    "mooré": "mos",
+    "mo": "mos",
+    "mos": "mos",
+    "mos_Latn": "mos_Latn",
+}
+
 
 def load_encoders(src_lang: str = "fra", tgt_lang: str = "mos"):
     """Load and return a (src_encoder, tgt_encoder) pair.
@@ -41,8 +63,8 @@ def score_dataset(
     dataset,
     src_field: str = "french",
     tgt_field: str = "moore",
-    src_lang: str = "fra",
-    tgt_lang: str = "mos",
+    src_lang: str | None = None,
+    tgt_lang: str | None = None,
     output_field: str | None = None,
     encoder_src=None,
     encoder_tgt=None,
@@ -52,14 +74,19 @@ def score_dataset(
     Annotates all rows unconditionally — no rows are dropped.  For a
     filtering variant see ``score_mt_datasets.score_aligned_pairs``.
 
+    Language codes are resolved in this order:
+    1. Explicit ``src_lang`` / ``tgt_lang`` arguments (highest priority).
+    2. ``_FIELD_TO_LANG`` lookup on the field name (covers our known columns).
+    3. ``ValueError`` if neither resolves — the caller must pass the lang code.
+
     Args:
         dataset:      Input ``datasets.Dataset``.
         src_field:    Source column name (default: ``"french"``).
         tgt_field:    Target column name (default: ``"moore"``).
-        src_lang:     LASER language code for the source encoder
-                      (default: ``"fra"``).
-        tgt_lang:     LASER language code for the target encoder
-                      (default: ``"mos"``).
+        src_lang:     LASER language code for the source encoder. Inferred from
+                      ``src_field`` when ``None``.
+        tgt_lang:     LASER language code for the target encoder. Inferred from
+                      ``tgt_field`` when ``None``.
         output_field: Name of the new score column. Defaults to
                       ``"laser_{src_lang}_{tgt_lang}"`` when ``None``.
         encoder_src:  Pre-loaded source ``LaserEncoderPipeline``; loaded
@@ -70,6 +97,14 @@ def score_dataset(
     Returns:
         Annotated ``datasets.Dataset`` with an added score column.
     """
+    src_lang = src_lang or _FIELD_TO_LANG.get(src_field)
+    tgt_lang = tgt_lang or _FIELD_TO_LANG.get(tgt_field)
+
+    if src_lang is None:
+        raise ValueError(f"Cannot infer LASER lang for src_field={src_field!r}. Pass src_lang explicitly.")
+    if tgt_lang is None:
+        raise ValueError(f"Cannot infer LASER lang for tgt_field={tgt_field!r}. Pass tgt_lang explicitly.")
+
     if output_field is None:
         output_field = f"laser_{src_lang}_{tgt_lang}"
 

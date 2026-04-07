@@ -658,6 +658,16 @@ def annotate(
     laser_score: Annotated[
         bool, typer.Option("--laser-score", is_flag=True, help="Add LASER cosine similarity.")
     ] = False,
+    src_lang: Annotated[
+        Optional[str],
+        typer.Option("--src-lang", help="LASER language code for the source encoder (e.g. fra, eng). "
+                     "Inferred from --src when known; required for unrecognized fields."),
+    ] = None,
+    tgt_lang: Annotated[
+        Optional[str],
+        typer.Option("--tgt-lang", help="LASER language code for the target encoder (e.g. mos). "
+                     "Inferred from --tgt when known; required for unrecognized fields."),
+    ] = None,
     comet_qe: Annotated[
         bool, typer.Option("--comet-qe", is_flag=True, help="Add COMET-QE translation quality score.")
     ] = False,
@@ -696,6 +706,8 @@ def annotate(
         consistency=consistency,
         laser=laser_score,
         comet_qe=comet_qe,
+        src_lang=src_lang,
+        tgt_lang=tgt_lang,
     )
     # Drop the column not requested when only one of the shared pair is selected.
     if not quality_warn and "quality_warnings" in dataset.column_names:
