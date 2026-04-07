@@ -106,6 +106,10 @@ moore-web annotate -i data.jsonl -o out.jsonl --all
 
 # From/to HuggingFace
 moore-web annotate -i hf://owner/src -o hf://owner/dst --all
+
+# Custom field names with explicit LASER language codes
+moore-web annotate -i data.jsonl -o out.jsonl --src en --tgt mo --laser-score
+moore-web annotate -i data.jsonl -o out.jsonl --src my_col --tgt other_col --laser-score --src-lang fra_Latn --tgt-lang mos_Latn
 ```
 
 **Available annotation flags:**
@@ -118,6 +122,15 @@ moore-web annotate -i hf://owner/src -o hf://owner/dst --all
 | `--laser-score` | LASER cosine similarity |
 | `--comet-qe` | COMET-QE translation quality score |
 | `--all` | Enable all of the above |
+
+**LASER language codes** (`--laser-score` only):
+
+| Flag | Description |
+| ---- | ----------- |
+| `--src-lang` | LASER language code for the source encoder (e.g. `fra`, `eng`, `fra_Latn`). Inferred from `--src` for known fields. |
+| `--tgt-lang` | LASER language code for the target encoder (e.g. `mos`, `mos_Latn`). Inferred from `--tgt` for known fields. |
+
+Known fields resolved automatically: `french`/`fr`/`fra` → `fra`, `english`/`en`/`eng` → `eng`, `moore`/`mo`/`mos` → `mos`. Pass `--src-lang`/`--tgt-lang` explicitly for any other field.
 
 ## TODO
 
