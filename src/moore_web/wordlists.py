@@ -65,6 +65,14 @@ def load_spellchecker_words(languages: list[str]) -> set[str]:
     return words
 
 
+# TODO: split build_foreign_wordlist into two sets:
+#   - glotlid_only (GlotLID discriminative lists minus Mooré) → used for the hard
+#     foreign_words flag; avoids false positives from short tokens like 'zap' that
+#     appear in broad spellchecker dictionaries but not in GlotLID lists.
+#   - full_foreign (GlotLID + spellchecker minus Mooré) → used for the soft
+#     identification_consistency score, which benefits from broader coverage.
+#   Verified via check_wordlists.py: 'zap' is eng_spell=1 but eng_glotlid=0,
+#   confirming the spellchecker is the source of the false positive.
 def build_foreign_wordlist(
     foreign_langs: list[str] | None = None,
     moore_langs: list[str] | None = None,
