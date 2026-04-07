@@ -324,7 +324,6 @@ def annotate(
     comet_qe: bool = False,
     load_wordlists: bool = True,
     batch_size: int = 1000,
-    laser_batch_size: int = 512,
     comet_batch_size: int = 8,
     gpus: int = 1,
 ):
@@ -344,7 +343,6 @@ def annotate(
         comet_qe:          Add ``comet_qe`` column.
         load_wordlists:    Load foreign-word lists for quality-warning checks.
         batch_size:        Rows per batch for lang-ID and warning annotation.
-        laser_batch_size:  Rows per batch for LASER encoding.
         comet_batch_size:  Rows per inference batch for COMET-QE.
         gpus:              Number of GPUs for COMET-QE (0 = CPU).
 
