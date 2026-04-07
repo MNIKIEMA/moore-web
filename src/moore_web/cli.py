@@ -320,7 +320,7 @@ def parse(
         corpus = json.loads(input.read_text(encoding="utf-8"))
 
         if lang_id:
-            from moore_web.lang_id import annotate_text_units
+            from moore_web.glotlid import annotate_text_units
 
             typer.echo("Running language ID…")
             corpus = annotate_text_units(corpus)
@@ -558,7 +558,7 @@ def parse_flat(
         corpus = json.loads(input.read_text(encoding="utf-8"))
 
         if lang_id:
-            from moore_web.lang_id import annotate_text_units
+            from moore_web.glotlid import annotate_text_units
 
             typer.echo("Running language ID…")
             corpus = annotate_text_units(corpus)
@@ -858,7 +858,7 @@ def e2e(
         corpus = json.loads(input.read_text(encoding="utf-8"))
 
         if lang_id:
-            from moore_web.lang_id import annotate_text_units
+            from moore_web.glotlid import annotate_text_units
 
             typer.echo("      Running language ID…")
             corpus = annotate_text_units(corpus)
