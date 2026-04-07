@@ -7,7 +7,7 @@ Pipeline
 1. Encode French and Mooré sentences with LASER (``fra`` / ``mos``)
 2. Run FastDTW on the embeddings to find the monotonic alignment path
 3. Score each aligned pair by cosine similarity
-4. Optionally filter by ``--min-laser-score``
+4. Optionally filter by ``--min-score``
 
 FastDTW naturally handles different lengths (many-to-many), and the
 LASER ``mos_Latn`` model gives good Mooré sentence representations.
@@ -15,7 +15,7 @@ LASER ``mos_Latn`` model gives good Mooré sentence representations.
 Usage
 -----
     uv run python -m moore_web.align_corpus -i parallel.json -o aligned.json
-    uv run python -m moore_web.align_corpus -i parallel.json -o aligned.json --min-laser-score 0.7
+    uv run python -m moore_web.align_corpus -i parallel.json -o aligned.json --min-score 0.7
 
 Input JSON  (ParallelText)
 --------------------------
@@ -136,10 +136,10 @@ if __name__ == "__main__":
         help="Output aligned pairs JSON (default: %(default)s).",
     )
     parser.add_argument(
-        "--min-laser-score",
+        "--min-score",
         type=float,
         default=0.0,
-        help="Keep only pairs with LASER cosine similarity >= this value (default: keep all).",
+        help="Keep only pairs with cosine similarity >= this value (default: keep all).",
     )
     args = parser.parse_args()
 
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     parallel = ParallelText.from_json(raw)
     print(f"Input: {len(parallel.french)} FR sentences, {len(parallel.moore)} MO sentences")
 
-    pairs = align(parallel, min_score=args.min_laser_score)
+    pairs = align(parallel, min_score=args.min_score)
 
     with open(args.output, "wb") as f:
         f.write(msgspec.json.encode(pairs))

@@ -49,45 +49,6 @@ def load_model():
     return load_from_checkpoint(download_model("McGill-NLP/ssa-comet-qe"))
 
 
-def score_dataset(
-    dataset,
-    src_field: str = "french",
-    tgt_field: str = "moore",
-    output_field: str | None = None,
-    batch_size: int = 8,
-    gpus: int = 1,
-    model=None,
-):
-    """Add COMET-QE scores to every row of a HuggingFace ``Dataset``.
-
-    Args:
-        dataset:      Input ``datasets.Dataset``.
-        src_field:    Source column name (default: ``"french"``).
-        tgt_field:    Target column name (default: ``"moore"``).
-        output_field: Name of the new score column. Defaults to
-                      ``"comet_qe_{src_field}_{tgt_field}"`` when ``None``.
-        batch_size:   Rows per inference batch.
-        gpus:         Number of GPUs to use (0 = CPU).
-        model:        Pre-loaded COMET model; loaded automatically if ``None``.
-
-    Returns:
-        Annotated ``datasets.Dataset`` with an added score column.
-    """
-    if output_field is None:
-        output_field = f"comet_qe_{src_field}_{tgt_field}"
-    if model is None:
-        model = load_model()
-
-    def _score_batch(batch: dict) -> dict:
-        data = [{"src": s, "mt": t} for s, t in zip(batch[src_field], batch[tgt_field])]
-        output = model.predict(data, batch_size=batch_size, gpus=gpus)
-        batch[output_field] = [round(float(s), 4) for s in output.scores]
-        return batch
-
-    print(f"Scoring {len(dataset):,} pairs with COMET-QE…")
-    return dataset.map(_score_batch, batched=True, desc="comet-qe")
-
-
 def score_file(
     path: Path,
     output_path: Path,
@@ -96,7 +57,6 @@ def score_file(
     batch_size: int,
     gpus: int,
     model,
-    output_field: str | None = None,
 ) -> None:
     rows = []
     with open(path, encoding="utf-8") as f:
@@ -109,16 +69,13 @@ def score_file(
         print(f"[skip] {path} — empty file")
         return
 
-    if output_field is None:
-        output_field = f"comet_qe_{src_field}_{mt_field}"
-
     data = [{"src": r[src_field], "mt": r[mt_field]} for r in rows]
 
     print(f"Scoring {len(data)} pairs from {path.name} …")
     output = model.predict(data, batch_size=batch_size, gpus=gpus)
 
     for row, qe_score in zip(rows, output.scores):
-        row[output_field] = round(float(qe_score), 4)
+        row["comet_qe"] = round(float(qe_score), 4)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:

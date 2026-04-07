@@ -109,7 +109,7 @@ if __name__ == "__main__":
         corpus = json.load(f)
 
     if not args.no_lang_id:
-        from moore_web.glotlid import annotate_text_units
+        from moore_web.lang_id import annotate_text_units
 
         corpus = annotate_text_units(corpus)
 
