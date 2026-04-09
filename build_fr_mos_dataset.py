@@ -26,7 +26,7 @@ The local dev/test are built by stratified sampling over eval-eligible
 sources (use ``--train-only-sources`` to customise which sources stay
 train-only).  Remaining local rows go to train.
 
-Output schema:  french | moore | source
+Output schema:  french | moore | source | laser_score | comet_qe | len_ratio
 
 Usage
 -----
@@ -80,7 +80,7 @@ _DEFAULT_TRAIN_ONLY: tuple[str, ...] = ("lexicon_entries",)
 
 
 def _load_jsonl(path: Path, source_override: str | None = None) -> list[dict]:
-    """Read a JSONL file, keeping only french/moore/source."""
+    """Read a JSONL file, keeping french/moore/source/laser_score/comet_qe/len_ratio."""
     rows = []
     with path.open(encoding="utf-8") as fh:
         for line in fh:
@@ -93,7 +93,14 @@ def _load_jsonl(path: Path, source_override: str | None = None) -> list[dict]:
             if not fr or not mo:
                 continue
             src = source_override if source_override is not None else obj.get("source", "unknown")
-            rows.append({"french": fr, "moore": mo, "source": src})
+            rows.append({
+                "french": fr,
+                "moore": mo,
+                "source": src,
+                "laser_score": obj.get("laser_score"),
+                "comet_qe": obj.get("comet_qe"),
+                "len_ratio": obj.get("len_ratio"),
+            })
     return rows
 
 
@@ -111,6 +118,46 @@ def _print_source_breakdown(rows: list[dict], label: str) -> None:
         counts[r["source"]] += 1
     parts = "  ".join(f"{s}={n:,}" for s, n in sorted(counts.items()))
     print(f"  {label}: {len(rows):,} rows  [{parts}]")
+
+
+# ---------------------------------------------------------------------------
+# Quality filter
+# ---------------------------------------------------------------------------
+
+_FILTERS: dict[str, tuple[str, float]] = {
+    "len_ratio":   (">",  0.1),
+    "comet_qe":    (">=", 0.35),
+    "laser_score": (">=", 0.5),
+}
+
+
+def _passes_filter(row: dict) -> bool:
+    """Return True if the row passes all quality thresholds.
+
+    A threshold is skipped when the value is None (field absent for that source).
+    """
+    for field, (op, threshold) in _FILTERS.items():
+        val = row.get(field)
+        if val is None:
+            continue
+        if op == ">=" and val < threshold:
+            return False
+        if op == ">" and val <= threshold:
+            return False
+    return True
+
+
+def _apply_quality_filter(rows: list[dict]) -> list[dict]:
+    kept = [r for r in rows if _passes_filter(r)]
+    dropped = len(rows) - len(kept)
+    if dropped:
+        by_source: dict[str, int] = defaultdict(int)
+        for r in rows:
+            if not _passes_filter(r):
+                by_source[r["source"]] += 1
+        parts = "  ".join(f"{s}={n:,}" for s, n in sorted(by_source.items()))
+        print(f"  quality filter: dropped {dropped:,} rows  [{parts}]")
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +253,10 @@ def build(
               f"→ {len(deduped):,} unique rows")
     local_all = deduped
 
+    # ---- Quality filter -----------------------------------------------------
+    print("\nApplying quality filters …")
+    local_all = _apply_quality_filter(local_all)
+
     # Separate train-only rows (dictionary entries etc.)
     train_only = [r for r in local_all if r["source"] in train_only_sources]
     splittable = [r for r in local_all if r["source"] not in train_only_sources]
@@ -248,7 +299,14 @@ def build(
                 mo = (row.get("moore") or "").strip()
                 src = row.get("source") or "mafand"
                 if fr and mo:
-                    target.append({"french": fr, "moore": mo, "source": src})
+                    target.append({
+                        "french": fr,
+                        "moore": mo,
+                        "source": src,
+                        "laser_score": row.get("laser_score"),
+                        "comet_qe": row.get("comet_qe"),
+                        "len_ratio": row.get("len_ratio"),
+                    })
             print(f"  {split_name}: {len(target):,} rows")
 
     # ---- 4. Merge ----------------------------------------------------------
@@ -277,10 +335,13 @@ def build(
         from datasets import Dataset, DatasetDict
 
         print(f"\nPushing to {push_to_hub} …")
+        _drop_cols = {"quality_warnings"}
+        def _strip(rows: list[dict]) -> list[dict]:
+            return [{k: v for k, v in r.items() if k not in _drop_cols} for r in rows]
         dataset_dict = DatasetDict({
-            "train":      Dataset.from_list(final_train),
-            "validation": Dataset.from_list(final_dev),
-            "test":       Dataset.from_list(final_test),
+            "train":      Dataset.from_list(_strip(final_train)),
+            "validation": Dataset.from_list(_strip(final_dev)),
+            "test":       Dataset.from_list(_strip(final_test)),
         })
         dataset_dict.push_to_hub(push_to_hub, private=hub_private)
         print(f"Done. https://huggingface.co/datasets/{push_to_hub}")
