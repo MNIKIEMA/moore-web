@@ -53,6 +53,7 @@ moore-web --help
 | `align` | Align a sentence list using LASER + FastDTW |
 | `annotate` | Enrich an aligned dataset with quality signals |
 | `e2e` | Full pipeline: parse → flatten → align (with optional annotation) |
+| `clean-lexicon` | Clean a lexicon JSONL file (synonym splitting, proverb stripping) |
 
 ### Sources
 
@@ -95,6 +96,26 @@ moore-web flatten -s sida -i parsed.json -o parallel.json
 moore-web align parallel.json -o aligned.json --min-laser-score 0.6
 ```
 
+**Clean a lexicon JSONL file:**
+
+```bash
+# Split comma/semicolon synonym lists into one entry per FR/MOS pair
+moore-web clean-lexicon -i final_data_hf/lexicon_entries.jsonl --split-synonyms
+
+# Strip proverb annotations from french/english fields (in-place)
+moore-web clean-lexicon -i final_data_hf/lexicon.jsonl --strip-proverb-notes
+
+# Both at once
+moore-web clean-lexicon -i lexicon.jsonl --split-synonyms --strip-proverb-notes
+```
+
+The `--split-synonyms` flag is also available in `e2e --source simple` to apply
+synonym splitting during the pipeline:
+
+```bash
+moore-web e2e -s simple -i dict.pdf -o out.jsonl --split-synonyms --strip-proverb-notes
+```
+
 **Annotate an existing dataset:**
 
 ```bash
@@ -131,6 +152,55 @@ moore-web annotate -i data.jsonl -o out.jsonl --src my_col --tgt other_col --las
 | `--tgt-lang` | LASER language code for the target encoder (e.g. `mos`, `mos_Latn`). Inferred from `--tgt` for known fields. |
 
 Known fields resolved automatically: `french`/`fr`/`fra` → `fra`, `english`/`en`/`eng` → `eng`, `moore`/`mo`/`mos` → `mos`. Pass `--src-lang`/`--tgt-lang` explicitly for any other field.
+
+## Dataset builder
+
+`build_fr_mos_dataset.py` assembles a combined French–Mooré parallel corpus from
+the local moore-web files and the [`madoss/mafand-fr-mos`](https://huggingface.co/datasets/madoss/mafand-fr-mos) HuggingFace dataset.
+
+### Local sources
+
+| File | Source tag | Rows | Eval-eligible |
+| ---- | ---------- | ----: | ------------- |
+| `lexicon.jsonl` | `lexicon` | 4 249 | yes |
+| `lexicon_entries.jsonl` | `lexicon_entries` | 19 793 | no (dict entries) |
+| `conseils_ministres_aligned.jsonl` | `conseils` | 7 596 | yes |
+| `raamde_aligned.jsonl` | `news` | 3 915 | yes |
+| `sida_aligned.jsonl` | `sida` | 216 | yes |
+| `sida-facilitateur_aligned.jsonl` | `kade` | 674 | yes |
+
+Dev/test are built by stratified sampling over eval-eligible sources.
+`lexicon_entries` (raw dictionary entries) stays train-only by default.
+Duplicate `(french, moore)` pairs are removed globally across all files.
+
+### Output splits
+
+| Split | Local | mafand | Total |
+| ----- | ----: | -----: | ----: |
+| train | ~32 600 | 2 493 | ~35 100 |
+| dev | 500 | 1 492 | ~2 000 |
+| test | 500 | 1 574 | ~2 100 |
+
+Output schema: `french | moore | source`
+
+### Dataset builder usage
+
+```bash
+# Write train/dev/test JSONL to ./fr_mos_combined/
+python build_fr_mos_dataset.py
+
+# Local data only (no HuggingFace download)
+python build_fr_mos_dataset.py --no-mafand --output-dir out/
+
+# Larger eval sets
+python build_fr_mos_dataset.py --dev-size 1000 --test-size 1000
+
+# Push to HuggingFace Hub
+python build_fr_mos_dataset.py --push-to-hub owner/fr-mos-combined
+
+# Keep lexicon_entries in eval too
+python build_fr_mos_dataset.py --train-only-sources ""
+```
 
 ## TODO
 
