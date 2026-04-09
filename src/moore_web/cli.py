@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Callable, Optional
 
 import msgspec
 import typer
@@ -117,13 +117,14 @@ def _finalize_aligned(
     add_quality_warn: bool,
     add_laser_score: bool,
     add_comet_qe: bool,
+    postprocess: Callable[[list[dict]], list[dict]] | None = None,
 ) -> None:
     """Write aligned corpus, optionally annotating and/or pushing to HF Hub."""
     out_str = str(out)
     needs_annotation = any([add_lang_id, add_consistency, add_quality_warn, add_laser_score, add_comet_qe])
     is_hf = out_str.startswith("hf://")
 
-    if needs_annotation or is_hf:
+    if needs_annotation or is_hf or postprocess:
         from datasets import Dataset
 
         from moore_web import annotate as _ann
@@ -135,6 +136,10 @@ def _finalize_aligned(
         if aligned.english:
             for row, en in zip(rows, aligned.english):
                 row["english"] = en
+
+        if postprocess:
+            rows = postprocess(rows)
+
         dataset = Dataset.from_list(rows)
 
         if needs_annotation:
@@ -606,7 +611,9 @@ def align(
     ] = None,
     min_score: Annotated[
         float,
-        typer.Option("--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."),
+        typer.Option(
+            "--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."
+        ),
     ] = 0.0,
     jsonl: Annotated[
         bool,
@@ -660,13 +667,19 @@ def annotate(
     ] = False,
     src_lang: Annotated[
         Optional[str],
-        typer.Option("--src-lang", help="LASER language code for the source encoder (e.g. fra, eng). "
-                     "Inferred from --src when known; required for unrecognized fields."),
+        typer.Option(
+            "--src-lang",
+            help="LASER language code for the source encoder (e.g. fra, eng). "
+            "Inferred from --src when known; required for unrecognized fields.",
+        ),
     ] = None,
     tgt_lang: Annotated[
         Optional[str],
-        typer.Option("--tgt-lang", help="LASER language code for the target encoder (e.g. mos). "
-                     "Inferred from --tgt when known; required for unrecognized fields."),
+        typer.Option(
+            "--tgt-lang",
+            help="LASER language code for the target encoder (e.g. mos). "
+            "Inferred from --tgt when known; required for unrecognized fields.",
+        ),
     ] = None,
     comet_qe: Annotated[
         bool, typer.Option("--comet-qe", is_flag=True, help="Add COMET-QE translation quality score.")
@@ -692,8 +705,10 @@ def annotate(
         lang_id = consistency = quality_warn = laser_score = comet_qe = True
 
     if not any([lang_id, consistency, quality_warn, laser_score, comet_qe]):
-        _err("No annotation flags specified. Pass at least one of: --lang-id, --consistency, "
-             "--quality-warn, --laser-score, --comet-qe.")
+        _err(
+            "No annotation flags specified. Pass at least one of: --lang-id, --consistency, "
+            "--quality-warn, --laser-score, --comet-qe."
+        )
         raise typer.Exit(1)
 
     dataset = _ann.load_data(input)
@@ -716,6 +731,85 @@ def annotate(
         dataset = dataset.remove_columns(["identification_consistency"])
 
     _ann.save_data(dataset, output, private=hf_private)
+
+
+# ---------------------------------------------------------------------------
+# clean-lexicon
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="clean-lexicon")
+def clean_lexicon(
+    input: Annotated[
+        Path,
+        typer.Option(
+            "--input",
+            "-i",
+            exists=True,
+            dir_okay=False,
+            help="Lexicon JSONL file to clean (modified in-place).",
+        ),
+    ],
+    split_synonyms: Annotated[
+        bool,
+        typer.Option(
+            "--split-synonyms",
+            is_flag=True,
+            help=(
+                "Explode comma/semicolon-separated synonym entries into one row per pair. "
+                "Warns when Moore contains a comma (parsing issue) or FR/EN counts mismatch."
+            ),
+        ),
+    ] = False,
+    strip_proverb_notes: Annotated[
+        bool,
+        typer.Option(
+            "--strip-proverb-notes",
+            is_flag=True,
+            help=(
+                "Remove parenthetical proverb explanations — e.g. '(Proverbe: …)' — "
+                "and leading labels such as 'Proverbe :' from french and english fields. "
+                "len_ratio is recalculated when present."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Clean a lexicon JSONL file in-place.
+
+    [bold]Split synonyms:[/bold]
+        moore-web clean-lexicon -i lexicon.jsonl --split-synonyms
+
+    [bold]Strip proverb notes:[/bold]
+        moore-web clean-lexicon -i lexicon.jsonl --strip-proverb-notes
+
+    [bold]Both:[/bold]
+        moore-web clean-lexicon -i lexicon.jsonl --split-synonyms --strip-proverb-notes
+    """
+    if not split_synonyms and not strip_proverb_notes:
+        _err("No flags specified. Pass --split-synonyms and/or --strip-proverb-notes.")
+        raise typer.Exit(1)
+
+    from moore_web.clean_lexicon import process as _clean
+
+    with open(input, encoding="utf-8") as fh:
+        entries = [json.loads(line) for line in fh if line.strip()]
+
+    output, n_split, n_proverb = _clean(
+        entries=entries,
+        split_synonyms=split_synonyms,
+        strip_proverb_notes=strip_proverb_notes,
+    )
+
+    with open(input, "w", encoding="utf-8") as fh:
+        for e in output:
+            fh.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+    typer.echo(f"Input:  {len(entries)} entries")
+    if split_synonyms:
+        typer.echo(f"Split:  +{n_split} entries from synonym lists")
+    if strip_proverb_notes:
+        typer.echo(f"Stripped proverb notes: {n_proverb} entries")
+    typer.echo(f"Output: {len(output)} entries → {input}")
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +853,9 @@ def e2e(
     ] = True,
     min_score: Annotated[
         float,
-        typer.Option("--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."),
+        typer.Option(
+            "--min-laser-score", min=0.0, max=1.0, help="Drop pairs below this LASER cosine similarity."
+        ),
     ] = 0.0,
     lang_id: Annotated[
         bool,
@@ -799,15 +895,21 @@ def e2e(
     ] = False,
     add_consistency: Annotated[
         bool,
-        typer.Option("--add-consistency", is_flag=True, help="Annotate aligned output with identification_consistency."),
+        typer.Option(
+            "--add-consistency", is_flag=True, help="Annotate aligned output with identification_consistency."
+        ),
     ] = False,
     add_quality_warn: Annotated[
         bool,
-        typer.Option("--add-quality-warn", is_flag=True, help="Annotate aligned output with quality_warnings."),
+        typer.Option(
+            "--add-quality-warn", is_flag=True, help="Annotate aligned output with quality_warnings."
+        ),
     ] = False,
     add_laser_score: Annotated[
         bool,
-        typer.Option("--add-laser-score", is_flag=True, help="Annotate aligned output with LASER similarity."),
+        typer.Option(
+            "--add-laser-score", is_flag=True, help="Annotate aligned output with LASER similarity."
+        ),
     ] = False,
     add_comet_qe: Annotated[
         bool,
@@ -821,6 +923,22 @@ def e2e(
         bool,
         typer.Option("--hf-private", is_flag=True, help="Push to HuggingFace as private dataset."),
     ] = False,
+    split_synonyms: Annotated[
+        bool,
+        typer.Option(
+            "--split-synonyms",
+            is_flag=True,
+            help="(simple only) Explode comma/semicolon-separated synonym entries into one row per pair.",
+        ),
+    ] = False,
+    strip_proverb_notes: Annotated[
+        bool,
+        typer.Option(
+            "--strip-proverb-notes",
+            is_flag=True,
+            help="(simple only) Strip parenthetical proverb explanations and leading 'Proverbe :' labels.",
+        ),
+    ] = False,
 ) -> None:
     """End-to-end pipeline: parse → flatten → align.
 
@@ -832,6 +950,33 @@ def e2e(
     """
     if do_annotate:
         add_lang_id = add_consistency = add_quality_warn = add_laser_score = add_comet_qe = True
+
+    if (split_synonyms or strip_proverb_notes) and source != Source.simple:
+        _err("--split-synonyms / --strip-proverb-notes are only supported for --source simple.")
+        raise typer.Exit(1)
+
+    if (split_synonyms or strip_proverb_notes) and output and str(output).startswith("hf://"):
+        _err("--split-synonyms / --strip-proverb-notes are not supported with HuggingFace output.")
+        raise typer.Exit(1)
+
+    _postprocess_entries: Callable[[list[dict]], list[dict]] | None = None
+    _postprocess_examples: Callable[[list[dict]], list[dict]] | None = None
+    if split_synonyms or strip_proverb_notes:
+        from moore_web.clean_lexicon import process as _clean
+
+        if split_synonyms:
+
+            def _postprocess_entries(rows: list[dict]) -> list[dict]:  # type: ignore[misc]
+                cleaned, n_split, _ = _clean(rows, split_synonyms=True, strip_proverb_notes=False)
+                typer.echo(f"      clean: +{n_split} entries from synonym splitting")
+                return cleaned
+
+        if strip_proverb_notes:
+
+            def _postprocess_examples(rows: list[dict]) -> list[dict]:  # type: ignore[misc]
+                cleaned, _, n_proverb = _clean(rows, split_synonyms=False, strip_proverb_notes=True)
+                typer.echo(f"      clean: {n_proverb} proverb notes stripped")
+                return cleaned
 
     _ann_kwargs: dict = dict(
         add_lang_id=add_lang_id,
@@ -946,7 +1091,7 @@ def e2e(
             pages = parse_doc(doc)
         typer.echo("[2/2] Flattening…")
 
-        def _write_simple(inc_examples: bool, inc_entries: bool, dest) -> None:
+        def _write_simple(inc_examples: bool, inc_entries: bool, dest, postprocess=None) -> None:
             p = flatten_simple_parser(pages, include_examples=inc_examples, include_entries=inc_entries)
             typer.echo(f"      FR: {len(p.french)}  MO: {len(p.moore)}  EN: {len(p.english)}  → {dest}")
             a = AlignedCorpus(
@@ -956,15 +1101,24 @@ def e2e(
                 scores=[1.0] * len(p.french),
                 source=p.source,
             )
-            _finalize_aligned(a, dest, jsonl, **_ann_kwargs)
+            _finalize_aligned(a, dest, jsonl, postprocess=postprocess, **_ann_kwargs)
 
         out = output or _default_output(input, f"_aligned{_ext}")
         if entries_output is not None:
             # Parse once, write examples and entries to separate files.
-            _write_simple(inc_examples=True, inc_entries=False, dest=out)
-            _write_simple(inc_examples=False, inc_entries=True, dest=entries_output)
+            _write_simple(inc_examples=True, inc_entries=False, dest=out, postprocess=_postprocess_examples)
+            _write_simple(
+                inc_examples=False, inc_entries=True, dest=entries_output, postprocess=_postprocess_entries
+            )
         else:
-            _write_simple(inc_examples=examples, inc_entries=entries, dest=out)
+            # Single output — pick the right hook based on what is being written
+            if entries and not examples:
+                _postprocess = _postprocess_entries
+            elif examples and not entries:
+                _postprocess = _postprocess_examples
+            else:
+                _postprocess = None  # mixed output, skip cleaning
+            _write_simple(inc_examples=examples, inc_entries=entries, dest=out, postprocess=_postprocess)
         return
 
     elif source == Source.conseils:
