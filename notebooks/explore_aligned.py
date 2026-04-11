@@ -16,7 +16,7 @@ Run with:
 
 import marimo
 
-__generated_with = "0.22.4"
+__generated_with = "0.23.0"
 app = marimo.App(width="medium", app_title="Aligned Corpus Explorer")
 
 
@@ -35,7 +35,7 @@ def _():
 @app.cell
 def _(mo):
     file_path_input = mo.ui.text(
-        value="sida_aligned_with_qe.jsonl/sida_aligned.jsonl",
+        value="final_data_hf/conseils_ministres_aligned.jsonl",
         label="Aligned JSON path",
         placeholder="aligned.jsonl",
         full_width=True,
@@ -60,7 +60,7 @@ def _(Path, file_path_input, mo, pd):
 
 @app.cell
 def _(df, mo, source):
-    _sc = df["score"]
+    _sc = df["laser_score"]
     mo.hstack(
         [
             mo.stat(label="Pairs", value=str(len(df)), bordered=True),
@@ -77,7 +77,7 @@ def _(df, mo, source):
 
 @app.cell
 def _(df, mo):
-    _sc = df["score"]
+    _sc = df["laser_score"]
     threshold_slider = mo.ui.slider(
         start=float(_sc.min()),
         stop=float(_sc.max()),
@@ -94,7 +94,7 @@ def _(df, mo):
 @app.cell
 def _(df, mo, mticker, plt, threshold_slider):
     fig, ax = plt.subplots(figsize=(8, 3.5))
-    ax.hist(df["score"], bins=40, color="#4C72B0", edgecolor="white", linewidth=0.4)
+    ax.hist(df["laser_score"], bins=40, color="#4C72B0", edgecolor="white", linewidth=0.4)
     ax.axvline(
         threshold_slider.value,
         color="#DD4444",
@@ -114,12 +114,11 @@ def _(df, mo, mticker, plt, threshold_slider):
 
 @app.cell
 def _(df, mo, plt, threshold_slider):
-    _filtered = df[df["score"] >= threshold_slider.value]
+    _filtered = df[df["laser_score"] >= threshold_slider.value]
 
     fig2, ax2 = plt.subplots(figsize=(7, 4))
-    sc2 = ax2.scatter(
-        _filtered["fr_len"],
-        _filtered["mo_len"],
+    sc2 = ax2.lines(
+        _filtered["len_ratio"],
         c=_filtered["laser_score"],
         cmap="RdYlGn",
         alpha=0.55,
@@ -142,7 +141,7 @@ def _(df, mo, plt, threshold_slider):
 @app.cell
 def _(df, mo, pd):
     _pcts = [10, 25, 50, 75, 90, 95, 99]
-    _rows = [{"Percentile": f"p{p}", "Score": f"{df['score'].quantile(p / 100):.4f}"} for p in _pcts]
+    _rows = [{"Percentile": f"p{p}", "Score": f"{df['laser_score'].quantile(p / 100):.4f}"} for p in _pcts]
     mo.md("### Score percentiles"), mo.ui.table(pd.DataFrame(_rows), pagination=False, selection=None)
     return
 
@@ -180,10 +179,11 @@ def _(df, mo):
     _low = (
         df[df["laser_score"] < _cutoff]
         .sort_values("laser_score")
-        .reset_index(drop=True)[["laser_score", "french", "moore"]]
+        .reset_index(drop=True)[["laser_score", "french", "moore", "comet_qe"]]
         .copy()
     )
     _low["laser_score"] = _low["laser_score"].map("{:.4f}".format)
+    _low["comet_qe"] = _low["comet_qe"].map("{:.4f}".format)
 
     mo.vstack(
         [
