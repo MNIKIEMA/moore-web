@@ -257,14 +257,25 @@ def flatten_sida_book(
                 if mo_raw:
                     result.moore.append(normalize_mo(mo_raw))
 
-        # Chapter 5 enum items: title + body as a single text unit
-        # TODO: maybe segment?
+        # Chapter 5 enum items: title as its own unit, body segmented into sentences
         for enum in chapter.enums:
-            fr = _join_lines(f"{enum.french_title} {enum.french_text}")
-            mo = _join_lines(f"{enum.moore_title} {enum.moore_text}")
-            if fr and mo:
-                result.french.append(normalize_fr(fr))
-                result.moore.append(normalize_mo(mo))
+            fr_title = normalize_fr(_join_lines(enum.french_title))
+            mo_title = normalize_mo(_join_lines(enum.moore_title))
+            if fr_title:
+                result.french.append(fr_title)
+            if mo_title:
+                result.moore.append(mo_title)
+
+            fr_body = _join_lines(enum.french_text)
+            mo_body = _join_lines(enum.moore_text)
+            if segment:
+                result.french.extend(normalize_fr(s) for s in segment_fr(fr_body) if s)
+                result.moore.extend(normalize_mo(s) for s in segment_mo(mo_body) if s)
+            else:
+                if fr_body:
+                    result.french.append(normalize_fr(fr_body))
+                if mo_body:
+                    result.moore.append(normalize_mo(mo_body))
 
     return result
 
