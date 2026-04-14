@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Callable, Optional
+from typing import Annotated, Callable, Optional, cast
 
 import msgspec
 import typer
@@ -42,6 +42,7 @@ class Source(str, Enum):
     news = "news"
     simple = "simple"
     conseils = "conseils"
+    digital = "digital"
 
 
 class KadeLang(str, Enum):
@@ -139,6 +140,11 @@ def _finalize_aligned(
 
         if postprocess:
             rows = postprocess(rows)
+
+        # Drop laser_score entirely when every value is None (e.g. definition pairs).
+        if rows and all(r["laser_score"] is None for r in rows):
+            for r in rows:
+                del r["laser_score"]
 
         dataset = Dataset.from_list(rows)
 
@@ -878,6 +884,24 @@ def e2e(
             help="Write entries to a separate file (simple only). Avoids parsing the PDF twice.",
         ),
     ] = None,
+    terms: Annotated[
+        bool,
+        typer.Option("--terms/--no-terms", help="Include term pairs fr_term/mos_term (digital only)."),
+    ] = True,
+    definitions: Annotated[
+        bool,
+        typer.Option(
+            "--definitions/--no-definitions",
+            help="Include definition pairs fr_definition/mos_definition (digital only).",
+        ),
+    ] = False,
+    definitions_output: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--definitions-output",
+            help="Write definition pairs to a separate file (digital only). Avoids parsing the PDFs twice.",
+        ),
+    ] = None,
     drop_duplicate: Annotated[
         bool,
         typer.Option(
@@ -942,11 +966,13 @@ def e2e(
 ) -> None:
     """End-to-end pipeline: parse → flatten → align.
 
-    [bold]sida:[/bold]    moore-web e2e -s sida -i book.pdf -o aligned.json
-    [bold]kade:[/bold]    moore-web e2e -s kade --fr-input fr.pdf --mo-input mo.pdf -o aligned.json
-    [bold]news:[/bold]    moore-web e2e -s news -i corpus.json -o aligned.json
-    [bold]simple:[/bold]  moore-web e2e -s simple -i dict.pdf -o aligned.json
-    [bold]HF output:[/bold] moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
+    [bold]sida:[/bold]              moore-web e2e -s sida -i book.pdf -o aligned.json
+    [bold]kade:[/bold]              moore-web e2e -s kade --fr-input fr.pdf --mo-input mo.pdf -o aligned.json
+    [bold]news:[/bold]              moore-web e2e -s news -i corpus.json -o aligned.json
+    [bold]simple:[/bold]            moore-web e2e -s simple -i dict.pdf -o aligned.json
+    [bold]digital (terms):[/bold]   moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --jsonl
+    [bold]digital (both):[/bold]    moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --definitions-output defs.jsonl --jsonl --add-laser-score --add-comet-qe --add-quality-warn
+    [bold]HF output:[/bold]         moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
     if do_annotate:
         add_lang_id = add_consistency = add_quality_warn = add_laser_score = add_comet_qe = True
@@ -957,6 +983,10 @@ def e2e(
 
     if (split_synonyms or strip_proverb_notes) and output and str(output).startswith("hf://"):
         _err("--split-synonyms / --strip-proverb-notes are not supported with HuggingFace output.")
+        raise typer.Exit(1)
+
+    if (terms is False or definitions or definitions_output is not None) and source != Source.digital:
+        _err("--terms / --definitions / --definitions-output are only supported for --source digital.")
         raise typer.Exit(1)
 
     _postprocess_entries: Callable[[list[dict]], list[dict]] | None = None
@@ -1169,6 +1199,77 @@ def e2e(
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
+        return
+
+    elif source == Source.digital:
+        if fr_input is None or mo_input is None:
+            _err("--fr-input (French lexique PDF) and --mo-input (Mooré glossaire PDF) are required for --source digital.")
+            raise typer.Exit(1)
+
+        from moore_web.flatten import AlignedCorpus
+        from moore_web.glossary_parser import (
+            align_glossaries,
+            extract_french_tables,
+            extract_moore_tables,
+        )
+
+        typer.echo("[1/2] Extracting glossary tables…")
+        moore_entries = extract_moore_tables(str(mo_input))
+        typer.echo(f"      Mooré entries : {len(moore_entries)}")
+        french_entries = extract_french_tables(str(fr_input))
+        typer.echo(f"      French entries: {len(french_entries)}")
+
+        typer.echo("[2/2] Aligning…")
+        pairs = align_glossaries(moore_entries, french_entries)
+        if moore_entries:
+            typer.echo(f"      Matched: {len(pairs)} / {len(moore_entries)} ({len(pairs)/len(moore_entries)*100:.1f}%)")
+
+        def _write_digital(inc_terms: bool, inc_definitions: bool, dest) -> None:
+            _Scores = list[float | None]
+
+            if inc_terms and not inc_definitions:
+                valid = [p for p in pairs if p.fr_term and p.mos_term]
+                fr_texts = [p.fr_term for p in valid]
+                mo_texts = [p.mos_term for p in valid]
+                # Terms are aligned by exact key match → score 1.0 is appropriate.
+                scores = cast(_Scores, [1.0] * len(fr_texts))
+                label = "digital-term"
+            elif inc_definitions and not inc_terms:
+                valid = [p for p in pairs if p.fr_definition and p.mos_definition]
+                fr_texts = [p.fr_definition for p in valid]
+                mo_texts = [p.mos_definition for p in valid]
+                # Definitions are structurally paired (same glossary entry) but not
+                # alignment-scored; use None to signal the score is absent.
+                scores = cast(_Scores, [None] * len(fr_texts))
+                label = "digital-term-definition"
+            else:
+                term_pairs = [p for p in pairs if p.fr_term and p.mos_term]
+                def_pairs = [p for p in pairs if p.fr_definition and p.mos_definition]
+                fr_texts = [p.fr_term for p in term_pairs] + [p.fr_definition for p in def_pairs]
+                mo_texts = [p.mos_term for p in term_pairs] + [p.mos_definition for p in def_pairs]
+                scores = cast(_Scores, [1.0] * len(term_pairs) + [None] * len(def_pairs))
+                label = "digital"
+            a = AlignedCorpus(
+                french=fr_texts,
+                moore=mo_texts,
+                scores=scores,
+                source=label,
+            )
+            # Terms are exact key matches — LASER/COMET-QE add no information.
+            ann = _ann_kwargs if not (inc_terms and not inc_definitions) else {
+                **_ann_kwargs,
+                "add_laser_score": False,
+                "add_comet_qe": False,
+            }
+            typer.echo(f"      FR: {len(fr_texts)}  MO: {len(mo_texts)}  → {dest}")
+            _finalize_aligned(a, dest, jsonl, **ann)
+
+        out = output or fr_input.with_name(f"digital_aligned{_ext}")
+        if definitions_output is not None:
+            _write_digital(inc_terms=True, inc_definitions=False, dest=out)
+            _write_digital(inc_terms=False, inc_definitions=True, dest=definitions_output)
+        else:
+            _write_digital(inc_terms=terms, inc_definitions=definitions, dest=out)
         return
 
     typer.echo(f"      FR: {len(parallel.french)} sentences  MO: {len(parallel.moore)} sentences")

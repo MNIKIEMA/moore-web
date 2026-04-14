@@ -10,6 +10,8 @@ One dataset, one config (subset) per source:
     load_dataset("MNIKIEMA/moore-fr-mo", name="sida")
     load_dataset("MNIKIEMA/moore-fr-mo", name="sida-facilitateur")
     load_dataset("MNIKIEMA/moore-fr-mo", name="lexicon")
+    load_dataset("MNIKIEMA/moore-fr-mo", name="digital-terms")   # glossary term pairs
+    load_dataset("MNIKIEMA/moore-fr-mo", name="digital-defs")    # glossary definition pairs
 
 Each record:
     {
@@ -49,6 +51,8 @@ SOURCES: dict[str, str] = {
     "sida-facilitateur": "final_data_hf/sida-facilitateur_aligned.jsonl",
     "lexicon": "final_data_hf/lexicon.jsonl",
     "lexicon-entries": "final_data_hf/lexicon_entries.jsonl",
+    "digital-terms": "final_data_hf/digital-terms.jsonl",
+    "digital-defs": "final_data_hf/digital-defs.jsonl",
 }
 
 # Sources that carry English translations
