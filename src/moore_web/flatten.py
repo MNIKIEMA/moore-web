@@ -92,23 +92,23 @@ class AlignedCorpus(ParallelText):
     def to_jsonl_rows(self) -> list[dict]:
         """Return one dict per aligned pair, ready to write as JSONL."""
         has_english = bool(self.english)
+        omit_score = all(s is None for s in self.scores)
+
+        def _row(french: str, moore: str, score: float | None, english: str | None = None) -> dict:
+            r: dict = {"french": french, "moore": moore}
+            if english is not None:
+                r["english"] = english
+            if not omit_score:
+                r["laser_score"] = round(score, 4) if score is not None else None
+            r["source"] = self.source
+            return r
+
         if has_english:
             return [
-                {
-                    "french": french,
-                    "moore": moore,
-                    "english": english,
-                    "laser_score": round(score, 4),
-                    "source": self.source,
-                }
-                for i, (french, moore, english, score) in enumerate(
-                    zip(self.french, self.moore, self.english, self.scores)
-                )
+                _row(f, m, s, en)
+                for f, m, s, en in zip(self.french, self.moore, self.scores, self.english)
             ]
-        return [
-            {"french": french, "moore": moore, "laser_score": round(score, 4), "source": self.source}
-            for french, moore, score in zip(self.french, self.moore, self.scores)
-        ]
+        return [_row(f, m, s) for f, m, s in zip(self.french, self.moore, self.scores)]
 
     def write_jsonl(self, path: str) -> None:
         """Write aligned pairs to a JSONL file."""

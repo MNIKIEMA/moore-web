@@ -12,6 +12,8 @@ Moore-web collection (local JSONL files under ``--data-dir``):
   raamde_aligned.jsonl              news            3 915  yes
   sida_aligned.jsonl                sida              216  yes
   sida-facilitateur_aligned.jsonl   kade              674  yes
+  digital-terms.jsonl               digital-terms    ~300  no  (glossary terms)
+  digital-defs.jsonl                digital-defs     ~300  yes
 
 mafand-fr-mos (``--mafand-repo``, default: ``madoss/mafand-fr-mos``):
   The existing train / validation / test splits are used directly.
@@ -67,11 +69,13 @@ _LOCAL_FILES: list[tuple[str, str]] = [
     ("raamde_aligned.jsonl", "news"),
     ("sida_aligned.jsonl", "sida"),
     ("sida-facilitateur_aligned.jsonl", "kade"),
+    ("digital-terms.jsonl", "digital-terms"),
+    ("digital-defs.jsonl", "digital-defs"),
 ]
 
-# Sources excluded from dev/test by default (raw dictionary entries are
-# not representative sentence pairs).
-_DEFAULT_TRAIN_ONLY: tuple[str, ...] = ("lexicon_entries",)
+# Sources excluded from dev/test by default (raw dictionary entries or
+# short keyword pairs not representative of sentence-level translation).
+_DEFAULT_TRAIN_ONLY: tuple[str, ...] = ("lexicon_entries", "digital-terms")
 
 
 # ---------------------------------------------------------------------------

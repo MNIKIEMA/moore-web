@@ -141,6 +141,11 @@ def _finalize_aligned(
         if postprocess:
             rows = postprocess(rows)
 
+        # Drop laser_score entirely when every value is None (e.g. definition pairs).
+        if rows and all(r["laser_score"] is None for r in rows):
+            for r in rows:
+                del r["laser_score"]
+
         dataset = Dataset.from_list(rows)
 
         if needs_annotation:
@@ -1246,8 +1251,14 @@ def e2e(
                 scores=scores,
                 source=label,
             )
+            # Terms are exact key matches — LASER/COMET-QE add no information.
+            ann = _ann_kwargs if not (inc_terms and not inc_definitions) else {
+                **_ann_kwargs,
+                "add_laser_score": False,
+                "add_comet_qe": False,
+            }
             typer.echo(f"      FR: {len(fr_texts)}  MO: {len(mo_texts)}  → {dest}")
-            _finalize_aligned(a, dest, jsonl, **_ann_kwargs)
+            _finalize_aligned(a, dest, jsonl, **ann)
 
         out = output or fr_input.with_name(f"digital_aligned{_ext}")
         if definitions_output is not None:
