@@ -146,6 +146,21 @@ def _normalize_key(text: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
+def _fix_moore_hyphens(text: str) -> str:
+    """Remove spurious spaces around hyphens in Mooré compound words.
+
+    PDF extraction inserts whitespace at cell line-breaks, splitting
+    compound words like ``tʋʋm-teed`` into ``tʋʋm- teed``.
+    Fix: collapse any whitespace immediately after (or before) a hyphen
+    that sits between two word characters.
+    """
+    # space(s) after hyphen:  "tʋʋm- teed"  → "tʋʋm-teed"
+    text = re.sub(r"(?<=\w)-\s+(?=\w)", "-", text)
+    # space(s) before hyphen: "tʋʋm -teed"  → "tʋʋm-teed"
+    text = re.sub(r"(?<=\w)\s+-(?=\w)", "-", text)
+    return text
+
+
 def _is_header_row(row: list[str], keywords: set[str]) -> bool:
     joined = " ".join(row)
     return any(kw in joined for kw in keywords)
@@ -188,7 +203,12 @@ def _parse_moore_row(row: list[str], ncols: int) -> MooreEntry | None:
     if not mos_term and not fr_term:
         return None
 
-    return MooreEntry(num=num, fr_term=fr_term, mos_term=mos_term, mos_definition=mos_def)
+    return MooreEntry(
+        num=num,
+        fr_term=fr_term,
+        mos_term=_fix_moore_hyphens(mos_term),
+        mos_definition=_fix_moore_hyphens(mos_def),
+    )
 
 
 def extract_moore_tables(pdf_path: str = MOORE_PDF) -> list[MooreEntry]:

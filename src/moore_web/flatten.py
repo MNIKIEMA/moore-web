@@ -70,7 +70,7 @@ class AlignedCorpus(ParallelText):
     ``__post_init__`` enforces the length invariant.
     """
 
-    scores: list[float] = msgspec.field(default_factory=list)
+    scores: list[float | None] = msgspec.field(default_factory=list)
 
     def __post_init__(self) -> None:
         n_fr, n_mo, n_sc = len(self.french), len(self.moore), len(self.scores)

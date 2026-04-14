@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Callable, Optional
+from typing import Annotated, Callable, Optional, cast
 
 import msgspec
 import typer
@@ -1220,22 +1220,30 @@ def e2e(
             typer.echo(f"      Matched: {len(pairs)} / {len(moore_entries)} ({len(pairs)/len(moore_entries)*100:.1f}%)")
 
         def _write_digital(inc_terms: bool, inc_definitions: bool, dest) -> None:
+            _Scores = list[float | None]
+
             if inc_terms and not inc_definitions:
                 fr_texts = [p.fr_term for p in pairs]
                 mo_texts = [p.mos_term for p in pairs]
+                # Terms are aligned by exact key match → score 1.0 is appropriate.
+                scores = cast(_Scores, [1.0] * len(fr_texts))
                 label = "digital-term"
             elif inc_definitions and not inc_terms:
                 fr_texts = [p.fr_definition for p in pairs]
                 mo_texts = [p.mos_definition for p in pairs]
+                # Definitions are structurally paired (same glossary entry) but not
+                # alignment-scored; use None to signal the score is absent.
+                scores = cast(_Scores, [None] * len(fr_texts))
                 label = "digital-term-definition"
             else:
                 fr_texts = [p.fr_term for p in pairs] + [p.fr_definition for p in pairs]
                 mo_texts = [p.mos_term for p in pairs] + [p.mos_definition for p in pairs]
+                scores = cast(_Scores, [1.0] * len(pairs) + [None] * len(pairs))
                 label = "digital"
             a = AlignedCorpus(
                 french=fr_texts,
                 moore=mo_texts,
-                scores=[1.0] * len(fr_texts),
+                scores=scores,
                 source=label,
             )
             typer.echo(f"      FR: {len(fr_texts)}  MO: {len(mo_texts)}  → {dest}")
