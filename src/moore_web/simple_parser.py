@@ -67,7 +67,7 @@ EXTRA_FIELDS_BETTER = [
 
 
 GRAMMAR_PATTERN = (
-    r"part\.gram|expr\.|indéf\.|num|n\.pl|interj|aux|<Not Sure>|"
+    r"part\.gram|expr\.|indéf\.|num|n\.pl|interj|aux|<Not\ Sure>|"
     r"n\.propre|postpos|Verbe|adj|n\b|v(?::Any)?|dém|Nom|inter\.|"
     r"Adjectif|verbe\.it|v\.inacc|conj|pron|adv"
 )
