@@ -289,6 +289,7 @@ def annotate_warnings(
 
     batch["quality_warnings"] = quality_warnings
     batch["identification_consistency"] = id_consistency
+    return batch
 
 
 def annotate_len_ratio(
