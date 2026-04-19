@@ -251,8 +251,6 @@ def annotate_warnings(
     ``identification_consistency`` is a float in [0, 1]: fraction of Mooré
     tokens that do NOT appear in the foreign (French/English) word list.
 
-    ``len_ratio`` is a float in [0, 1]: min(len(src), len(tgt)) / max(len(src), len(tgt)).
-
     Args:
         batch:            Batched dict of column lists.
         foreign_wordlist: Set of foreign tokens to check against.
@@ -265,7 +263,6 @@ def annotate_warnings(
 
     quality_warnings = []
     id_consistency = []
-    len_ratios = []
 
     for i in range(n):
         src = src_texts[i] or ""
@@ -289,11 +286,33 @@ def annotate_warnings(
 
         quality_warnings.append(warnings)
         id_consistency.append(_lang_consistency_score(tgt, foreign_wordlist))
-        len_ratios.append(_len_ratio(src, tgt))
 
     batch["quality_warnings"] = quality_warnings
     batch["identification_consistency"] = id_consistency
-    batch["len_ratio"] = len_ratios
+    return batch
+
+
+def annotate_len_ratio(
+    batch: dict[str, list],
+    src_col: str = _COL_ENG,
+    tgt_col: str = _COL_MOS,
+) -> dict[str, list]:
+    """Add ``len_ratio`` column: ``min(len(src), len(tgt)) / max(len(src), len(tgt))``.
+
+    A ratio close to 1.0 means the two sentences are similar in character length.
+    Returns 0.0 when either side is empty.
+
+    Args:
+        batch:   Batched dict of column lists.
+        src_col: Column name for the source text (default: ``"eng_Latn"``).
+        tgt_col: Column name for the target text (default: ``"mos_Latn"``).
+    """
+    src_texts = batch[src_col]
+    tgt_texts = batch[tgt_col]
+    batch["len_ratio"] = [
+        _len_ratio(src or "", tgt or "") for src, tgt in zip(src_texts, tgt_texts)
+    ]
+    return batch
 
     return batch
 

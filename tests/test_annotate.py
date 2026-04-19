@@ -18,6 +18,7 @@ from moore_web.annotate import (
     run_comet_qe,
     run_lang_id,
     run_laser,
+    run_len_ratio,
     run_quality_warnings,
     save_data,
 )
@@ -151,10 +152,6 @@ class TestRunQualityWarnings:
         result = run_quality_warnings(small_dataset, load_wordlists=False)
         assert "identification_consistency" in result.column_names
 
-    def test_adds_len_ratio_column(self, small_dataset: Dataset):
-        result = run_quality_warnings(small_dataset, load_wordlists=False)
-        assert "len_ratio" in result.column_names
-
     def test_preserves_original_columns(self, small_dataset: Dataset):
         result = run_quality_warnings(small_dataset, load_wordlists=False)
         assert "french" in result.column_names
@@ -170,22 +167,6 @@ class TestRunQualityWarnings:
         result = run_quality_warnings(small_dataset, load_wordlists=False)
         for score in result["identification_consistency"]:
             assert 0.0 <= score <= 1.0
-
-    def test_len_ratio_in_range(self, small_dataset: Dataset):
-        result = run_quality_warnings(small_dataset, load_wordlists=False)
-        for ratio in result["len_ratio"]:
-            assert 0.0 <= ratio <= 1.0
-
-    def test_len_ratio_symmetric(self):
-        ds = Dataset.from_list(
-            [
-                {"french": "ab", "moore": "abcd"},
-                {"french": "abcd", "moore": "ab"},
-            ]
-        )
-        result = run_quality_warnings(ds, load_wordlists=False)
-        assert result["len_ratio"][0] == result["len_ratio"][1]
-        assert result["len_ratio"][0] == pytest.approx(0.5)
 
     def test_custom_field_names(self):
         ds = Dataset.from_list([{"src": "Bonjour", "tgt": "Yibeogo"}])
@@ -208,6 +189,42 @@ class TestRunQualityWarnings:
     def test_row_count_unchanged(self, small_dataset: Dataset):
         result = run_quality_warnings(small_dataset, load_wordlists=False)
         assert len(result) == len(small_dataset)
+
+
+# ---------------------------------------------------------------------------
+# run_len_ratio
+# ---------------------------------------------------------------------------
+
+
+class TestRunLenRatio:
+    def test_adds_len_ratio_column(self, small_dataset: Dataset):
+        result = run_len_ratio(small_dataset)
+        assert "len_ratio" in result.column_names
+
+    def test_len_ratio_in_range(self, small_dataset: Dataset):
+        result = run_len_ratio(small_dataset)
+        for ratio in result["len_ratio"]:
+            assert 0.0 <= ratio <= 1.0
+
+    def test_len_ratio_symmetric(self):
+        ds = Dataset.from_list(
+            [
+                {"french": "ab", "moore": "abcd"},
+                {"french": "abcd", "moore": "ab"},
+            ]
+        )
+        result = run_len_ratio(ds)
+        assert result["len_ratio"][0] == result["len_ratio"][1]
+        assert result["len_ratio"][0] == pytest.approx(0.5)
+
+    def test_preserves_original_columns(self, small_dataset: Dataset):
+        result = run_len_ratio(small_dataset)
+        assert "french" in result.column_names
+        assert "moore" in result.column_names
+
+    def test_does_not_add_quality_warnings(self, small_dataset: Dataset):
+        result = run_len_ratio(small_dataset)
+        assert "quality_warnings" not in result.column_names
 
 
 # ---------------------------------------------------------------------------

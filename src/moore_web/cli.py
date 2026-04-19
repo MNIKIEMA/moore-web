@@ -116,13 +116,14 @@ def _finalize_aligned(
     add_lang_id: bool,
     add_consistency: bool,
     add_quality_warn: bool,
+    add_len_ratio: bool,
     add_laser_score: bool,
     add_comet_qe: bool,
     postprocess: Callable[[list[dict]], list[dict]] | None = None,
 ) -> None:
     """Write aligned corpus, optionally annotating and/or pushing to HF Hub."""
     out_str = str(out)
-    needs_annotation = any([add_lang_id, add_consistency, add_quality_warn, add_laser_score, add_comet_qe])
+    needs_annotation = any([add_lang_id, add_consistency, add_quality_warn, add_len_ratio, add_laser_score, add_comet_qe])
     is_hf = out_str.startswith("hf://")
 
     if needs_annotation or is_hf or postprocess:
@@ -154,6 +155,7 @@ def _finalize_aligned(
                 lang_id=add_lang_id,
                 quality_warn=add_quality_warn,
                 consistency=add_consistency,
+                len_ratio=add_len_ratio,
                 laser=add_laser_score,
                 comet_qe=add_comet_qe,
             )
@@ -668,6 +670,9 @@ def annotate(
     quality_warn: Annotated[
         bool, typer.Option("--quality-warn", is_flag=True, help="Add quality_warnings list.")
     ] = False,
+    len_ratio: Annotated[
+        bool, typer.Option("--len-ratio", is_flag=True, help="Add len_ratio (character-length ratio).")
+    ] = False,
     laser_score: Annotated[
         bool, typer.Option("--laser-score", is_flag=True, help="Add LASER cosine similarity.")
     ] = False,
@@ -708,12 +713,12 @@ def annotate(
     from moore_web import annotate as _ann
 
     if all_annotations:
-        lang_id = consistency = quality_warn = laser_score = comet_qe = True
+        lang_id = consistency = quality_warn = len_ratio = laser_score = comet_qe = True
 
-    if not any([lang_id, consistency, quality_warn, laser_score, comet_qe]):
+    if not any([lang_id, consistency, quality_warn, len_ratio, laser_score, comet_qe]):
         _err(
             "No annotation flags specified. Pass at least one of: --lang-id, --consistency, "
-            "--quality-warn, --laser-score, --comet-qe."
+            "--quality-warn, --len-ratio, --laser-score, --comet-qe."
         )
         raise typer.Exit(1)
 
@@ -725,6 +730,7 @@ def annotate(
         lang_id=lang_id,
         quality_warn=quality_warn,
         consistency=consistency,
+        len_ratio=len_ratio,
         laser=laser_score,
         comet_qe=comet_qe,
         src_lang=src_lang,
@@ -929,6 +935,10 @@ def e2e(
             "--add-quality-warn", is_flag=True, help="Annotate aligned output with quality_warnings."
         ),
     ] = False,
+    add_len_ratio: Annotated[
+        bool,
+        typer.Option("--add-len-ratio", is_flag=True, help="Annotate aligned output with len_ratio."),
+    ] = False,
     add_laser_score: Annotated[
         bool,
         typer.Option(
@@ -975,7 +985,7 @@ def e2e(
     [bold]HF output:[/bold]         moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
     if do_annotate:
-        add_lang_id = add_consistency = add_quality_warn = add_laser_score = add_comet_qe = True
+        add_lang_id = add_consistency = add_quality_warn = add_len_ratio = add_laser_score = add_comet_qe = True
 
     if (split_synonyms or strip_proverb_notes) and source != Source.simple:
         _err("--split-synonyms / --strip-proverb-notes are only supported for --source simple.")
@@ -1012,6 +1022,7 @@ def e2e(
         add_lang_id=add_lang_id,
         add_consistency=add_consistency,
         add_quality_warn=add_quality_warn,
+        add_len_ratio=add_len_ratio,
         add_laser_score=add_laser_score,
         add_comet_qe=add_comet_qe,
         hf_private=hf_private,

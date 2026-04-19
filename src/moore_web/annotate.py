@@ -12,8 +12,8 @@ New columns per function
 - :func:`run_lang_id`          → ``{src}_glotlid_lang``, ``{src}_glotlid_prob``,
                                   ``{tgt}_glotlid_lang``, ``{tgt}_glotlid_prob``
                                   (column names derived from ``src_field`` / ``tgt_field``)
-- :func:`run_quality_warnings` → ``quality_warnings`` (list[str]), ``identification_consistency`` (float),
-                                  ``len_ratio`` (float)
+- :func:`run_quality_warnings` → ``quality_warnings`` (list[str]), ``identification_consistency`` (float)
+- :func:`run_len_ratio`        → ``len_ratio`` (float)
 - :func:`run_laser`            → ``laser_score`` (float)
 - :func:`run_comet_qe`         → ``comet_qe`` (float)
 
@@ -180,14 +180,13 @@ def run_quality_warnings(
 ):
     """Add quality-warning annotations to each row.
 
-    Adds three columns:
+    Adds two columns:
 
     - ``quality_warnings`` — list of active warning labels
       (``"emoji"``, ``"dots_asymmetry"``, ``"number_mismatch"``,
       ``"parenthesis_asymmetry"``, ``"bullet_asymmetry"``, ``"foreign_words"``).
     - ``identification_consistency`` — float in [0, 1]: fraction of target tokens
       absent from the foreign word list (higher = more Mooré-consistent).
-    - ``len_ratio`` — float in [0, 1]: ``min(len(src), len(tgt)) / max(len(src), len(tgt))``.
 
     Args:
         dataset:        Input ``datasets.Dataset``.
@@ -208,6 +207,41 @@ def run_quality_warnings(
         lambda batch: annotate_warnings(batch, foreign_wordlist, src_col=src_field, tgt_col=tgt_field),
         batched=True,
         desc="quality warnings",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Annotation: length ratio
+# ---------------------------------------------------------------------------
+
+
+def run_len_ratio(
+    dataset,
+    src_field: str = "french",
+    tgt_field: str = "moore",
+):
+    """Add character-length ratio between source and target sentences.
+
+    Adds one column:
+
+    - ``len_ratio`` — float in [0, 1]: ``min(len(src), len(tgt)) / max(len(src), len(tgt))``.
+      A value close to 1.0 means both sentences are similar in length; 0.0 when either is empty.
+
+    Args:
+        dataset:    Input ``datasets.Dataset``.
+        src_field:  Source column name (default: ``"french"``).
+        tgt_field:  Target column name (default: ``"moore"``).
+
+    Returns:
+        Annotated ``datasets.Dataset``.
+    """
+    from moore_web.filter_nllb import annotate_len_ratio
+
+    print(f"Annotating len_ratio ({len(dataset):,} rows)…")
+    return dataset.map(
+        lambda batch: annotate_len_ratio(batch, src_col=src_field, tgt_col=tgt_field),
+        batched=True,
+        desc="len_ratio",
     )
 
 
@@ -320,6 +354,7 @@ def annotate(
     lang_id: bool = False,
     quality_warn: bool = False,
     consistency: bool = False,
+    len_ratio: bool = False,
     laser: bool = False,
     comet_qe: bool = False,
     load_wordlists: bool = True,
@@ -341,6 +376,7 @@ def annotate(
         lang_id:           Add GlotLID language-ID columns.
         quality_warn:      Add ``quality_warnings`` column.
         consistency:       Add ``identification_consistency`` column.
+        len_ratio:         Add ``len_ratio`` column.
         laser:             Add ``laser_score`` column.
         comet_qe:          Add ``comet_qe`` column.
         load_wordlists:    Load foreign-word lists for quality-warning checks.
@@ -365,6 +401,9 @@ def annotate(
             tgt_field=tgt_field,
             load_wordlists=load_wordlists,
         )
+
+    if len_ratio:
+        dataset = run_len_ratio(dataset, src_field=src_field, tgt_field=tgt_field)
 
     if laser:
         laser_kwargs = {}
