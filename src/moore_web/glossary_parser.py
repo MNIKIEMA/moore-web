@@ -108,22 +108,22 @@ _HEADER_KEYWORDS_FRENCH = {"N°", "Mots", "clés", "Définitions"}
 # Typographic characters → plain ASCII equivalents
 _UNICODE_MAP = str.maketrans(
     {
-        "\u2018": "'",   # '  LEFT SINGLE QUOTATION MARK
-        "\u2019": "'",   # '  RIGHT SINGLE QUOTATION MARK  ← reported
-        "\u201a": "'",   # ‚  SINGLE LOW-9 QUOTATION MARK
-        "\u201b": "'",   # ‛  SINGLE HIGH-REVERSED-9 QUOTATION MARK
-        "\u201c": '"',   # "  LEFT DOUBLE QUOTATION MARK
-        "\u201d": '"',   # "  RIGHT DOUBLE QUOTATION MARK
-        "\u201e": '"',   # „  DOUBLE LOW-9 QUOTATION MARK
-        "\u2013": "-",   # –  EN DASH
-        "\u2014": "-",   # —  EM DASH
-        "\u2015": "-",   # ―  HORIZONTAL BAR
-        "\u2026": "...", # …  HORIZONTAL ELLIPSIS
-        "\u00a0": " ",   # non-breaking space
-        "\u202f": " ",   # narrow no-break space
-        "\u2009": " ",   # thin space
-        "\u00ab": '"',   # «  LEFT-POINTING DOUBLE ANGLE QUOTATION MARK
-        "\u00bb": '"',   # »  RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK
+        "\u2018": "'",  # '  LEFT SINGLE QUOTATION MARK
+        "\u2019": "'",  # '  RIGHT SINGLE QUOTATION MARK  ← reported
+        "\u201a": "'",  # ‚  SINGLE LOW-9 QUOTATION MARK
+        "\u201b": "'",  # ‛  SINGLE HIGH-REVERSED-9 QUOTATION MARK
+        "\u201c": '"',  # "  LEFT DOUBLE QUOTATION MARK
+        "\u201d": '"',  # "  RIGHT DOUBLE QUOTATION MARK
+        "\u201e": '"',  # „  DOUBLE LOW-9 QUOTATION MARK
+        "\u2013": "-",  # –  EN DASH
+        "\u2014": "-",  # —  EM DASH
+        "\u2015": "-",  # ―  HORIZONTAL BAR
+        "\u2026": "...",  # …  HORIZONTAL ELLIPSIS
+        "\u00a0": " ",  # non-breaking space
+        "\u202f": " ",  # narrow no-break space
+        "\u2009": " ",  # thin space
+        "\u00ab": '"',  # «  LEFT-POINTING DOUBLE ANGLE QUOTATION MARK
+        "\u00bb": '"',  # »  RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK
     }
 )
 
@@ -185,8 +185,8 @@ def _best_table(page, min_cols: int) -> list[list[str]] | None:
 
 MOORE_PDF = "Glossaire_des_termes_usuels_du_numerique_et_de_la_poste_en_Moore__valide.pdf"
 
-_MOORE_TEXT_PAGE_RANGE = (1, 3)   # 1-based inclusive
-_MOORE_SKIP_PAGES = {4}           # section header pages (1-based)
+_MOORE_TEXT_PAGE_RANGE = (1, 3)  # 1-based inclusive
+_MOORE_SKIP_PAGES = {4}  # section header pages (1-based)
 
 
 def _parse_moore_row(row: list[str], ncols: int) -> MooreEntry | None:
@@ -251,9 +251,9 @@ def extract_moore_text_segments(pdf_path: str = MOORE_PDF) -> list[TextSegment]:
 
 FRENCH_PDF = "Lexique_de_l_economie_numerique_et_des_postes.pdf"
 
-_FRENCH_TEXT_PAGE_RANGE = (1, 4)   # 1-based inclusive
-_FRENCH_SKIP_PAGES = {5}           # section header pages (1-based)
-_FRENCH_TABLE_LAST_PAGE = 86       # 1-based; pages 87-94 are appendices
+_FRENCH_TEXT_PAGE_RANGE = (1, 4)  # 1-based inclusive
+_FRENCH_SKIP_PAGES = {5}  # section header pages (1-based)
+_FRENCH_TABLE_LAST_PAGE = 86  # 1-based; pages 87-94 are appendices
 
 
 def extract_french_tables(pdf_path: str = FRENCH_PDF) -> list[FrenchEntry]:
@@ -318,9 +318,7 @@ def align_glossaries(
         Collapsing all whitespace before comparing catches these.
     """
     # Pass 1 index: normalised term → entry
-    fr_exact: dict[str, FrenchEntry] = {
-        _normalize_key(fe.fr_term): fe for fe in french_entries
-    }
+    fr_exact: dict[str, FrenchEntry] = {_normalize_key(fe.fr_term): fe for fe in french_entries}
 
     # Pass 2 index: normalised text-in-parens → entry
     fr_paren: dict[str, FrenchEntry] = {}
@@ -340,11 +338,7 @@ def align_glossaries(
             continue
 
         key = _normalize_key(me.fr_term)
-        fe = (
-            fr_exact.get(key)
-            or fr_paren.get(key)
-            or fr_nospace.get(re.sub(r"\s+", "", key))
-        )
+        fe = fr_exact.get(key) or fr_paren.get(key) or fr_nospace.get(re.sub(r"\s+", "", key))
         if fe:
             aligned.append(
                 AlignedEntry(
@@ -408,8 +402,10 @@ def parse_glossaries(
     aligned = align_glossaries(moore_entries, french_entries)
     _write_jsonl(aligned, out / "aligned.jsonl")
     if moore_entries:
-        print(f"  matched {len(aligned)} / {len(moore_entries)} Mooré entries "
-              f"({len(aligned)/len(moore_entries)*100:.1f}%)")
+        print(
+            f"  matched {len(aligned)} / {len(moore_entries)} Mooré entries "
+            f"({len(aligned) / len(moore_entries) * 100:.1f}%)"
+        )
 
     if not skip_preface:
         print("Extracting Mooré text segments (pages 1-3)…")
