@@ -97,14 +97,16 @@ def _load_jsonl(path: Path, source_override: str | None = None) -> list[dict]:
             if not fr or not mo:
                 continue
             src = source_override if source_override is not None else obj.get("source", "unknown")
-            rows.append({
-                "french": fr,
-                "moore": mo,
-                "source": src,
-                "laser_score": obj.get("laser_score"),
-                "comet_qe": obj.get("comet_qe"),
-                "len_ratio": obj.get("len_ratio"),
-            })
+            rows.append(
+                {
+                    "french": fr,
+                    "moore": mo,
+                    "source": src,
+                    "laser_score": obj.get("laser_score"),
+                    "comet_qe": obj.get("comet_qe"),
+                    "len_ratio": obj.get("len_ratio"),
+                }
+            )
     return rows
 
 
@@ -129,8 +131,8 @@ def _print_source_breakdown(rows: list[dict], label: str) -> None:
 # ---------------------------------------------------------------------------
 
 _FILTERS: dict[str, tuple[str, float]] = {
-    "len_ratio":   (">",  0.1),
-    "comet_qe":    (">=", 0.35),
+    "len_ratio": (">", 0.1),
+    "comet_qe": (">=", 0.35),
     "laser_score": (">=", 0.5),
 }
 
@@ -253,8 +255,7 @@ def build(
             deduped.append(r)
     n_dropped = len(local_all) - len(deduped)
     if n_dropped:
-        print(f"\n  dedup: dropped {n_dropped:,} duplicate (fr, mos) pairs "
-              f"→ {len(deduped):,} unique rows")
+        print(f"\n  dedup: dropped {n_dropped:,} duplicate (fr, mos) pairs → {len(deduped):,} unique rows")
     local_all = deduped
 
     # ---- Quality filter -----------------------------------------------------
@@ -265,20 +266,17 @@ def build(
     train_only = [r for r in local_all if r["source"] in train_only_sources]
     splittable = [r for r in local_all if r["source"] not in train_only_sources]
 
-    print(f"\nEval-eligible rows: {len(splittable):,}  "
-          f"(train-only: {len(train_only):,})")
+    print(f"\nEval-eligible rows: {len(splittable):,}  (train-only: {len(train_only):,})")
 
     # ---- 2. Stratified split of splittable rows ----------------------------
     print(f"\nBuilding stratified split  dev={dev_size}  test={test_size}  seed={seed} …")
-    local_train, local_dev, local_test = _stratified_split(
-        splittable, dev_size, test_size, seed
-    )
+    local_train, local_dev, local_test = _stratified_split(splittable, dev_size, test_size, seed)
     local_train = train_only + local_train  # re-attach train-only rows
 
     print("  Local split:")
     _print_source_breakdown(local_train, "train")
-    _print_source_breakdown(local_dev,   "dev  ")
-    _print_source_breakdown(local_test,  "test ")
+    _print_source_breakdown(local_dev, "dev  ")
+    _print_source_breakdown(local_test, "test ")
 
     # ---- 3. mafand splits --------------------------------------------------
     mafand_train: list[dict] = []
@@ -303,14 +301,16 @@ def build(
                 mo = (row.get("moore") or "").strip()
                 src = row.get("source") or "mafand"
                 if fr and mo:
-                    target.append({
-                        "french": fr,
-                        "moore": mo,
-                        "source": src,
-                        "laser_score": row.get("laser_score"),
-                        "comet_qe": row.get("comet_qe"),
-                        "len_ratio": row.get("len_ratio"),
-                    })
+                    target.append(
+                        {
+                            "french": fr,
+                            "moore": mo,
+                            "source": src,
+                            "laser_score": row.get("laser_score"),
+                            "comet_qe": row.get("comet_qe"),
+                            "len_ratio": row.get("len_ratio"),
+                        }
+                    )
             print(f"  {split_name}: {len(target):,} rows")
 
     # ---- 4. Merge ----------------------------------------------------------
@@ -322,8 +322,8 @@ def build(
 
     print("\nFinal dataset:")
     _print_source_breakdown(final_train, "train")
-    _print_source_breakdown(final_dev,   "dev  ")
-    _print_source_breakdown(final_test,  "test ")
+    _print_source_breakdown(final_dev, "dev  ")
+    _print_source_breakdown(final_test, "test ")
     total = len(final_train) + len(final_dev) + len(final_test)
     print(f"  total: {total:,}")
 
@@ -331,8 +331,8 @@ def build(
     if output_dir:
         print(f"\nWriting to {output_dir}/ …")
         _write_jsonl(final_train, output_dir / "train.jsonl")
-        _write_jsonl(final_dev,   output_dir / "dev.jsonl")
-        _write_jsonl(final_test,  output_dir / "test.jsonl")
+        _write_jsonl(final_dev, output_dir / "dev.jsonl")
+        _write_jsonl(final_test, output_dir / "test.jsonl")
 
     # ---- 6. Push to Hub ----------------------------------------------------
     if push_to_hub:
@@ -340,13 +340,17 @@ def build(
 
         print(f"\nPushing to {push_to_hub} …")
         _drop_cols = {"quality_warnings"}
+
         def _strip(rows: list[dict]) -> list[dict]:
             return [{k: v for k, v in r.items() if k not in _drop_cols} for r in rows]
-        dataset_dict = DatasetDict({
-            "train":      Dataset.from_list(_strip(final_train)),
-            "validation": Dataset.from_list(_strip(final_dev)),
-            "test":       Dataset.from_list(_strip(final_test)),
-        })
+
+        dataset_dict = DatasetDict(
+            {
+                "train": Dataset.from_list(_strip(final_train)),
+                "validation": Dataset.from_list(_strip(final_dev)),
+                "test": Dataset.from_list(_strip(final_test)),
+            }
+        )
         dataset_dict.push_to_hub(push_to_hub, private=hub_private)
         print(f"Done. https://huggingface.co/datasets/{push_to_hub}")
 
@@ -373,7 +377,7 @@ def _parse_args() -> argparse.Namespace:
         default="madoss/mafand-fr-mos",
         metavar="REPO_ID",
         help="HF Hub repo for mafand splits (default: %(default)s). "
-             "Pass empty string or use --no-mafand to skip.",
+        "Pass empty string or use --no-mafand to skip.",
     )
     parser.add_argument(
         "--no-mafand",
@@ -415,8 +419,7 @@ def _parse_args() -> argparse.Namespace:
         nargs="+",
         default=list(_DEFAULT_TRAIN_ONLY),
         metavar="SOURCE",
-        help="Source tags that must stay in train only "
-             "(default: %(default)s).",
+        help="Source tags that must stay in train only (default: %(default)s).",
     )
     parser.add_argument(
         "--seed",

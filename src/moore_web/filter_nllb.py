@@ -309,9 +309,7 @@ def annotate_len_ratio(
     """
     src_texts = batch[src_col]
     tgt_texts = batch[tgt_col]
-    batch["len_ratio"] = [
-        _len_ratio(src or "", tgt or "") for src, tgt in zip(src_texts, tgt_texts)
-    ]
+    batch["len_ratio"] = [_len_ratio(src or "", tgt or "") for src, tgt in zip(src_texts, tgt_texts)]
     return batch
 
     return batch
