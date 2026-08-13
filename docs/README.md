@@ -13,6 +13,7 @@ Historical fixes and their PDF evidence: [resolved issues](resolved-issues.md).
 | [Raamde news](raamde-news.md) | `news` | JSON articles with an interleaved language boundary |
 | [Council of Ministers](council-of-ministers.md) | `conseils` | Same-date PDF/JSON documents in several languages |
 | [Digital glossaries](digital-glossaries.md) | `digital` | Two table-based PDFs joined by normalized French terms |
+| [Du Moore literacy series](du-moore-literacy-series.md) | `parse_du_moore.py` | Dynamically paired French/Mooré lesson pages |
 
 ## Common extraction contract
 

@@ -1,6 +1,6 @@
 # Raamde bilingual news (`news`)
 
-Source: `raamde_corpus.json`, scraped by `src/moore_web/news_scaper.py` and segmented by `segment_news_data.py`.
+Source: `data/raamde/raamde_corpus.json`, scraped by `src/moore_web/news_scaper.py` and segmented by `segment_news_data.py`.
 
 ## Input record
 
