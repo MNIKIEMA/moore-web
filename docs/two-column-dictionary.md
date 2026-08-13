@@ -1,6 +1,6 @@
 # Two-column dictionary
 
-Source: dictionary PDFs handled by `src/moore_web/bicolumns_parser.py` (legacy parser and useful format reference).
+Source: dictionary PDFs handled by `src/moore_web/two_column_dict_parser.py` (legacy parser and useful format reference).
 
 ## Physical layout
 

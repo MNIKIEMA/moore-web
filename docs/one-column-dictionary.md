@@ -1,6 +1,6 @@
 # Simple dictionary parser (`simple`)
 
-Implementation reference for `src/moore_web/simple_parser.py`. This is the most regex-sensitive source. It parses `Dictionnaire-Moore-français-English-avec-images.pdf` into `DictionaryEntry → Sense → Example` records.
+Implementation reference for `src/moore_web/one_column_dict_parser.py`. This is the most regex-sensitive source. It parses `Dictionnaire-Moore-français-English-avec-images.pdf` into `DictionaryEntry → Sense → Example` records.
 
 ## Extraction and page contract
 

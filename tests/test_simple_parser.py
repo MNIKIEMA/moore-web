@@ -1,6 +1,6 @@
-"""Tests for moore_web.simple_parser — focusing on unspec. var. entry handling (S3)."""
+"""Tests for moore_web.one_column_dict_parser — focusing on unspec. var. entry handling (S3)."""
 
-from moore_web.simple_parser import (
+from moore_web.one_column_dict_parser import (
     clean_text,
     split_first_entry,
     split_dictionary_entries,

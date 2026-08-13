@@ -116,6 +116,12 @@ synonym splitting during the pipeline:
 moore-web e2e -s simple -i dict.pdf -o out.jsonl --split-synonyms --strip-proverb-notes
 ```
 
+`one-column-dict` is an alias for `simple` that makes the dictionary layout explicit:
+
+```bash
+moore-web e2e -s one-column-dict -i dict.pdf -o out.jsonl
+```
+
 **Annotate an existing dataset:**
 
 ```bash

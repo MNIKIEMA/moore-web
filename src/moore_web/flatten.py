@@ -363,7 +363,7 @@ def flatten_simple_parser(
     include_examples: bool = True,
     include_entries: bool = False,
 ) -> ParallelText:
-    """Flatten output of :func:`moore_web.simple_parser.parse_doc` into parallel text.
+    """Flatten output of :func:`moore_web.one_column_dict_parser.parse_doc` into parallel text.
 
     Args:
         entries:          Output of ``parse_doc`` — list of :class:`DictionaryEntry`.

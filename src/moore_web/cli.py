@@ -41,6 +41,7 @@ class Source(str, Enum):
     kade = "kade"
     news = "news"
     simple = "simple"
+    one_column_dict = "one-column-dict"
     conseils = "conseils"
     digital = "digital"
 
@@ -346,13 +347,13 @@ def parse(
         out.write_text(json.dumps(corpus, ensure_ascii=False, indent=2), encoding="utf-8")
         typer.echo(f"Wrote {len(corpus)} entries → {out}")
 
-    elif source == Source.simple:
+    elif source in (Source.simple, Source.one_column_dict):
         if input is None:
             _err("--input is required for source 'simple'.")
             raise typer.Exit(1)
         import pymupdf
 
-        from moore_web.simple_parser import parse_doc
+        from moore_web.one_column_dict_parser import parse_doc
 
         out = output or _default_output(input, "_parsed.json")
         typer.echo(f"Parsing simple dictionary: {input}")
@@ -447,7 +448,7 @@ def flatten(
         parallel = flatten_news_entries(entries, segment=segment)
         out = output or _default_output(input, "_parallel.json")
 
-    elif source == Source.simple:
+    elif source in (Source.simple, Source.one_column_dict):
         if input is None:
             _err("--input is required for source 'simple'.")
             raise typer.Exit(1)
@@ -584,14 +585,14 @@ def parse_flat(
         parallel = flatten_news_entries(corpus, segment=segment)
         out = output or _default_output(input, "_parallel.json")
 
-    elif source == Source.simple:
+    elif source in (Source.simple, Source.one_column_dict):
         if input is None:
             _err("--input is required for source 'simple'.")
             raise typer.Exit(1)
         import pymupdf
 
         from moore_web.flatten import flatten_simple_parser
-        from moore_web.simple_parser import parse_doc
+        from moore_web.one_column_dict_parser import parse_doc
 
         typer.echo(f"Parsing simple dictionary: {input}")
         with pymupdf.open(str(input)) as doc:
@@ -991,8 +992,8 @@ def e2e(
             True
         )
 
-    if (split_synonyms or strip_proverb_notes) and source != Source.simple:
-        _err("--split-synonyms / --strip-proverb-notes are only supported for --source simple.")
+    if (split_synonyms or strip_proverb_notes) and source not in (Source.simple, Source.one_column_dict):
+        _err("--split-synonyms / --strip-proverb-notes are only supported for --source simple or one-column-dict.")
         raise typer.Exit(1)
 
     if (split_synonyms or strip_proverb_notes) and output and str(output).startswith("hf://"):
@@ -1122,14 +1123,14 @@ def e2e(
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
-    elif source == Source.simple:
+    elif source in (Source.simple, Source.one_column_dict):
         if input is None:
             _err("--input is required for source 'simple'.")
             raise typer.Exit(1)
         import pymupdf
 
         from moore_web.flatten import AlignedCorpus, flatten_simple_parser
-        from moore_web.simple_parser import parse_doc
+        from moore_web.one_column_dict_parser import parse_doc
 
         typer.echo(f"[1/2] Parsing simple dictionary: {input}")
         with pymupdf.open(str(input)) as doc:

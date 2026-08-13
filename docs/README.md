@@ -7,7 +7,7 @@ Historical fixes and their PDF evidence: [resolved issues](resolved-issues.md).
 | Format | Parser/source | Notes |
 | --- | --- | --- |
 | [One-column dictionary](one-column-dictionary.md) | `simple` | Block-ordered dictionary entries |
-| [Two-column dictionary](two-column-dictionary.md) | legacy `bicolumns_parser.py` | Read the left column before the right column |
+| [Two-column dictionary](two-column-dictionary.md) | `two_column_dict_parser.py` | Read the left column before the right column |
 | [SIDA bilingual book](sida-bilingual-book.md) | `sida` | One PDF; Mooré left, French right |
 | [Kadé facilitator manual](kade-facilitator-manual.md) | `kade` | Separate French and Mooré manuals |
 | [Raamde news](raamde-news.md) | `news` | JSON articles with an interleaved language boundary |
