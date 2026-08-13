@@ -6,8 +6,8 @@ with :mod:`moore_web.lang_id` to first annotate entries with
 ``text_unit_langs`` / ``text_unit_probs``.
 
 Usage (CLI):
-    uv run python -m moore_web.segment_news_data -j raamde_corpus.json -o out.json
-    uv run python -m moore_web.segment_news_data -j raamde_corpus.json --no-lang-id
+    uv run python -m moore_web.segment_news_data -j data/raamde/raamde_corpus.json -o out.json
+    uv run python -m moore_web.segment_news_data -j data/raamde/raamde_corpus.json --no-lang-id
 """
 
 import re

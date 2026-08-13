@@ -4,7 +4,7 @@ import time
 import json
 
 BASE_URL = "https://raamde-bf.net/page/"
-OUTPUT_FILE = "raamde_corpus.json"
+OUTPUT_FILE = "data/raamde/raamde_corpus.json"
 
 
 def get_article_links(start_page, end_page):
