@@ -105,8 +105,7 @@ class AlignedCorpus(ParallelText):
 
         if has_english:
             return [
-                _row(f, m, s, en)
-                for f, m, s, en in zip(self.french, self.moore, self.scores, self.english)
+                _row(f, m, s, en) for f, m, s, en in zip(self.french, self.moore, self.scores, self.english)
             ]
         return [_row(f, m, s) for f, m, s in zip(self.french, self.moore, self.scores)]
 

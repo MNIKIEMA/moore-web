@@ -123,7 +123,9 @@ def _finalize_aligned(
 ) -> None:
     """Write aligned corpus, optionally annotating and/or pushing to HF Hub."""
     out_str = str(out)
-    needs_annotation = any([add_lang_id, add_consistency, add_quality_warn, add_len_ratio, add_laser_score, add_comet_qe])
+    needs_annotation = any(
+        [add_lang_id, add_consistency, add_quality_warn, add_len_ratio, add_laser_score, add_comet_qe]
+    )
     is_hf = out_str.startswith("hf://")
 
     if needs_annotation or is_hf or postprocess:
@@ -985,7 +987,9 @@ def e2e(
     [bold]HF output:[/bold]         moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
     if do_annotate:
-        add_lang_id = add_consistency = add_quality_warn = add_len_ratio = add_laser_score = add_comet_qe = True
+        add_lang_id = add_consistency = add_quality_warn = add_len_ratio = add_laser_score = add_comet_qe = (
+            True
+        )
 
     if (split_synonyms or strip_proverb_notes) and source != Source.simple:
         _err("--split-synonyms / --strip-proverb-notes are only supported for --source simple.")
@@ -1214,7 +1218,9 @@ def e2e(
 
     elif source == Source.digital:
         if fr_input is None or mo_input is None:
-            _err("--fr-input (French lexique PDF) and --mo-input (Mooré glossaire PDF) are required for --source digital.")
+            _err(
+                "--fr-input (French lexique PDF) and --mo-input (Mooré glossaire PDF) are required for --source digital."
+            )
             raise typer.Exit(1)
 
         from moore_web.flatten import AlignedCorpus
@@ -1233,7 +1239,9 @@ def e2e(
         typer.echo("[2/2] Aligning…")
         pairs = align_glossaries(moore_entries, french_entries)
         if moore_entries:
-            typer.echo(f"      Matched: {len(pairs)} / {len(moore_entries)} ({len(pairs)/len(moore_entries)*100:.1f}%)")
+            typer.echo(
+                f"      Matched: {len(pairs)} / {len(moore_entries)} ({len(pairs) / len(moore_entries) * 100:.1f}%)"
+            )
 
         def _write_digital(inc_terms: bool, inc_definitions: bool, dest) -> None:
             _Scores = list[float | None]
@@ -1267,11 +1275,15 @@ def e2e(
                 source=label,
             )
             # Terms are exact key matches — LASER/COMET-QE add no information.
-            ann = _ann_kwargs if not (inc_terms and not inc_definitions) else {
-                **_ann_kwargs,
-                "add_laser_score": False,
-                "add_comet_qe": False,
-            }
+            ann = (
+                _ann_kwargs
+                if not (inc_terms and not inc_definitions)
+                else {
+                    **_ann_kwargs,
+                    "add_laser_score": False,
+                    "add_comet_qe": False,
+                }
+            )
             typer.echo(f"      FR: {len(fr_texts)}  MO: {len(mo_texts)}  → {dest}")
             _finalize_aligned(a, dest, jsonl, **ann)
 

@@ -16,7 +16,7 @@ Run with:
 
 import marimo
 
-__generated_with = "0.23.0"
+__generated_with = "0.23.1"
 app = marimo.App(width="medium", app_title="Aligned Corpus Explorer")
 
 
@@ -35,7 +35,7 @@ def _():
 @app.cell
 def _(mo):
     file_path_input = mo.ui.text(
-        value="final_data_hf/conseils_ministres_aligned.jsonl",
+        value="final_data_hf/sida_aligned.jsonl",
         label="Aligned JSON path",
         placeholder="aligned.jsonl",
         full_width=True,

@@ -50,12 +50,14 @@ def extract_glossary_tables(pdf_path: str, pages: list[int] | None = None) -> li
                 df = pd.DataFrame(rows, columns=header)
                 print(df.to_string(index=False))
 
-                results.append({
-                    "page": page_num + 1,
-                    "table_index": i,
-                    "columns": header,
-                    "rows": rows,
-                })
+                results.append(
+                    {
+                        "page": page_num + 1,
+                        "table_index": i,
+                        "columns": header,
+                        "rows": rows,
+                    }
+                )
 
     return results
 
