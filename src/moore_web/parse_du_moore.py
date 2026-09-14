@@ -28,15 +28,7 @@ PDFS = [
 LESSON_RE = re.compile(r"[Kk]aoren[ɡg].*soaba")
 SUBTITLE_RE = re.compile(r"\bkaorengo\b|\bkaorenɡo\b|\bkarem", re.IGNORECASE)
 
-CONV_HEADERS = {"D ɡom fãrende", "Kʋmbɡo"}
-CONV_STOP = {
-    "Expression libre",
-    "Gʋlsɡo",
-    "D bãnɡ n ɡʋls ne fãrende",
-    "Bãnɡ n ɡʋls ne fãrende",
-    "Bãnɡ n ɡʋls",
-}
-CONV_SKIP = {"wilɡ", "fãrendẽ wã", "à ne ɡeonf", "sũk bɩ"}
+_SECTION2_STOP = {"D ɡom fãrende", "Kʋmbɡo", "Expression libre"}
 
 PASSAGE_STOP = {"Questions de compréhension", "Ecriture", "E criture", "Copie", "C opie"}
 
@@ -217,7 +209,7 @@ def extract_sentences_sectioned(lines: list[tuple[int, str]], fix_dropcap: bool 
             continue
 
         if in_sec:
-            if any(m in text for m in CONV_HEADERS | {"Expression libre"}):
+            if any(m in text for m in _SECTION2_STOP):
                 break
             t = text.strip()
             if re.fullmatch(r"[A-Za-zÀ-ÿ]{1,4}", t):
@@ -236,32 +228,6 @@ def extract_sentences_sectioned(lines: list[tuple[int, str]], fix_dropcap: bool 
         prev_y = y
     return sents
 
-
-def extract_conversation(lines: list[tuple[int, str]]) -> list[str]:
-    """D gom fãrende / Kʋmbɡo section: drill sentences."""
-    sents = []
-    in_sec = False
-    for _, text in lines:
-        t = text.strip()
-        if any(m in t for m in CONV_HEADERS):
-            in_sec = True
-            continue
-        if not in_sec:
-            continue
-        if any(m in t for m in CONV_STOP):
-            break
-        if any(s in t for s in CONV_SKIP) or len(t) < 5:
-            continue
-        if t.startswith("Makre"):
-            after = t[t.find(":") + 1 :].strip() if ":" in t else ""
-            for sent in re.split(r"\.\s+", after):
-                sent = sent.strip().rstrip(".")
-                if sent:
-                    sents.append(sent + ".")
-            continue
-        if len(t) > 5:
-            sents.append(t)
-    return sents
 
 
 # ---------------------------------------------------------------------------
@@ -374,20 +340,6 @@ def parse_pdf(path: Path, book_num: int) -> list[dict]:
                         "source": src,
                         "lesson": lesson,
                         "section": "sentences",
-                        "item": j + 1,
-                    }
-                )
-
-            fr_c = extract_conversation(fr_lines)
-            mos_c = extract_conversation(mos_lines)
-            for j, (f, m) in enumerate(zip(fr_c, mos_c)):
-                records.append(
-                    {
-                        "fr": f,
-                        "mos": m,
-                        "source": src,
-                        "lesson": lesson,
-                        "section": "conversation",
                         "item": j + 1,
                     }
                 )
