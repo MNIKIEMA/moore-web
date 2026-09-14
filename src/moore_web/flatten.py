@@ -158,8 +158,43 @@ def _merge_open_quotes(sentences: list[str]) -> list[str]:
             return True
         return False
 
+    closing_chars = {'"', "»", "\u201d"}
+
+    def _starts_new_sentence(text: str) -> bool:
+        """First cased letter in `text` is uppercase -> a new sentence, not a
+        continuation. Distinguishes a second dialogue turn ('"Foo?" "Bar."')
+        from a trailing attribution clause ('"Foo!", she said.'), which starts
+        lowercase and must stay merged into the quote it follows."""
+        for ch in text:
+            if ch.isalpha():
+                return ch.isupper()
+        return False
+
     for s in sentences:
-        is_lone_closing = s.strip() in {'"', "»", "\u201d"}
+        stripped = s.strip()
+        is_lone_closing = stripped in closing_chars
+
+        if (
+            result
+            and in_quote
+            and not is_lone_closing
+            and stripped
+            and stripped[0] in closing_chars
+            and _starts_new_sentence(stripped[1:])
+        ):
+            # `s` opens with the closing partner of the still-open quote,
+            # immediately followed by a new, self-contained sentence -- a
+            # back-to-back dialogue turn ("...first turn." "Second turn..."),
+            # not a continuation. Close the open quote with just that leading
+            # character instead of swallowing the whole fragment into it.
+            result[-1] += " " + stripped[0]
+            remainder = stripped[1:].strip()
+            in_quote = False
+            if remainder:
+                result.append(remainder)
+                in_quote = _is_open(remainder)
+            continue
+
         if result and (in_quote or is_lone_closing):
             result[-1] += " " + s
         else:
@@ -169,27 +204,38 @@ def _merge_open_quotes(sentences: list[str]) -> list[str]:
     return result
 
 
-def segment_fr(text: str) -> list[str]:
-    """Segment French text into sentences using syntok."""
+def _syntok_sentences(text: str) -> tuple[str, list[str]]:
+    """Tokenize text into sentences with syntok. Returns (joined_text, sentences)."""
     import syntok.segmenter as segmenter
 
-    text = _join_lines(text)
+    joined = _join_lines(text)
     sentences = []
-    for paragraph in segmenter.process(text):
+    for paragraph in segmenter.process(joined):
         for sentence in paragraph:
             s = "".join(str(t) for t in sentence).strip()
             if s:
                 sentences.append(s)
-    return _merge_open_quotes(sentences) or ([text] if text else [])
+    return joined, sentences
+
+
+def segment_fr(text: str) -> list[str]:
+    """Segment French text into sentences using syntok."""
+    joined, sentences = _syntok_sentences(text)
+    return _merge_open_quotes(sentences) or ([joined] if joined else [])
 
 
 def segment_mo(text: str) -> list[str]:
     """Segment Mooré text by punctuation boundaries.
 
-    syntok does not support Mooré, so we split on sentence-ending punctuation
-    followed by whitespace.  Newlines are collapsed beforehand.
+    syntok does not support Mooré, so we only use it for its punctuation
+    tokenizer. We skip `_merge_open_quotes`: this source's Mooré dialogue
+    doesn't reliably pair quote marks the way French does (an opening `"`
+    often has no matching close), so the French quote-balance merge collapses
+    whole multi-sentence dialogue passages into one — e.g. an 8-sentence
+    passage on page 7 of the SIDA book merges down to 2 with that heuristic.
     """
-    return segment_fr(text=text)
+    joined, sentences = _syntok_sentences(text)
+    return sentences or ([joined] if joined else [])
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +280,11 @@ def flatten_sida_book(
     Each page contributes its ``french_text`` / ``moore_text``.
     Chapter-5 enum items are included as ``title + body`` units (one per question).
 
+    Chapter 5's enum-question pages (from ``enum.start_page`` onward) are
+    skipped in the page loop below — their content is already covered by
+    ``chapter.enums``, so including both would duplicate every sentence in
+    that page range.
+
     Args:
         chapters: Output of :func:`moore_web.book_parser.parse_pdf_to_json`.
         segment:  If True, run sentence segmentation on each text block.
@@ -242,7 +293,10 @@ def flatten_sida_book(
     # FIXME: normalization add extra spaces.@critical
 
     for chapter in chapters:
+        enum_start_page = min((e.start_page for e in chapter.enums), default=None)
         for page in chapter.pages:
+            if enum_start_page is not None and page.page_number >= enum_start_page:
+                continue
             fr_raw = _join_lines(page.french_text)
             mo_raw = _join_lines(page.moore_text)
             if not fr_raw and not mo_raw:
@@ -277,6 +331,74 @@ def flatten_sida_book(
                     result.moore.append(normalize_mo(mo_body))
 
     return result
+
+
+def flatten_sida_book_per_unit(
+    chapters: list[SidaChapter],
+    segment: bool = True,
+) -> list[tuple[str, ParallelText]]:
+    """Flatten the SIDA book into one ParallelText per page / enum item.
+
+    The PDF is laid out as strict left/right columns (Mooré / French) on
+    every content page, so a page's French and Mooré text are already known
+    to correspond — unlike a whole-book flatten, alignment doesn't need to
+    guess correspondence across page boundaries. Returns a list of
+    ``(unit_id, ParallelText)`` pairs so alignment can run independently per
+    page (and per Chapter-5 enum item), the same pattern used for per-article
+    news alignment and per-date conseils alignment.
+
+    Args:
+        chapters: Output of :func:`moore_web.book_parser.parse_pdf_to_json`.
+        segment:  If True, run sentence segmentation on each text block.
+    """
+    results: list[tuple[str, ParallelText]] = []
+
+    for chapter in chapters:
+        enum_start_page = min((e.start_page for e in chapter.enums), default=None)
+        for page in chapter.pages:
+            if enum_start_page is not None and page.page_number >= enum_start_page:
+                continue
+            fr_raw = _join_lines(page.french_text)
+            mo_raw = _join_lines(page.moore_text)
+            if not fr_raw or not mo_raw:
+                continue
+
+            parallel = ParallelText(source="sida")
+            if segment:
+                parallel.french.extend(normalize_fr(s) for s in segment_fr(fr_raw))
+                parallel.moore.extend(normalize_mo(s) for s in segment_mo(mo_raw))
+            else:
+                parallel.french.append(normalize_fr(fr_raw))
+                parallel.moore.append(normalize_mo(mo_raw))
+
+            if parallel.french and parallel.moore:
+                results.append((f"page-{page.page_number}", parallel))
+
+        for enum in chapter.enums:
+            parallel = ParallelText(source="sida")
+
+            fr_title = normalize_fr(_join_lines(enum.french_title))
+            mo_title = normalize_mo(_join_lines(enum.moore_title))
+            if fr_title:
+                parallel.french.append(fr_title)
+            if mo_title:
+                parallel.moore.append(mo_title)
+
+            fr_body = _join_lines(enum.french_text)
+            mo_body = _join_lines(enum.moore_text)
+            if segment:
+                parallel.french.extend(normalize_fr(s) for s in segment_fr(fr_body) if s)
+                parallel.moore.extend(normalize_mo(s) for s in segment_mo(mo_body) if s)
+            else:
+                if fr_body:
+                    parallel.french.append(normalize_fr(fr_body))
+                if mo_body:
+                    parallel.moore.append(normalize_mo(mo_body))
+
+            if parallel.french and parallel.moore:
+                results.append((f"enum-{enum.enum_number}", parallel))
+
+    return results
 
 
 def flatten_facilitateur_pair(

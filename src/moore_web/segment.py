@@ -71,6 +71,13 @@ def split_sentences(text: str) -> list[str]:
 def segment_enum(enum_items: list[EnumItem]) -> tuple[list[str], list[str]]:
     """
     Prepare enumeration items for alignment by splitting into sentences.
+
+    Each item's French and Mooré sentences are zipped within that item, then
+    truncated to the shorter side. This keeps sentence i in the French list
+    paired with sentence i in the Mooré list for the *same* enum item — a
+    flat, whole-corpus zip would drift out of sync as soon as one item's
+    French and Mooré sentence counts diverge, silently pairing sentences from
+    different questions.
     Returns (french_sentences, moore_sentences)
     """
     french_sentences = []
@@ -78,10 +85,11 @@ def segment_enum(enum_items: list[EnumItem]) -> tuple[list[str], list[str]]:
 
     for item in enum_items:
         fr_sents = split_sentences(item.french_text)
-        french_sentences.extend(fr_sents)
-
         mo_sents = split_sentences(item.moore_text)
-        moore_sentences.extend(mo_sents)
+
+        n = min(len(fr_sents), len(mo_sents))
+        french_sentences.extend(fr_sents[:n])
+        moore_sentences.extend(mo_sents[:n])
 
     return french_sentences, moore_sentences
 
@@ -91,6 +99,12 @@ def segment_pages(
 ) -> tuple[list[str], list[str]]:
     """
     Prepare regular chapter pages for alignment.
+
+    Sentences are zipped within each page, then truncated to the shorter
+    side, for the same reason as `segment_enum`: joining every page's text
+    before splitting, then zipping the two resulting flat lists, drifts out
+    of sync page by page since French and Mooré rarely split into the same
+    number of sentences.
     Returns (french_sentences, moore_sentences)
     """
     filtered_pages = pages
@@ -100,11 +114,16 @@ def segment_pages(
     if end_page is not None:
         filtered_pages = [p for p in filtered_pages if p.page_number < end_page]
 
-    all_french = " ".join([p.french_text for p in filtered_pages])
-    all_moore = " ".join([p.moore_text for p in filtered_pages])
+    french_sentences = []
+    moore_sentences = []
 
-    french_sentences = split_sentences(all_french)
-    moore_sentences = split_sentences(all_moore)
+    for page in filtered_pages:
+        fr_sents = split_sentences(page.french_text)
+        mo_sents = split_sentences(page.moore_text)
+
+        n = min(len(fr_sents), len(mo_sents))
+        french_sentences.extend(fr_sents[:n])
+        moore_sentences.extend(mo_sents[:n])
 
     return french_sentences, moore_sentences
 

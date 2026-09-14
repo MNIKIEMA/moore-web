@@ -1036,7 +1036,6 @@ def e2e(
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import (
         flatten_facilitateur_pair,
-        flatten_sida_book,
     )
 
     # ── parse + flatten ──────────────────────────────────────────────────────
@@ -1046,12 +1045,54 @@ def e2e(
             _err("--input is required for source 'sida'.")
             raise typer.Exit(1)
         from moore_web.book_parser import parse_pdf_to_json
+        from moore_web.flatten import AlignedCorpus, flatten_sida_book_per_unit
 
         typer.echo(f"[1/3] Parsing SIDA book: {input}")
         chapters = parse_pdf_to_json(str(input))
         typer.echo(f"[2/3] Flattening {len(chapters)} chapters…")
-        parallel = flatten_sida_book(chapters, segment=segment)
+        unit_parallels = flatten_sida_book_per_unit(chapters, segment=segment)
         out = output or _default_output(input, f"_aligned{_ext}")
+
+        # The PDF is laid out in strict left/right (Mooré/French) columns on
+        # every page, so a page's two languages are already known to
+        # correspond. Align each page/enum-item independently instead of
+        # over the whole flattened book — this keeps FastDTW's monotonic
+        # path from having to guess correspondence across 45 pages at once.
+        typer.echo("[3/3] Aligning per page with LASER + FastDTW…")
+        from laser_encoders import LaserEncoderPipeline
+
+        from moore_web.align_corpus import align_from_embeddings as _align_from_embs
+
+        laser_fr = LaserEncoderPipeline(lang="fra")
+        laser_mo = LaserEncoderPipeline(lang="mos")
+
+        all_fr_sents = [s for _, dp in unit_parallels for s in dp.french]
+        all_mo_sents = [s for _, dp in unit_parallels for s in dp.moore]
+        all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
+        all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
+
+        all_fr, all_mo, all_scores = [], [], []
+        fr_offset = mo_offset = 0
+        for unit_id, dp in unit_parallels:
+            fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
+            aligned_dp = _align_from_embs(
+                dp, all_fr_embs[fr_offset:fr_end], all_mo_embs[mo_offset:mo_end], min_score=min_score
+            )
+            fr_offset, mo_offset = fr_end, mo_end
+            all_fr.extend(aligned_dp.french)
+            all_mo.extend(aligned_dp.moore)
+            all_scores.extend(aligned_dp.scores)
+
+        aligned = AlignedCorpus(
+            french=all_fr,
+            moore=all_mo,
+            scores=all_scores,
+            source="sida",
+        )
+        if drop_duplicate:
+            aligned = _dedup_aligned(aligned)
+        _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
+        return
 
     elif source == Source.kade:
         if fr_input is None or mo_input is None:
