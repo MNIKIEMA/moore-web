@@ -86,6 +86,7 @@ MOORE_SECTION_TITLES = [
     "Kibarã",
     "Sõaseg sokdse",
     "D sẽn segd n zãms bũmb niisi",
+    "Bũmb d sẽn tõe n zãmse",
     "Reem",
     "Reem la yɩɩlle",
     "Reem la yɩɩla",
@@ -153,6 +154,9 @@ def replace_facilitateur_names_fr(text: str) -> str:
 
 
 NUMBERED_ITEM_RE = re.compile(r"^\s*(?:\([^)]+\)\s+)?(\d+)\.\s+(.+)")
+# A numbered marker alone on its own line, with the item's text starting on
+# the next line (e.g. Mooré scripture-reference lists: "1. \nWẽnnaam...").
+NUMBERED_ITEM_BARE_RE = re.compile(r"^\s*(?:\([^)]+\)\s+)?(\d+)\.\s*$")
 BULLET_ITEM_RE = re.compile(r"^\s*•\s+(.+)")
 
 LISEZ_RE = re.compile(r"^Lisez\s+.+", re.IGNORECASE)
@@ -233,30 +237,77 @@ def split_text_by_regex(text: str, regex: re.Pattern) -> list[tuple[Optional[str
     return parts
 
 
+_BARE_BULLET_RE = re.compile(r"^\s*•\s*$")
+
+
+def _classify_items_lines(
+    lines: list[str],
+) -> tuple[list[NumberedItem], list[BulletItem], set[int]]:
+    """Single pass that splits `lines` into numbered items, bullet items, and
+    the set of line indices consumed by either.
+
+    Both kinds of item are often wrapped across many short PDF lines (or
+    split across a block boundary as a bare "N."/"•" with the text starting
+    on the next line). Tracking both in one pass -- instead of two
+    independent walks that don't know about each other's markers -- means a
+    numbered item's continuation stops the moment a bullet marker appears
+    (and vice versa), so interleaved lists don't get glued into the wrong
+    item or, worse, captured by *both* (previously: a numbered item's
+    continuation logic didn't recognize a following "•" as a boundary, so it
+    absorbed the bullets into its own text while collect_bullet_items
+    independently captured those same bullets again -- duplicating them).
+    """
+    items: list[NumberedItem] = []
+    bullets: list[BulletItem] = []
+    consumed: set[int] = set()
+
+    mode: Optional[str] = None  # None | "item" | "bullet"
+    current_num: Optional[int] = None
+    current_parts: list[str] = []
+
+    def flush() -> None:
+        if mode == "item" and current_num is not None and current_parts:
+            items.append(NumberedItem(current_num, normalize(" ".join(current_parts))))
+        elif mode == "bullet" and current_parts:
+            bullets.append(BulletItem(normalize(" ".join(current_parts))))
+
+    for idx, raw in enumerate(lines):
+        line = normalize(raw)
+        num_m = NUMBERED_ITEM_RE.match(raw)
+        bare_num_m = NUMBERED_ITEM_BARE_RE.match(raw)
+        bullet_m = BULLET_ITEM_RE.match(raw)
+        bare_bullet_m = _BARE_BULLET_RE.match(raw)
+
+        if num_m:
+            flush()
+            mode, current_num, current_parts = "item", int(num_m.group(1)), [num_m.group(2).strip()]
+            consumed.add(idx)
+        elif bare_num_m:
+            flush()
+            mode, current_num, current_parts = "item", int(bare_num_m.group(1)), []
+            consumed.add(idx)
+        elif bullet_m:
+            flush()
+            mode, current_parts = "bullet", [bullet_m.group(1).strip()]
+            consumed.add(idx)
+        elif bare_bullet_m:
+            flush()
+            mode, current_parts = "bullet", []
+            consumed.add(idx)
+        elif mode is not None and line:
+            current_parts.append(line)
+            consumed.add(idx)
+
+    flush()
+    return items, bullets, consumed
+
+
 def collect_numbered_items(lines: list[str]) -> list[NumberedItem]:
     """
     Collect numbered items (possibly multi-line) from a flat list of lines.
     Lines that don't belong to any item are ignored.
     """
-    items: list[NumberedItem] = []
-    current_num: Optional[int] = None
-    current_parts: list[str] = []
-
-    def flush():
-        if current_num is not None and current_parts:
-            items.append(NumberedItem(current_num, normalize(" ".join(current_parts))))
-
-    for raw in lines:
-        line = normalize(raw)
-        m = NUMBERED_ITEM_RE.match(raw)
-        if m:
-            flush()
-            current_num = int(m.group(1))
-            current_parts = [m.group(2).strip()]
-        elif current_num is not None and line:
-            current_parts.append(line)
-
-    flush()
+    items, _, _ = _classify_items_lines(lines)
     return items
 
 
@@ -264,67 +315,23 @@ def collect_bullet_items(lines: list[str]) -> list[BulletItem]:
     """
     Collect bullet items (possibly multi-line) from a flat list of lines.
     """
-    items: list[BulletItem] = []
-    current_parts: list[str] = []
-    in_bullet_item = False
-
-    def flush():
-        if in_bullet_item and current_parts:
-            items.append(BulletItem(normalize(" ".join(current_parts))))
-
-    for raw in lines:
-        line = normalize(raw)
-        if re.match(r"^\s*•\s*$", raw):
-            flush()
-            in_bullet_item = True
-            current_parts = []
-        elif re.match(r"^\s*•\s+(.+)", raw):
-            flush()
-            in_bullet_item = True
-            m = re.match(r"^\s*•\s+(.+)", raw)
-            current_parts = [m.group(1).strip()]
-        elif in_bullet_item and line:
-            current_parts.append(line)
-
-    flush()
-    return items
+    _, bullets, _ = _classify_items_lines(lines)
+    return bullets
 
 
 def collect_items(lines: list[str]) -> tuple[list[NumberedItem], list[BulletItem]]:
-    return collect_numbered_items(lines), collect_bullet_items(lines)
+    items, bullets, _ = _classify_items_lines(lines)
+    return items, bullets
 
 
 def _lines_consumed_by_items(lines: list[str]) -> set[int]:
     """Indices of lines absorbed into a numbered item or bullet item.
 
-    A numbered/bullet item is often wrapped across many short PDF lines, and
-    only its first line matches NUMBERED_ITEM_RE / BULLET_ITEM_RE -- the
-    continuation lines don't. Mirrors collect_numbered_items and
-    collect_bullet_items' own line-consumption exactly (each run
-    independently, same as the real itemization), so callers can exclude
-    every line that ended up inside `items`/`bullet_items` from `body`
-    instead of only excluding each item's first line, which otherwise
-    duplicates the continuation text into both.
+    Used so callers can exclude every such line from `body` instead of only
+    excluding each item's first line, which would otherwise duplicate the
+    continuation text into both.
     """
-    consumed: set[int] = set()
-
-    current_num: Optional[int] = None
-    for idx, raw in enumerate(lines):
-        line = normalize(raw)
-        if NUMBERED_ITEM_RE.match(raw):
-            current_num = int(NUMBERED_ITEM_RE.match(raw).group(1))
-            consumed.add(idx)
-        elif current_num is not None and line:
-            consumed.add(idx)
-
-    in_bullet_item = False
-    for idx, raw in enumerate(lines):
-        if re.match(r"^\s*•\s*$", raw) or BULLET_ITEM_RE.match(raw):
-            in_bullet_item = True
-            consumed.add(idx)
-        elif in_bullet_item and normalize(raw):
-            consumed.add(idx)
-
+    _, _, consumed = _classify_items_lines(lines)
     return consumed
 
 
