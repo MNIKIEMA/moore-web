@@ -133,7 +133,7 @@ def _finalize_aligned(
         from datasets import Dataset
 
         from moore_web import annotate as _ann
-        from moore_web.flatten import ORIGINAL_LANGUAGE, flat_rows_to_long
+        from moore_web.flatten import flat_rows_to_long
 
         # Postprocess (lexicon synonym-splitting/proverb-note cleanup) runs on
         # the flat french/moore shape it expects; convert to the long-format
@@ -154,20 +154,11 @@ def _finalize_aligned(
         dataset = Dataset.from_list(rows)
 
         if needs_annotation:
-            # The long-format schema puts orig-language text in source_text
-            # and the translation in target_text (see ORIGINAL_LANGUAGE) --
-            # _FIELD_TO_LANG can't infer a LASER code from "source_text"/
-            # "target_text" the way it could from "french"/"moore", so pass
-            # them explicitly. Doesn't handle a dataset with mixed target
-            # languages (e.g. simple's interspersed mos-eng rows alongside
-            # mos-fra) -- those would need per-row language grouping, not
-            # done here since nothing currently LASER/COMET-scores that source.
-            orig_lang = ORIGINAL_LANGUAGE.get(aligned.source)
-            lang_kwargs = {}
-            if orig_lang == "mos":
-                lang_kwargs = {"src_lang": "mos", "tgt_lang": "fra"}
-            elif orig_lang == "fra":
-                lang_kwargs = {"src_lang": "fra", "tgt_lang": "mos"}
+            # score_dataset (score_laser.py) reads src_lang/tgt_lang per row
+            # from the dataset's own src_lang/tgt_lang columns when neither is
+            # passed explicitly, so a dataset with mixed pairs (e.g. simple's
+            # interspersed mos-fra and mos-eng rows) is scored correctly
+            # without needing to pick one language pair here.
             dataset = _ann.annotate(
                 dataset,
                 src_field="source_text",
@@ -178,7 +169,6 @@ def _finalize_aligned(
                 len_ratio=add_len_ratio,
                 laser=add_laser_score,
                 comet_qe=add_comet_qe,
-                **lang_kwargs,
             )
             if not add_quality_warn and "quality_warnings" in dataset.column_names:
                 dataset = dataset.remove_columns(["quality_warnings"])

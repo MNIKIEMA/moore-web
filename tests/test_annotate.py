@@ -340,6 +340,45 @@ class TestRunLaser:
         assert "french" in result.column_names
         assert "moore" in result.column_names
 
+    def test_mixed_language_pairs_scored_per_row_and_reordered_correctly(self, monkeypatch):
+        # Long-format rows: a mos-fra pair and a mos-eng pair share one id
+        # (a trilingual dictionary entry), plus a second mos-fra pair.
+        loaded_langs: list[str] = []
+
+        def _mock_encoder_factory():
+            class _MockEncoder:
+                def __init__(self, lang):
+                    self.lang = lang
+                    loaded_langs.append(lang)
+
+                def encode_sentences(self, texts, normalize_embeddings=True):
+                    n = len(texts)
+                    vecs = np.ones((n, 4), dtype=np.float32)
+                    norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+                    return vecs / norms
+
+            return _MockEncoder
+
+        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", _mock_encoder_factory())
+
+        rows = [
+            {"id": "a", "src_lang": "mos", "tgt_lang": "fra", "source_text": "bagre", "target_text": "chat"},
+            {"id": "a", "src_lang": "mos", "tgt_lang": "eng", "source_text": "bagre", "target_text": "cat"},
+            {"id": "b", "src_lang": "mos", "tgt_lang": "fra", "source_text": "koom", "target_text": "eau"},
+        ]
+        ds = Dataset.from_list(rows)
+
+        result = run_laser(ds, src_field="source_text", tgt_field="target_text")
+
+        assert "laser_score" in result.column_names
+        assert len(result) == 3
+        # Original row order preserved after grouping/concatenating/sorting.
+        assert result["id"] == ["a", "a", "b"]
+        for score in result["laser_score"]:
+            assert score == pytest.approx(1.0, abs=1e-3)
+        # Each language's encoder loaded once, not once per row/group occurrence.
+        assert sorted(loaded_langs) == ["eng", "fra", "mos"]
+
 
 # ---------------------------------------------------------------------------
 # run_comet_qe

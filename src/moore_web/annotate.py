@@ -254,15 +254,17 @@ def run_laser(
     dataset,
     src_field: str = "french",
     tgt_field: str = "moore",
-    src_lang: str = "fra",
-    tgt_lang: str = "mos",
+    src_lang: str | None = None,
+    tgt_lang: str | None = None,
     output_field: str | None = None,
     encoder_src=None,
     encoder_tgt=None,
 ):
     """Add LASER cosine-similarity scores between source and target sentences.
 
-    Adds one column named ``output_field`` (default: ``"laser_{src_lang}_{tgt_lang}"``).
+    Adds one column named ``output_field`` (default: ``"laser_{src_lang}_{tgt_lang}"``
+    for a single fixed pair, or ``"laser_score"`` when scoring per-row language
+    pairs -- see ``score_dataset``'s docstring).
 
     Unlike :func:`~moore_web.score_mt_datasets.score_aligned_pairs`, this function
     does **not** drop rows — it annotates every row unconditionally.
@@ -271,8 +273,11 @@ def run_laser(
         dataset:      Input ``datasets.Dataset``.
         src_field:    Source column name (default: ``"french"``).
         tgt_field:    Target column name (default: ``"moore"``).
-        src_lang:     LASER language code for the source encoder (default: ``"fra"``).
-        tgt_lang:     LASER language code for the target encoder (default: ``"mos"``).
+        src_lang:     LASER language code for the source encoder. Left ``None`` to
+                      infer from ``src_field`` (or, if the dataset has ``src_lang``/
+                      ``tgt_lang`` columns, to score each row with its own pair).
+        tgt_lang:     LASER language code for the target encoder. Same fallback as
+                      ``src_lang``.
         output_field: Name for the new score column. Defaults to
                       ``"laser_{src_lang}_{tgt_lang}"`` when ``None``.
         encoder_src:  Pre-loaded source encoder; loaded automatically if ``None``.
