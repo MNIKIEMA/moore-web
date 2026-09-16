@@ -1,6 +1,6 @@
 """Tests for moore_web.flatten — focusing on _join_lines and the missing-space fix."""
 
-from moore_web.flatten import _join_lines, normalize_fr, normalize_mo, segment_fr
+from moore_web.flatten import AlignedCorpus, _join_lines, flat_rows_to_long, normalize_fr, normalize_mo, segment_fr
 
 
 class TestJoinLines:
@@ -158,3 +158,77 @@ class TestSegmentFr:
         # _join_lines is called inside segment_fr, so the fix applies
         result = segment_fr("smartphones.Les causes ne sont pas connues.")
         assert len(result) == 2
+
+
+class TestFlatRowsToLong:
+    def test_fra_source_puts_french_as_source_text(self):
+        rows = flat_rows_to_long([{"french": "Bonjour.", "moore": "Ne y sõma.", "laser_score": 0.8}], "kade")
+        assert rows == [
+            {
+                "id": "kade-000000",
+                "src_lang": "fra",
+                "tgt_lang": "mos",
+                "source_text": "Bonjour.",
+                "target_text": "Ne y sõma.",
+                "is_source_orig": True,
+                "source": "kade",
+                "laser_score": 0.8,
+            }
+        ]
+
+    def test_mos_source_puts_moore_as_source_text(self):
+        rows = flat_rows_to_long([{"french": "chat", "moore": "bagre", "laser_score": 1.0}], "simple")
+        row = rows[0]
+        assert row["src_lang"] == "mos"
+        assert row["tgt_lang"] == "fra"
+        assert row["source_text"] == "bagre"
+        assert row["target_text"] == "chat"
+        assert row["is_source_orig"] is True
+
+    def test_unknown_source_has_null_is_source_orig(self):
+        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": None}], "mystery-source")
+        assert rows[0]["is_source_orig"] is None
+
+    def test_english_triplet_becomes_two_rows_sharing_id(self):
+        rows = flat_rows_to_long(
+            [{"french": "chat", "moore": "bagre", "english": "cat", "laser_score": 1.0}], "simple"
+        )
+        assert len(rows) == 2
+        assert rows[0]["id"] == rows[1]["id"] == "simple-000000"
+        assert (rows[0]["tgt_lang"], rows[1]["tgt_lang"]) == ("fra", "eng")
+        assert rows[1]["source_text"] == "bagre"
+        assert rows[1]["target_text"] == "cat"
+
+    def test_no_english_is_single_row(self):
+        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "simple")
+        assert len(rows) == 1
+
+    def test_all_none_scores_omit_laser_score_field(self):
+        rows = flat_rows_to_long(
+            [{"french": "a", "moore": "b", "laser_score": None}, {"french": "c", "moore": "d", "laser_score": None}],
+            "kade",
+        )
+        assert all("laser_score" not in r for r in rows)
+
+    def test_ids_increment_per_row(self):
+        rows = flat_rows_to_long(
+            [{"french": "a", "moore": "b", "laser_score": 1.0}, {"french": "c", "moore": "d", "laser_score": 1.0}],
+            "kade",
+        )
+        assert [r["id"] for r in rows] == ["kade-000000", "kade-000001"]
+
+
+class TestAlignedCorpusToJsonlRows:
+    def test_matches_flat_rows_to_long(self):
+        aligned = AlignedCorpus(french=["Bonjour."], moore=["Ne y sõma."], scores=[0.8], source="kade")
+        assert aligned.to_jsonl_rows() == flat_rows_to_long(
+            [{"french": "Bonjour.", "moore": "Ne y sõma.", "laser_score": 0.8}], "kade"
+        )
+
+    def test_includes_english_when_present(self):
+        aligned = AlignedCorpus(
+            french=["chat"], moore=["bagre"], english=["cat"], scores=[1.0], source="simple"
+        )
+        rows = aligned.to_jsonl_rows()
+        assert len(rows) == 2
+        assert rows[1]["target_text"] == "cat"

@@ -133,7 +133,11 @@ def _finalize_aligned(
         from datasets import Dataset
 
         from moore_web import annotate as _ann
+        from moore_web.flatten import ORIGINAL_LANGUAGE, flat_rows_to_long
 
+        # Postprocess (lexicon synonym-splitting/proverb-note cleanup) runs on
+        # the flat french/moore shape it expects; convert to the long-format
+        # HF schema (one row per language pair) only after that's done.
         rows = [
             {"french": f, "moore": m, "laser_score": s}
             for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)
@@ -145,22 +149,36 @@ def _finalize_aligned(
         if postprocess:
             rows = postprocess(rows)
 
-        # Drop laser_score entirely when every value is None (e.g. definition pairs).
-        if rows and all(r["laser_score"] is None for r in rows):
-            for r in rows:
-                del r["laser_score"]
+        rows = flat_rows_to_long(rows, aligned.source)
 
         dataset = Dataset.from_list(rows)
 
         if needs_annotation:
+            # The long-format schema puts orig-language text in source_text
+            # and the translation in target_text (see ORIGINAL_LANGUAGE) --
+            # _FIELD_TO_LANG can't infer a LASER code from "source_text"/
+            # "target_text" the way it could from "french"/"moore", so pass
+            # them explicitly. Doesn't handle a dataset with mixed target
+            # languages (e.g. simple's interspersed mos-eng rows alongside
+            # mos-fra) -- those would need per-row language grouping, not
+            # done here since nothing currently LASER/COMET-scores that source.
+            orig_lang = ORIGINAL_LANGUAGE.get(aligned.source)
+            lang_kwargs = {}
+            if orig_lang == "mos":
+                lang_kwargs = {"src_lang": "mos", "tgt_lang": "fra"}
+            elif orig_lang == "fra":
+                lang_kwargs = {"src_lang": "fra", "tgt_lang": "mos"}
             dataset = _ann.annotate(
                 dataset,
+                src_field="source_text",
+                tgt_field="target_text",
                 lang_id=add_lang_id,
                 quality_warn=add_quality_warn,
                 consistency=add_consistency,
                 len_ratio=add_len_ratio,
                 laser=add_laser_score,
                 comet_qe=add_comet_qe,
+                **lang_kwargs,
             )
             if not add_quality_warn and "quality_warnings" in dataset.column_names:
                 dataset = dataset.remove_columns(["quality_warnings"])
