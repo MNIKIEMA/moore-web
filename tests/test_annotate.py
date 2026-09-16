@@ -95,6 +95,24 @@ class TestLoadData:
         with pytest.raises(DatasetNotFoundError):
             load_data("hf://this-owner-does-not-exist/this-repo-does-not-exist")
 
+    def test_hf_uri_without_config_name_omits_it(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "moore_web.annotate.load_dataset", lambda *a, **kw: calls.append((a, kw)) or "sentinel"
+        )
+        result = load_data("hf://owner/repo", split="train")
+        assert result == "sentinel"
+        assert calls == [(("owner/repo",), {"split": "train"})]
+
+    def test_hf_uri_with_config_name_passes_it(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "moore_web.annotate.load_dataset", lambda *a, **kw: calls.append((a, kw)) or "sentinel"
+        )
+        result = load_data("hf://owner/repo", split="train", config_name="mos-fra")
+        assert result == "sentinel"
+        assert calls == [(("owner/repo", "mos-fra"), {"split": "train"})]
+
 
 # ---------------------------------------------------------------------------
 # save_data

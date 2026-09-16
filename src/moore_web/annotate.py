@@ -58,12 +58,16 @@ def _hf_repo(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def load_data(path: str, split: str = "train"):
+def load_data(path: str, split: str = "train", config_name: str | None = None):
     """Load an aligned dataset from a local JSONL file or a HuggingFace Hub repo.
 
     Args:
-        path:  Local file path **or** ``hf://owner/repo`` URI.
-        split: Dataset split to load (HF mode only, default: ``"train"``).
+        path:        Local file path **or** ``hf://owner/repo`` URI.
+        split:       Dataset split to load (HF mode only, default: ``"train"``).
+        config_name: Config to load (HF mode only) -- required when the repo has
+                      more than one, e.g. a language pair like ``"mos-fra"`` from
+                      a repo ``save_data`` split by pair (see its docstring).
+                      ``None`` loads the repo's default config.
 
     Returns:
         A ``datasets.Dataset``.
@@ -71,6 +75,9 @@ def load_data(path: str, split: str = "train"):
 
     if _is_hf(path):
         repo = _hf_repo(path)
+        if config_name is not None:
+            print(f"Loading '{repo}' (config={config_name}, split={split}) from HuggingFace Hub…")
+            return load_dataset(repo, config_name, split=split)
         print(f"Loading '{repo}' (split={split}) from HuggingFace Hub…")
         return load_dataset(repo, split=split)
 

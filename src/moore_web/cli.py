@@ -683,6 +683,14 @@ def align(
 def annotate(
     input: Annotated[str, typer.Option("--input", "-i", help="Local JSONL or hf://owner/repo.")],
     output: Annotated[str, typer.Option("--output", "-o", help="Local JSONL or hf://owner/repo.")],
+    config: Annotated[
+        Optional[str],
+        typer.Option(
+            "--config",
+            help="Config to load (hf:// input only) -- required when the repo has more than "
+            "one, e.g. a language pair from a repo save_data split by pair (\"mos-fra\").",
+        ),
+    ] = None,
     src: Annotated[str, typer.Option("--src", help="Source field name in the dataset.")] = "french",
     tgt: Annotated[str, typer.Option("--tgt", help="Target field name in the dataset.")] = "moore",
     lang_id: Annotated[
@@ -733,6 +741,7 @@ def annotate(
     [bold]Local:[/bold]  moore-web annotate -i data.jsonl -o out.jsonl --consistency --quality-warn
     [bold]All:[/bold]    moore-web annotate -i data.jsonl -o out.jsonl --all
     [bold]HF:[/bold]     moore-web annotate -i hf://owner/src -o hf://owner/dst --all
+    [bold]HF config:[/bold] moore-web annotate -i hf://owner/src --config mos-fra -o hf://owner/dst --all
     """
     from moore_web import annotate as _ann
 
@@ -746,7 +755,7 @@ def annotate(
         )
         raise typer.Exit(1)
 
-    dataset = _ann.load_data(input)
+    dataset = _ann.load_data(input, config_name=config)
     dataset = _ann.annotate(
         dataset,
         src_field=src,
