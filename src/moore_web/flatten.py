@@ -86,8 +86,8 @@ ORIGINAL_LANGUAGE: dict[str, str] = {
 
 
 def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
-    """Convert flat ``{french, moore, english?, laser_score?}`` rows into the
-    long-format HF schema: one row per (src_lang, tgt_lang) pair.
+    """Convert flat ``{french, moore, english?, laser_score?, doc_id?}`` rows
+    into the long-format HF schema: one row per (src_lang, tgt_lang) pair.
 
     A pairwise score (e.g. LASER cosine similarity) belongs to exactly one
     language pair, so a french+moore+english row becomes *two* output rows
@@ -100,12 +100,25 @@ def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
     when the source isn't in that mapping (direction not yet determined --
     e.g. a future source where it varies per row would need per-row handling
     here rather than the constant used today).
+
+    ``id`` carries the source document, not just a flat position, when a row
+    has a ``doc_id`` (the per-unit key several sources already align by --
+    page/enum for sida, article URL for news, session date for conseils --
+    but previously discarded after concatenating aligned units together):
+    ``"{source}-{nth distinct doc_id}-{nth row within that doc}"``, e.g.
+    ``"conseils-000042-003"``. The raw ``doc_id`` value itself (a date, a
+    URL, ...) is also kept as its own field for exact grouping/lookup, since
+    the ordinal in ``id`` alone doesn't let you filter by it. Rows without a
+    ``doc_id`` keep the previous flat ``"{source}-{i:06d}"`` scheme and get
+    ``doc_id: None``.
     """
     orig_lang = ORIGINAL_LANGUAGE.get(source)
     is_orig = True if orig_lang is not None else None
     omit_score = all(r.get("laser_score") is None for r in rows) if rows else True
 
-    def _pair_row(row_id: str, src_lang: str, tgt_lang: str, source_text: str, target_text: str, score) -> dict:
+    def _pair_row(
+        row_id: str, src_lang: str, tgt_lang: str, source_text: str, target_text: str, score, doc_id
+    ) -> dict:
         r: dict = {
             "id": row_id,
             "src_lang": src_lang,
@@ -113,21 +126,34 @@ def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
             "source_text": source_text,
             "target_text": target_text,
             "is_source_orig": is_orig,
+            "doc_id": doc_id,
             "source": source,
         }
         if not omit_score:
             r["laser_score"] = round(score, 4) if score is not None else None
         return r
 
+    doc_ordinal: dict[str, int] = {}
+    doc_row_count: dict[str, int] = {}
+
     long_rows: list[dict] = []
     for i, row in enumerate(rows):
         fr, mo, score = row.get("french", ""), row.get("moore", ""), row.get("laser_score")
-        row_id = f"{source}-{i:06d}"
+        doc_id = row.get("doc_id")
+        if doc_id is not None:
+            if doc_id not in doc_ordinal:
+                doc_ordinal[doc_id] = len(doc_ordinal)
+            local_idx = doc_row_count.get(doc_id, 0)
+            doc_row_count[doc_id] = local_idx + 1
+            row_id = f"{source}-{doc_ordinal[doc_id]:06d}-{local_idx:03d}"
+        else:
+            row_id = f"{source}-{i:06d}"
+
         if orig_lang == "mos":
             src_lang, tgt_lang, source_text, target_text = "mos", "fra", mo, fr
         else:
             src_lang, tgt_lang, source_text, target_text = "fra", "mos", fr, mo
-        long_rows.append(_pair_row(row_id, src_lang, tgt_lang, source_text, target_text, score))
+        long_rows.append(_pair_row(row_id, src_lang, tgt_lang, source_text, target_text, score, doc_id))
 
         en = row.get("english")
         if en:
@@ -135,7 +161,7 @@ def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
             # occurs for exact-match dictionary entries, which score 1.0 for
             # the primary pair above); carry the same score value rather than
             # fabricate a distinct one.
-            long_rows.append(_pair_row(row_id, src_lang, "eng", source_text, en, score))
+            long_rows.append(_pair_row(row_id, src_lang, "eng", source_text, en, score, doc_id))
 
     return long_rows
 
@@ -149,6 +175,10 @@ class AlignedCorpus(ParallelText):
     """
 
     scores: list[float | None] = msgspec.field(default_factory=list)
+    # Per-pair source-document key (page/enum id, article URL, session date,
+    # ...) for sources that align per unit and concatenate. Optional -- like
+    # `english`, either empty (not tracked) or one entry per pair.
+    doc_ids: list[str] = msgspec.field(default_factory=list)
 
     def __post_init__(self) -> None:
         n_fr, n_mo, n_sc = len(self.french), len(self.moore), len(self.scores)
@@ -156,6 +186,8 @@ class AlignedCorpus(ParallelText):
             raise ValueError(
                 f"AlignedCorpus requires equal-length lists, got french={n_fr}, moore={n_mo}, scores={n_sc}"
             )
+        if self.doc_ids and len(self.doc_ids) != n_fr:
+            raise ValueError(f"doc_ids must be empty or match french/moore length, got {len(self.doc_ids)}")
 
     @classmethod
     def from_pairs(cls, pairs: list[dict], source: str = "") -> AlignedCorpus:
@@ -176,6 +208,9 @@ class AlignedCorpus(ParallelText):
         if self.english:
             for row, en in zip(flat, self.english):
                 row["english"] = en
+        if self.doc_ids:
+            for row, doc_id in zip(flat, self.doc_ids):
+                row["doc_id"] = doc_id
         return flat_rows_to_long(flat, self.source)
 
     def write_jsonl(self, path: str) -> None:

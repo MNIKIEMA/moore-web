@@ -145,6 +145,9 @@ def _finalize_aligned(
         if aligned.english:
             for row, en in zip(rows, aligned.english):
                 row["english"] = en
+        if aligned.doc_ids:
+            for row, doc_id in zip(rows, aligned.doc_ids):
+                row["doc_id"] = doc_id
 
         if postprocess:
             rows = postprocess(rows)
@@ -185,15 +188,20 @@ def _dedup_aligned(aligned):
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
     from moore_web.flatten import AlignedCorpus
 
+    has_doc_ids = bool(aligned.doc_ids)
     pairs = [
         {"fr": f, "mo": m, "laser_score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)
     ]
+    if has_doc_ids:
+        for p, doc_id in zip(pairs, aligned.doc_ids):
+            p["doc_id"] = doc_id
     typer.echo("      Running COMET-QE deduplication…")
     pairs = deduplicate_by_comet(pairs)
     return AlignedCorpus(
         french=[p["fr"] for p in pairs],
         moore=[p["mo"] for p in pairs],
         scores=[p["laser_score"] for p in pairs],
+        doc_ids=[p["doc_id"] for p in pairs] if has_doc_ids else [],
         source=aligned.source,
     )
 
@@ -1079,7 +1087,7 @@ def e2e(
         all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
         all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
 
-        all_fr, all_mo, all_scores = [], [], []
+        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
         fr_offset = mo_offset = 0
         for unit_id, dp in unit_parallels:
             fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
@@ -1090,11 +1098,13 @@ def e2e(
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
+            all_doc_ids.extend([unit_id] * len(aligned_dp.french))
 
         aligned = AlignedCorpus(
             french=all_fr,
             moore=all_mo,
             scores=all_scores,
+            doc_ids=all_doc_ids,
             source="sida",
         )
         if drop_duplicate:
@@ -1149,7 +1159,7 @@ def e2e(
         all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
         all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
 
-        all_fr, all_mo, all_scores = [], [], []
+        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
         fr_offset = mo_offset = 0
         for url, dp in article_parallels:
             fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
@@ -1160,11 +1170,13 @@ def e2e(
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
+            all_doc_ids.extend([url] * len(aligned_dp.french))
 
         aligned = AlignedCorpus(
             french=all_fr,
             moore=all_mo,
             scores=all_scores,
+            doc_ids=all_doc_ids,
             source="news",
         )
         if drop_duplicate:
@@ -1242,7 +1254,7 @@ def e2e(
         all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
         all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
 
-        all_fr, all_mo, all_scores = [], [], []
+        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
         fr_offset = mo_offset = 0
         for date, dp in date_parallels:
             typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
@@ -1254,11 +1266,13 @@ def e2e(
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
+            all_doc_ids.extend([date] * len(aligned_dp.french))
 
         aligned = AlignedCorpus(
             french=all_fr,
             moore=all_mo,
             scores=all_scores,
+            doc_ids=all_doc_ids,
             source="conseils",
         )
         if drop_duplicate:

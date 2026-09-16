@@ -1,5 +1,7 @@
 """Tests for moore_web.flatten — focusing on _join_lines and the missing-space fix."""
 
+import pytest
+
 from moore_web.flatten import AlignedCorpus, _join_lines, flat_rows_to_long, normalize_fr, normalize_mo, segment_fr
 
 
@@ -171,6 +173,7 @@ class TestFlatRowsToLong:
                 "source_text": "Bonjour.",
                 "target_text": "Ne y sõma.",
                 "is_source_orig": True,
+                "doc_id": None,
                 "source": "kade",
                 "laser_score": 0.8,
             }
@@ -217,6 +220,55 @@ class TestFlatRowsToLong:
         )
         assert [r["id"] for r in rows] == ["kade-000000", "kade-000001"]
 
+    def test_doc_id_exposed_as_field(self):
+        rows = flat_rows_to_long(
+            [{"french": "a", "moore": "b", "laser_score": 1.0, "doc_id": "2024-07-24"}], "conseils"
+        )
+        assert rows[0]["doc_id"] == "2024-07-24"
+
+    def test_id_carries_doc_ordinal_and_local_index(self):
+        rows = flat_rows_to_long(
+            [
+                {"french": "a1", "moore": "b1", "laser_score": 1.0, "doc_id": "2024-07-24"},
+                {"french": "a2", "moore": "b2", "laser_score": 1.0, "doc_id": "2024-07-24"},
+                {"french": "a3", "moore": "b3", "laser_score": 1.0, "doc_id": "2024-07-31"},
+            ],
+            "conseils",
+        )
+        assert [r["id"] for r in rows] == [
+            "conseils-000000-000",
+            "conseils-000000-001",
+            "conseils-000001-000",
+        ]
+
+    def test_doc_id_local_index_resets_across_interleaved_docs(self):
+        # Same doc_id appearing again after a different one in between still
+        # continues that doc's own running count, not the global row index.
+        rows = flat_rows_to_long(
+            [
+                {"french": "a1", "moore": "b1", "laser_score": 1.0, "doc_id": "url-a"},
+                {"french": "a2", "moore": "b2", "laser_score": 1.0, "doc_id": "url-b"},
+                {"french": "a3", "moore": "b3", "laser_score": 1.0, "doc_id": "url-a"},
+            ],
+            "news",
+        )
+        assert rows[0]["id"] == "news-000000-000"
+        assert rows[1]["id"] == "news-000001-000"
+        assert rows[2]["id"] == "news-000000-001"
+
+    def test_no_doc_id_falls_back_to_flat_scheme(self):
+        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "kade")
+        assert rows[0]["id"] == "kade-000000"
+        assert rows[0]["doc_id"] is None
+
+    def test_english_row_shares_doc_id(self):
+        rows = flat_rows_to_long(
+            [{"french": "chat", "moore": "bagre", "english": "cat", "laser_score": 1.0, "doc_id": "entry-42"}],
+            "simple",
+        )
+        assert rows[0]["doc_id"] == rows[1]["doc_id"] == "entry-42"
+        assert rows[0]["id"] == rows[1]["id"]
+
 
 class TestAlignedCorpusToJsonlRows:
     def test_matches_flat_rows_to_long(self):
@@ -232,3 +284,19 @@ class TestAlignedCorpusToJsonlRows:
         rows = aligned.to_jsonl_rows()
         assert len(rows) == 2
         assert rows[1]["target_text"] == "cat"
+
+    def test_includes_doc_ids_when_present(self):
+        aligned = AlignedCorpus(
+            french=["a", "c"],
+            moore=["b", "d"],
+            scores=[1.0, 1.0],
+            doc_ids=["2024-07-24", "2024-07-31"],
+            source="conseils",
+        )
+        rows = aligned.to_jsonl_rows()
+        assert [r["doc_id"] for r in rows] == ["2024-07-24", "2024-07-31"]
+        assert [r["id"] for r in rows] == ["conseils-000000-000", "conseils-000001-000"]
+
+    def test_mismatched_doc_ids_length_raises(self):
+        with pytest.raises(ValueError, match="doc_ids"):
+            AlignedCorpus(french=["a", "c"], moore=["b", "d"], scores=[1.0, 1.0], doc_ids=["only-one"], source="x")
