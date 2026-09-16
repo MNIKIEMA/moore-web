@@ -62,6 +62,114 @@ class ParallelText(msgspec.Struct):
         return msgspec.json.decode(data, type=cls)
 
 
+# Original (not-translated) language for each known ``source`` tag, used by
+# AlignedCorpus.to_jsonl_rows to set ``is_source_orig``. Kadé and sida-bilingual-book
+# are both translations of an uncaptured English original (the underlying
+# Shellbook Publishing Systems story), so French isn't truly "original" there
+# either -- but Mooré was translated FROM the French text, which is what this
+# field tracks: translation direction within this corpus, not ultimate
+# authorship. conseils/raamde-news are drafted in French then translated to
+# Mooré (confirmed: conseils via sig.gov.bf's file naming, raamde-news via
+# explicit "Kibarã yii <French source>" attribution lines in ~half the
+# articles). niggli-dictionary-mos-fra-eng and digital-postal-glossary
+# (-term)(-definition) are lexical: a Mooré headword/term with French/English
+# glosses, so Mooré is the "original" side.
+ORIGINAL_LANGUAGE: dict[str, str] = {
+    "sida-bilingual-book": "fra",
+    "kade": "fra",
+    "raamde-news": "fra",
+    "conseils": "fra",
+    "niggli-dictionary-mos-fra-eng": "mos",
+    "digital-postal-glossary": "mos",
+    "digital-postal-glossary-term": "mos",
+    "digital-postal-glossary-term-definition": "mos",
+}
+
+
+def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
+    """Convert flat ``{french, moore, english?, laser_score?, doc_id?}`` rows
+    into the long-format HF schema: one row per (src_lang, tgt_lang) pair.
+
+    A pairwise score (e.g. LASER cosine similarity) belongs to exactly one
+    language pair, so a french+moore+english row becomes *two* output rows
+    sharing one ``id`` -- a fra/mos-eng row alongside the fra-mos row --
+    instead of one row whose single score can't say which pair it's scoring.
+
+    ``src_lang``/``tgt_lang`` follow :data:`ORIGINAL_LANGUAGE`: the original
+    (not-translated) side is always ``src_lang``, so ``is_source_orig`` is
+    ``True`` for every row of a source with a known direction, and ``None``
+    when the source isn't in that mapping (direction not yet determined --
+    e.g. a future source where it varies per row would need per-row handling
+    here rather than the constant used today).
+
+    ``id`` carries the source document, not just a flat position, when a row
+    has a ``doc_id`` (the per-unit key several sources already align by --
+    page/enum for sida, article URL for news, session date for conseils --
+    but previously discarded after concatenating aligned units together):
+    ``"{source}-{nth distinct doc_id}-{nth row within that doc}"``, e.g.
+    ``"conseils-000042-003"``. The raw ``doc_id`` value itself (a date, a
+    URL, ...) is also kept as its own field for exact grouping/lookup, since
+    the ordinal in ``id`` alone doesn't let you filter by it. Rows without a
+    ``doc_id`` keep the previous flat ``"{source}-{i:06d}"`` scheme and get
+    ``doc_id: None``.
+    """
+    orig_lang = ORIGINAL_LANGUAGE.get(source)
+    is_orig = True if orig_lang is not None else None
+
+    def _pair_row(
+        row_id: str, src_lang: str, tgt_lang: str, source_text: str, target_text: str, score, doc_id
+    ) -> dict:
+        return {
+            "id": row_id,
+            "src_lang": src_lang,
+            "tgt_lang": tgt_lang,
+            "source_text": source_text,
+            "target_text": target_text,
+            "is_source_orig": is_orig,
+            "doc_id": doc_id,
+            "source": source,
+            # Always present, even when every row's score is None (e.g.
+            # definition pairs, which aren't LASER-scored) -- a key that's
+            # sometimes missing and sometimes present across different
+            # rows/files/configs can cause a schema mismatch for HF/Arrow
+            # consumers (e.g. concatenate_datasets); a null value in an
+            # always-present column is the normal, well-handled case.
+            "laser_score": round(score, 4) if score is not None else None,
+        }
+
+    doc_ordinal: dict[str, int] = {}
+    doc_row_count: dict[str, int] = {}
+
+    long_rows: list[dict] = []
+    for i, row in enumerate(rows):
+        fr, mo, score = row.get("french", ""), row.get("moore", ""), row.get("laser_score")
+        doc_id = row.get("doc_id")
+        if doc_id is not None:
+            if doc_id not in doc_ordinal:
+                doc_ordinal[doc_id] = len(doc_ordinal)
+            local_idx = doc_row_count.get(doc_id, 0)
+            doc_row_count[doc_id] = local_idx + 1
+            row_id = f"{source}-{doc_ordinal[doc_id]:06d}-{local_idx:03d}"
+        else:
+            row_id = f"{source}-{i:06d}"
+
+        if orig_lang == "mos":
+            src_lang, tgt_lang, source_text, target_text = "mos", "fra", mo, fr
+        else:
+            src_lang, tgt_lang, source_text, target_text = "fra", "mos", fr, mo
+        long_rows.append(_pair_row(row_id, src_lang, tgt_lang, source_text, target_text, score, doc_id))
+
+        en = row.get("english")
+        if en:
+            # The english score isn't computed separately today (english only
+            # occurs for exact-match dictionary entries, which score 1.0 for
+            # the primary pair above); carry the same score value rather than
+            # fabricate a distinct one.
+            long_rows.append(_pair_row(row_id, src_lang, "eng", source_text, en, score, doc_id))
+
+    return long_rows
+
+
 class AlignedCorpus(ParallelText):
     """Aligned parallel corpus where every list has the same length.
 
@@ -71,6 +179,10 @@ class AlignedCorpus(ParallelText):
     """
 
     scores: list[float | None] = msgspec.field(default_factory=list)
+    # Per-pair source-document key (page/enum id, article URL, session date,
+    # ...) for sources that align per unit and concatenate. Optional -- like
+    # `english`, either empty (not tracked) or one entry per pair.
+    doc_ids: list[str] = msgspec.field(default_factory=list)
 
     def __post_init__(self) -> None:
         n_fr, n_mo, n_sc = len(self.french), len(self.moore), len(self.scores)
@@ -78,6 +190,8 @@ class AlignedCorpus(ParallelText):
             raise ValueError(
                 f"AlignedCorpus requires equal-length lists, got french={n_fr}, moore={n_mo}, scores={n_sc}"
             )
+        if self.doc_ids and len(self.doc_ids) != n_fr:
+            raise ValueError(f"doc_ids must be empty or match french/moore length, got {len(self.doc_ids)}")
 
     @classmethod
     def from_pairs(cls, pairs: list[dict], source: str = "") -> AlignedCorpus:
@@ -90,32 +204,54 @@ class AlignedCorpus(ParallelText):
         )
 
     def to_jsonl_rows(self) -> list[dict]:
-        """Return one dict per aligned pair, ready to write as JSONL."""
-        has_english = bool(self.english)
-        omit_score = all(s is None for s in self.scores)
+        """Return one row per (src_lang, tgt_lang) translation pair, ready to write as JSONL.
 
-        def _row(french: str, moore: str, score: float | None, english: str | None = None) -> dict:
-            r: dict = {"french": french, "moore": moore}
-            if english is not None:
-                r["english"] = english
-            if not omit_score:
-                r["laser_score"] = round(score, 4) if score is not None else None
-            r["source"] = self.source
-            return r
+        See :func:`flat_rows_to_long` for the schema and rationale.
+        """
+        flat = [{"french": f, "moore": m, "laser_score": s} for f, m, s in zip(self.french, self.moore, self.scores)]
+        if self.english:
+            for row, en in zip(flat, self.english):
+                row["english"] = en
+        if self.doc_ids:
+            for row, doc_id in zip(flat, self.doc_ids):
+                row["doc_id"] = doc_id
+        return flat_rows_to_long(flat, self.source)
 
-        if has_english:
-            return [
-                _row(f, m, s, en) for f, m, s, en in zip(self.french, self.moore, self.scores, self.english)
-            ]
-        return [_row(f, m, s) for f, m, s in zip(self.french, self.moore, self.scores)]
+    def write_jsonl(self, path: str) -> list[str]:
+        """Write aligned pairs to JSONL file(s).
 
-    def write_jsonl(self, path: str) -> None:
-        """Write aligned pairs to a JSONL file."""
+        Split into one file per distinct (src_lang, tgt_lang) pair when more
+        than one is present (e.g. a trilingual dictionary's mos-fra rows
+        mixed with its mos-eng rows) -- one clean bitext per pair instead of
+        one file a consumer has to filter first, matching the convention
+        used on the HF-push path (see ``moore_web.annotate.save_data``).
+        A single-pair (or empty) corpus is written to ``path`` unchanged.
+
+        Returns the list of file paths written.
+        """
         import json
+        from pathlib import Path as _Path
 
-        with open(path, "w", encoding="utf-8") as f:
-            for row in self.to_jsonl_rows():
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        def _write(dest: str, subset: list[dict]) -> None:
+            with open(dest, "w", encoding="utf-8") as f:
+                for row in subset:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+        rows = self.to_jsonl_rows()
+        pairs = sorted({(r["src_lang"], r["tgt_lang"]) for r in rows})
+
+        if len(pairs) <= 1:
+            _write(path, rows)
+            return [path]
+
+        base = _Path(path)
+        written: list[str] = []
+        for src_lang, tgt_lang in pairs:
+            subset = [r for r in rows if (r["src_lang"], r["tgt_lang"]) == (src_lang, tgt_lang)]
+            sub_path = base.with_name(f"{base.stem}.{src_lang}-{tgt_lang}{base.suffix}")
+            _write(str(sub_path), subset)
+            written.append(str(sub_path))
+        return written
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +425,7 @@ def flatten_sida_book(
         chapters: Output of :func:`moore_web.book_parser.parse_pdf_to_json`.
         segment:  If True, run sentence segmentation on each text block.
     """
-    result = ParallelText(source="sida")
+    result = ParallelText(source="sida-bilingual-book")
     # FIXME: normalization add extra spaces.@critical
 
     for chapter in chapters:
@@ -363,7 +499,7 @@ def flatten_sida_book_per_unit(
             if not fr_raw or not mo_raw:
                 continue
 
-            parallel = ParallelText(source="sida")
+            parallel = ParallelText(source="sida-bilingual-book")
             if segment:
                 parallel.french.extend(normalize_fr(s) for s in segment_fr(fr_raw))
                 parallel.moore.extend(normalize_mo(s) for s in segment_mo(mo_raw))
@@ -375,7 +511,7 @@ def flatten_sida_book_per_unit(
                 results.append((f"page-{page.page_number}", parallel))
 
         for enum in chapter.enums:
-            parallel = ParallelText(source="sida")
+            parallel = ParallelText(source="sida-bilingual-book")
 
             fr_title = normalize_fr(_join_lines(enum.french_title))
             mo_title = normalize_mo(_join_lines(enum.moore_title))
@@ -508,7 +644,7 @@ def flatten_simple_parser(
     """
     from moore_web.models import DictionaryEntry
 
-    result = ParallelText(source="simple")
+    result = ParallelText(source="niggli-dictionary-mos-fra-eng")
 
     def _clean(text: str | None) -> str:
         text = text or ""
@@ -627,7 +763,7 @@ def flatten_news_entries(
         entries: Annotated corpus entries.
         segment: If True, run sentence segmentation on each entry's text.
     """
-    result = ParallelText(source="news")
+    result = ParallelText(source="raamde-news")
 
     for item in entries:
         segs = item.get("segments", {})

@@ -103,7 +103,12 @@ def _load_kade_book(path: Path):
 
 def _write_aligned(aligned, out: Path, use_jsonl: bool) -> None:
     if use_jsonl:
-        aligned.write_jsonl(str(out))
+        written = aligned.write_jsonl(str(out))
+        if len(written) > 1:
+            typer.echo(f"Wrote {len(aligned.french)} aligned pairs across {len(written)} files:")
+            for w in written:
+                typer.echo(f"  → {w}")
+            return
     else:
         out.write_bytes(msgspec.json.encode(aligned))
     typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
@@ -133,7 +138,11 @@ def _finalize_aligned(
         from datasets import Dataset
 
         from moore_web import annotate as _ann
+        from moore_web.flatten import flat_rows_to_long
 
+        # Postprocess (lexicon synonym-splitting/proverb-note cleanup) runs on
+        # the flat french/moore shape it expects; convert to the long-format
+        # HF schema (one row per language pair) only after that's done.
         rows = [
             {"french": f, "moore": m, "laser_score": s}
             for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)
@@ -141,20 +150,27 @@ def _finalize_aligned(
         if aligned.english:
             for row, en in zip(rows, aligned.english):
                 row["english"] = en
+        if aligned.doc_ids:
+            for row, doc_id in zip(rows, aligned.doc_ids):
+                row["doc_id"] = doc_id
 
         if postprocess:
             rows = postprocess(rows)
 
-        # Drop laser_score entirely when every value is None (e.g. definition pairs).
-        if rows and all(r["laser_score"] is None for r in rows):
-            for r in rows:
-                del r["laser_score"]
+        rows = flat_rows_to_long(rows, aligned.source)
 
         dataset = Dataset.from_list(rows)
 
         if needs_annotation:
+            # score_dataset (score_laser.py) reads src_lang/tgt_lang per row
+            # from the dataset's own src_lang/tgt_lang columns when neither is
+            # passed explicitly, so a dataset with mixed pairs (e.g. simple's
+            # interspersed mos-fra and mos-eng rows) is scored correctly
+            # without needing to pick one language pair here.
             dataset = _ann.annotate(
                 dataset,
+                src_field="source_text",
+                tgt_field="target_text",
                 lang_id=add_lang_id,
                 quality_warn=add_quality_warn,
                 consistency=add_consistency,
@@ -177,15 +193,20 @@ def _dedup_aligned(aligned):
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
     from moore_web.flatten import AlignedCorpus
 
+    has_doc_ids = bool(aligned.doc_ids)
     pairs = [
         {"fr": f, "mo": m, "laser_score": s} for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)
     ]
+    if has_doc_ids:
+        for p, doc_id in zip(pairs, aligned.doc_ids):
+            p["doc_id"] = doc_id
     typer.echo("      Running COMET-QE deduplication…")
     pairs = deduplicate_by_comet(pairs)
     return AlignedCorpus(
         french=[p["fr"] for p in pairs],
         moore=[p["mo"] for p in pairs],
         scores=[p["laser_score"] for p in pairs],
+        doc_ids=[p["doc_id"] for p in pairs] if has_doc_ids else [],
         source=aligned.source,
     )
 
@@ -662,6 +683,14 @@ def align(
 def annotate(
     input: Annotated[str, typer.Option("--input", "-i", help="Local JSONL or hf://owner/repo.")],
     output: Annotated[str, typer.Option("--output", "-o", help="Local JSONL or hf://owner/repo.")],
+    config: Annotated[
+        Optional[str],
+        typer.Option(
+            "--config",
+            help="Config to load (hf:// input only) -- required when the repo has more than "
+            "one, e.g. a language pair from a repo save_data split by pair (\"mos-fra\").",
+        ),
+    ] = None,
     src: Annotated[str, typer.Option("--src", help="Source field name in the dataset.")] = "french",
     tgt: Annotated[str, typer.Option("--tgt", help="Target field name in the dataset.")] = "moore",
     lang_id: Annotated[
@@ -712,6 +741,7 @@ def annotate(
     [bold]Local:[/bold]  moore-web annotate -i data.jsonl -o out.jsonl --consistency --quality-warn
     [bold]All:[/bold]    moore-web annotate -i data.jsonl -o out.jsonl --all
     [bold]HF:[/bold]     moore-web annotate -i hf://owner/src -o hf://owner/dst --all
+    [bold]HF config:[/bold] moore-web annotate -i hf://owner/src --config mos-fra -o hf://owner/dst --all
     """
     from moore_web import annotate as _ann
 
@@ -725,7 +755,7 @@ def annotate(
         )
         raise typer.Exit(1)
 
-    dataset = _ann.load_data(input)
+    dataset = _ann.load_data(input, config_name=config)
     dataset = _ann.annotate(
         dataset,
         src_field=src,
@@ -1071,7 +1101,7 @@ def e2e(
         all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
         all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
 
-        all_fr, all_mo, all_scores = [], [], []
+        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
         fr_offset = mo_offset = 0
         for unit_id, dp in unit_parallels:
             fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
@@ -1082,12 +1112,14 @@ def e2e(
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
+            all_doc_ids.extend([unit_id] * len(aligned_dp.french))
 
         aligned = AlignedCorpus(
             french=all_fr,
             moore=all_mo,
             scores=all_scores,
-            source="sida",
+            doc_ids=all_doc_ids,
+            source="sida-bilingual-book",
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
@@ -1141,7 +1173,7 @@ def e2e(
         all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
         all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
 
-        all_fr, all_mo, all_scores = [], [], []
+        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
         fr_offset = mo_offset = 0
         for url, dp in article_parallels:
             fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
@@ -1152,12 +1184,14 @@ def e2e(
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
+            all_doc_ids.extend([url] * len(aligned_dp.french))
 
         aligned = AlignedCorpus(
             french=all_fr,
             moore=all_mo,
             scores=all_scores,
-            source="news",
+            doc_ids=all_doc_ids,
+            source="raamde-news",
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
@@ -1234,7 +1268,7 @@ def e2e(
         all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
         all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
 
-        all_fr, all_mo, all_scores = [], [], []
+        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
         fr_offset = mo_offset = 0
         for date, dp in date_parallels:
             typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
@@ -1246,11 +1280,13 @@ def e2e(
             all_fr.extend(aligned_dp.french)
             all_mo.extend(aligned_dp.moore)
             all_scores.extend(aligned_dp.scores)
+            all_doc_ids.extend([date] * len(aligned_dp.french))
 
         aligned = AlignedCorpus(
             french=all_fr,
             moore=all_mo,
             scores=all_scores,
+            doc_ids=all_doc_ids,
             source="conseils",
         )
         if drop_duplicate:
@@ -1294,7 +1330,7 @@ def e2e(
                 mo_texts = [p.mos_term for p in valid]
                 # Terms are aligned by exact key match → score 1.0 is appropriate.
                 scores = cast(_Scores, [1.0] * len(fr_texts))
-                label = "digital-term"
+                label = "digital-postal-glossary-term"
             elif inc_definitions and not inc_terms:
                 valid = [p for p in pairs if p.fr_definition and p.mos_definition]
                 fr_texts = [p.fr_definition for p in valid]
@@ -1302,14 +1338,14 @@ def e2e(
                 # Definitions are structurally paired (same glossary entry) but not
                 # alignment-scored; use None to signal the score is absent.
                 scores = cast(_Scores, [None] * len(fr_texts))
-                label = "digital-term-definition"
+                label = "digital-postal-glossary-term-definition"
             else:
                 term_pairs = [p for p in pairs if p.fr_term and p.mos_term]
                 def_pairs = [p for p in pairs if p.fr_definition and p.mos_definition]
                 fr_texts = [p.fr_term for p in term_pairs] + [p.fr_definition for p in def_pairs]
                 mo_texts = [p.mos_term for p in term_pairs] + [p.mos_definition for p in def_pairs]
                 scores = cast(_Scores, [1.0] * len(term_pairs) + [None] * len(def_pairs))
-                label = "digital"
+                label = "digital-postal-glossary"
             a = AlignedCorpus(
                 french=fr_texts,
                 moore=mo_texts,

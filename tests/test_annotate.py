@@ -95,6 +95,24 @@ class TestLoadData:
         with pytest.raises(DatasetNotFoundError):
             load_data("hf://this-owner-does-not-exist/this-repo-does-not-exist")
 
+    def test_hf_uri_without_config_name_omits_it(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "moore_web.annotate.load_dataset", lambda *a, **kw: calls.append((a, kw)) or "sentinel"
+        )
+        result = load_data("hf://owner/repo", split="train")
+        assert result == "sentinel"
+        assert calls == [(("owner/repo",), {"split": "train"})]
+
+    def test_hf_uri_with_config_name_passes_it(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "moore_web.annotate.load_dataset", lambda *a, **kw: calls.append((a, kw)) or "sentinel"
+        )
+        result = load_data("hf://owner/repo", split="train", config_name="mos-fra")
+        assert result == "sentinel"
+        assert calls == [(("owner/repo", "mos-fra"), {"split": "train"})]
+
 
 # ---------------------------------------------------------------------------
 # save_data
@@ -128,14 +146,57 @@ class TestSaveData:
         pushed: dict = {}
 
         class MockDatasetDict(dict):
-            def push_to_hub(self, repo, private=False):
+            def push_to_hub(self, repo, private=False, config_name="default"):
                 pushed["repo"] = repo
                 pushed["private"] = private
+                pushed.setdefault("config_names", []).append(config_name)
 
         monkeypatch.setattr("moore_web.annotate.DatasetDict", MockDatasetDict)
         save_data(small_dataset, "hf://owner/repo", private=True, split="train")
         assert pushed["repo"] == "owner/repo"
         assert pushed["private"] is True
+        # No src_lang/tgt_lang columns -> nothing to split, one push with the default config.
+        assert pushed["config_names"] == ["default"]
+
+    def _mixed_lang_pair_dataset(self) -> Dataset:
+        return Dataset.from_list(
+            [
+                {"id": "a-0", "src_lang": "mos", "tgt_lang": "fra", "source_text": "bagre", "target_text": "chat"},
+                {"id": "a-0", "src_lang": "mos", "tgt_lang": "eng", "source_text": "bagre", "target_text": "cat"},
+                {"id": "b-0", "src_lang": "mos", "tgt_lang": "fra", "source_text": "koom", "target_text": "eau"},
+            ]
+        )
+
+    def test_local_output_splits_into_one_file_per_lang_pair(self, tmp_path: Path):
+        out = tmp_path / "simple_aligned.jsonl"
+        save_data(self._mixed_lang_pair_dataset(), str(out))
+
+        assert not out.exists()
+        fra_file = tmp_path / "simple_aligned.mos-fra.jsonl"
+        eng_file = tmp_path / "simple_aligned.mos-eng.jsonl"
+        assert fra_file.exists()
+        assert eng_file.exists()
+
+        fra_rows = [json.loads(line) for line in fra_file.read_text(encoding="utf-8").splitlines()]
+        eng_rows = [json.loads(line) for line in eng_file.read_text(encoding="utf-8").splitlines()]
+        assert len(fra_rows) == 2
+        assert len(eng_rows) == 1
+        assert all(r["tgt_lang"] == "fra" for r in fra_rows)
+        assert all(r["tgt_lang"] == "eng" for r in eng_rows)
+
+    def test_hf_output_pushes_one_config_per_lang_pair(self, monkeypatch):
+        pushed: list[dict] = []
+
+        class MockDatasetDict(dict):
+            def push_to_hub(self, repo, private=False, config_name="default"):
+                pushed.append({"repo": repo, "private": private, "config_name": config_name, "n": len(self["train"])})
+
+        monkeypatch.setattr("moore_web.annotate.DatasetDict", MockDatasetDict)
+        save_data(self._mixed_lang_pair_dataset(), "hf://owner/repo", private=True, split="train")
+
+        config_names = sorted(p["config_name"] for p in pushed)
+        assert config_names == ["mos-eng", "mos-fra"]
+        assert all(p["repo"] == "owner/repo" and p["private"] is True for p in pushed)
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +400,45 @@ class TestRunLaser:
         result = run_laser(small_dataset)
         assert "french" in result.column_names
         assert "moore" in result.column_names
+
+    def test_mixed_language_pairs_scored_per_row_and_reordered_correctly(self, monkeypatch):
+        # Long-format rows: a mos-fra pair and a mos-eng pair share one id
+        # (a trilingual dictionary entry), plus a second mos-fra pair.
+        loaded_langs: list[str] = []
+
+        def _mock_encoder_factory():
+            class _MockEncoder:
+                def __init__(self, lang):
+                    self.lang = lang
+                    loaded_langs.append(lang)
+
+                def encode_sentences(self, texts, normalize_embeddings=True):
+                    n = len(texts)
+                    vecs = np.ones((n, 4), dtype=np.float32)
+                    norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+                    return vecs / norms
+
+            return _MockEncoder
+
+        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", _mock_encoder_factory())
+
+        rows = [
+            {"id": "a", "src_lang": "mos", "tgt_lang": "fra", "source_text": "bagre", "target_text": "chat"},
+            {"id": "a", "src_lang": "mos", "tgt_lang": "eng", "source_text": "bagre", "target_text": "cat"},
+            {"id": "b", "src_lang": "mos", "tgt_lang": "fra", "source_text": "koom", "target_text": "eau"},
+        ]
+        ds = Dataset.from_list(rows)
+
+        result = run_laser(ds, src_field="source_text", tgt_field="target_text")
+
+        assert "laser_score" in result.column_names
+        assert len(result) == 3
+        # Original row order preserved after grouping/concatenating/sorting.
+        assert result["id"] == ["a", "a", "b"]
+        for score in result["laser_score"]:
+            assert score == pytest.approx(1.0, abs=1e-3)
+        # Each language's encoder loaded once, not once per row/group occurrence.
+        assert sorted(loaded_langs) == ["eng", "fra", "mos"]
 
 
 # ---------------------------------------------------------------------------

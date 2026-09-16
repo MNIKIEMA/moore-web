@@ -58,12 +58,16 @@ def _hf_repo(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def load_data(path: str, split: str = "train"):
+def load_data(path: str, split: str = "train", config_name: str | None = None):
     """Load an aligned dataset from a local JSONL file or a HuggingFace Hub repo.
 
     Args:
-        path:  Local file path **or** ``hf://owner/repo`` URI.
-        split: Dataset split to load (HF mode only, default: ``"train"``).
+        path:        Local file path **or** ``hf://owner/repo`` URI.
+        split:       Dataset split to load (HF mode only, default: ``"train"``).
+        config_name: Config to load (HF mode only) -- required when the repo has
+                      more than one, e.g. a language pair like ``"mos-fra"`` from
+                      a repo ``save_data`` split by pair (see its docstring).
+                      ``None`` loads the repo's default config.
 
     Returns:
         A ``datasets.Dataset``.
@@ -71,6 +75,9 @@ def load_data(path: str, split: str = "train"):
 
     if _is_hf(path):
         repo = _hf_repo(path)
+        if config_name is not None:
+            print(f"Loading '{repo}' (config={config_name}, split={split}) from HuggingFace Hub…")
+            return load_dataset(repo, config_name, split=split)
         print(f"Loading '{repo}' (split={split}) from HuggingFace Hub…")
         return load_dataset(repo, split=split)
 
@@ -89,8 +96,43 @@ def load_data(path: str, split: str = "train"):
     return Dataset.from_list(rows)
 
 
+def _split_by_lang_pair(dataset) -> dict[tuple[str, str], "Dataset"] | None:
+    """Split a dataset into one sub-dataset per distinct (src_lang, tgt_lang) pair.
+
+    Returns ``None`` (nothing to split) when the dataset has no
+    ``src_lang``/``tgt_lang`` columns, or only one distinct pair is present.
+    """
+    if "src_lang" not in dataset.column_names or "tgt_lang" not in dataset.column_names:
+        return None
+    pairs = sorted(set(zip(dataset["src_lang"], dataset["tgt_lang"])))
+    if len(pairs) <= 1:
+        return None
+    return {
+        pair: dataset.filter(lambda r, sl=pair[0], tl=pair[1]: r["src_lang"] == sl and r["tgt_lang"] == tl)
+        for pair in pairs
+    }
+
+
+def _write_jsonl_file(dataset, out: Path) -> None:
+    with out.open("w", encoding="utf-8") as f:
+        for row in dataset:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def save_data(dataset, path: str, private: bool = False, split: str = "train") -> None:
-    """Write an annotated dataset to a local JSONL file or push to HuggingFace Hub.
+    """Write an annotated dataset to local JSONL file(s) or push to HuggingFace Hub.
+
+    A dataset with more than one distinct (src_lang, tgt_lang) pair (e.g. a
+    trilingual dictionary's mos-fra rows mixed with its mos-eng rows) is split
+    into one clean bitext per pair instead of one file/config a consumer has
+    to filter first -- the convention most HF parallel-data consumers expect
+    (e.g. opus100 ships separate en-fr, en-de, ... configs). Locally, each
+    pair gets its own file (``out.stem + ".{src}-{tgt}" + out.suffix``); on
+    the Hub, each pair is pushed as its own config within the same repo
+    (``load_dataset(repo, "mos-fra")`` vs. ``load_dataset(repo, "mos-eng")``).
+    A dataset with zero or one pair (or without src_lang/tgt_lang columns at
+    all -- e.g. a legacy flat french/moore dataset) is written as a single
+    file/config, unchanged from before.
 
     Args:
         dataset: A ``datasets.Dataset``.
@@ -98,19 +140,31 @@ def save_data(dataset, path: str, private: bool = False, split: str = "train") -
         private: Push as a private dataset (HF mode only).
         split:   Split name used when wrapping in a ``DatasetDict`` (HF mode only).
     """
+    by_pair = _split_by_lang_pair(dataset)
+
     if _is_hf(path):
         repo = _hf_repo(path)
-        print(f"Pushing {len(dataset):,} rows → '{repo}' …")
-        DatasetDict({split: dataset}).push_to_hub(repo, private=private)
+        if by_pair is None:
+            print(f"Pushing {len(dataset):,} rows → '{repo}' …")
+            DatasetDict({split: dataset}).push_to_hub(repo, private=private)
+        else:
+            for (src_lang, tgt_lang), sub in by_pair.items():
+                config_name = f"{src_lang}-{tgt_lang}"
+                print(f"Pushing {len(sub):,} rows ({config_name}) → '{repo}' …")
+                DatasetDict({split: sub}).push_to_hub(repo, config_name=config_name, private=private)
         print(f"Done. https://huggingface.co/datasets/{repo}")
         return
 
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Writing {len(dataset):,} rows → {out} …")
-    with out.open("w", encoding="utf-8") as f:
-        for row in dataset:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if by_pair is None:
+        print(f"Writing {len(dataset):,} rows → {out} …")
+        _write_jsonl_file(dataset, out)
+    else:
+        for (src_lang, tgt_lang), sub in by_pair.items():
+            sub_path = out.with_name(f"{out.stem}.{src_lang}-{tgt_lang}{out.suffix}")
+            print(f"Writing {len(sub):,} rows ({src_lang}-{tgt_lang}) → {sub_path} …")
+            _write_jsonl_file(sub, sub_path)
     print("Done.")
 
 
@@ -254,15 +308,17 @@ def run_laser(
     dataset,
     src_field: str = "french",
     tgt_field: str = "moore",
-    src_lang: str = "fra",
-    tgt_lang: str = "mos",
+    src_lang: str | None = None,
+    tgt_lang: str | None = None,
     output_field: str | None = None,
     encoder_src=None,
     encoder_tgt=None,
 ):
     """Add LASER cosine-similarity scores between source and target sentences.
 
-    Adds one column named ``output_field`` (default: ``"laser_{src_lang}_{tgt_lang}"``).
+    Adds one column named ``output_field`` (default: ``"laser_{src_lang}_{tgt_lang}"``
+    for a single fixed pair, or ``"laser_score"`` when scoring per-row language
+    pairs -- see ``score_dataset``'s docstring).
 
     Unlike :func:`~moore_web.score_mt_datasets.score_aligned_pairs`, this function
     does **not** drop rows — it annotates every row unconditionally.
@@ -271,8 +327,11 @@ def run_laser(
         dataset:      Input ``datasets.Dataset``.
         src_field:    Source column name (default: ``"french"``).
         tgt_field:    Target column name (default: ``"moore"``).
-        src_lang:     LASER language code for the source encoder (default: ``"fra"``).
-        tgt_lang:     LASER language code for the target encoder (default: ``"mos"``).
+        src_lang:     LASER language code for the source encoder. Left ``None`` to
+                      infer from ``src_field`` (or, if the dataset has ``src_lang``/
+                      ``tgt_lang`` columns, to score each row with its own pair).
+        tgt_lang:     LASER language code for the target encoder. Same fallback as
+                      ``src_lang``.
         output_field: Name for the new score column. Defaults to
                       ``"laser_{src_lang}_{tgt_lang}"`` when ``None``.
         encoder_src:  Pre-loaded source encoder; loaded automatically if ``None``.

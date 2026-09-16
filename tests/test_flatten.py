@@ -1,6 +1,8 @@
 """Tests for moore_web.flatten — focusing on _join_lines and the missing-space fix."""
 
-from moore_web.flatten import _join_lines, normalize_fr, normalize_mo, segment_fr
+import pytest
+
+from moore_web.flatten import AlignedCorpus, _join_lines, flat_rows_to_long, normalize_fr, normalize_mo, segment_fr
 
 
 class TestJoinLines:
@@ -158,3 +160,172 @@ class TestSegmentFr:
         # _join_lines is called inside segment_fr, so the fix applies
         result = segment_fr("smartphones.Les causes ne sont pas connues.")
         assert len(result) == 2
+
+
+class TestFlatRowsToLong:
+    def test_fra_source_puts_french_as_source_text(self):
+        rows = flat_rows_to_long([{"french": "Bonjour.", "moore": "Ne y sõma.", "laser_score": 0.8}], "kade")
+        assert rows == [
+            {
+                "id": "kade-000000",
+                "src_lang": "fra",
+                "tgt_lang": "mos",
+                "source_text": "Bonjour.",
+                "target_text": "Ne y sõma.",
+                "is_source_orig": True,
+                "doc_id": None,
+                "source": "kade",
+                "laser_score": 0.8,
+            }
+        ]
+
+    def test_mos_source_puts_moore_as_source_text(self):
+        rows = flat_rows_to_long([{"french": "chat", "moore": "bagre", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng")
+        row = rows[0]
+        assert row["src_lang"] == "mos"
+        assert row["tgt_lang"] == "fra"
+        assert row["source_text"] == "bagre"
+        assert row["target_text"] == "chat"
+        assert row["is_source_orig"] is True
+
+    def test_unknown_source_has_null_is_source_orig(self):
+        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": None}], "mystery-source")
+        assert rows[0]["is_source_orig"] is None
+
+    def test_english_triplet_becomes_two_rows_sharing_id(self):
+        rows = flat_rows_to_long(
+            [{"french": "chat", "moore": "bagre", "english": "cat", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng"
+        )
+        assert len(rows) == 2
+        assert rows[0]["id"] == rows[1]["id"] == "niggli-dictionary-mos-fra-eng-000000"
+        assert (rows[0]["tgt_lang"], rows[1]["tgt_lang"]) == ("fra", "eng")
+        assert rows[1]["source_text"] == "bagre"
+        assert rows[1]["target_text"] == "cat"
+
+    def test_no_english_is_single_row(self):
+        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng")
+        assert len(rows) == 1
+
+    def test_all_none_scores_keep_laser_score_field_as_null(self):
+        # A missing key (present on some rows/files, absent on others) can
+        # cause a schema mismatch for HF/Arrow consumers; the key must always
+        # be present, with a null value when there's no score.
+        rows = flat_rows_to_long(
+            [{"french": "a", "moore": "b", "laser_score": None}, {"french": "c", "moore": "d", "laser_score": None}],
+            "kade",
+        )
+        assert all("laser_score" in r and r["laser_score"] is None for r in rows)
+
+    def test_ids_increment_per_row(self):
+        rows = flat_rows_to_long(
+            [{"french": "a", "moore": "b", "laser_score": 1.0}, {"french": "c", "moore": "d", "laser_score": 1.0}],
+            "kade",
+        )
+        assert [r["id"] for r in rows] == ["kade-000000", "kade-000001"]
+
+    def test_doc_id_exposed_as_field(self):
+        rows = flat_rows_to_long(
+            [{"french": "a", "moore": "b", "laser_score": 1.0, "doc_id": "2024-07-24"}], "conseils"
+        )
+        assert rows[0]["doc_id"] == "2024-07-24"
+
+    def test_id_carries_doc_ordinal_and_local_index(self):
+        rows = flat_rows_to_long(
+            [
+                {"french": "a1", "moore": "b1", "laser_score": 1.0, "doc_id": "2024-07-24"},
+                {"french": "a2", "moore": "b2", "laser_score": 1.0, "doc_id": "2024-07-24"},
+                {"french": "a3", "moore": "b3", "laser_score": 1.0, "doc_id": "2024-07-31"},
+            ],
+            "conseils",
+        )
+        assert [r["id"] for r in rows] == [
+            "conseils-000000-000",
+            "conseils-000000-001",
+            "conseils-000001-000",
+        ]
+
+    def test_doc_id_local_index_resets_across_interleaved_docs(self):
+        # Same doc_id appearing again after a different one in between still
+        # continues that doc's own running count, not the global row index.
+        rows = flat_rows_to_long(
+            [
+                {"french": "a1", "moore": "b1", "laser_score": 1.0, "doc_id": "url-a"},
+                {"french": "a2", "moore": "b2", "laser_score": 1.0, "doc_id": "url-b"},
+                {"french": "a3", "moore": "b3", "laser_score": 1.0, "doc_id": "url-a"},
+            ],
+            "raamde-news",
+        )
+        assert rows[0]["id"] == "raamde-news-000000-000"
+        assert rows[1]["id"] == "raamde-news-000001-000"
+        assert rows[2]["id"] == "raamde-news-000000-001"
+
+    def test_no_doc_id_falls_back_to_flat_scheme(self):
+        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "kade")
+        assert rows[0]["id"] == "kade-000000"
+        assert rows[0]["doc_id"] is None
+
+    def test_english_row_shares_doc_id(self):
+        rows = flat_rows_to_long(
+            [{"french": "chat", "moore": "bagre", "english": "cat", "laser_score": 1.0, "doc_id": "entry-42"}],
+            "niggli-dictionary-mos-fra-eng",
+        )
+        assert rows[0]["doc_id"] == rows[1]["doc_id"] == "entry-42"
+        assert rows[0]["id"] == rows[1]["id"]
+
+
+class TestAlignedCorpusToJsonlRows:
+    def test_matches_flat_rows_to_long(self):
+        aligned = AlignedCorpus(french=["Bonjour."], moore=["Ne y sõma."], scores=[0.8], source="kade")
+        assert aligned.to_jsonl_rows() == flat_rows_to_long(
+            [{"french": "Bonjour.", "moore": "Ne y sõma.", "laser_score": 0.8}], "kade"
+        )
+
+    def test_includes_english_when_present(self):
+        aligned = AlignedCorpus(
+            french=["chat"], moore=["bagre"], english=["cat"], scores=[1.0], source="niggli-dictionary-mos-fra-eng"
+        )
+        rows = aligned.to_jsonl_rows()
+        assert len(rows) == 2
+        assert rows[1]["target_text"] == "cat"
+
+    def test_includes_doc_ids_when_present(self):
+        aligned = AlignedCorpus(
+            french=["a", "c"],
+            moore=["b", "d"],
+            scores=[1.0, 1.0],
+            doc_ids=["2024-07-24", "2024-07-31"],
+            source="conseils",
+        )
+        rows = aligned.to_jsonl_rows()
+        assert [r["doc_id"] for r in rows] == ["2024-07-24", "2024-07-31"]
+        assert [r["id"] for r in rows] == ["conseils-000000-000", "conseils-000001-000"]
+
+    def test_mismatched_doc_ids_length_raises(self):
+        with pytest.raises(ValueError, match="doc_ids"):
+            AlignedCorpus(french=["a", "c"], moore=["b", "d"], scores=[1.0, 1.0], doc_ids=["only-one"], source="x")
+
+
+class TestAlignedCorpusWriteJsonl:
+    def test_single_pair_writes_one_file(self, tmp_path):
+        aligned = AlignedCorpus(french=["Bonjour."], moore=["Ne y sõma."], scores=[0.8], source="kade")
+        out = tmp_path / "kade_aligned.jsonl"
+        written = aligned.write_jsonl(str(out))
+        assert written == [str(out)]
+        assert out.exists()
+
+    def test_mixed_lang_pairs_split_into_separate_files(self, tmp_path):
+        aligned = AlignedCorpus(
+            french=["chat", "eau"], moore=["bagre", "koom"], english=["cat", ""], scores=[1.0, 1.0], source="niggli-dictionary-mos-fra-eng"
+        )
+        out = tmp_path / "simple_aligned.jsonl"
+        written = aligned.write_jsonl(str(out))
+
+        assert not out.exists()
+        assert sorted(written) == sorted(
+            [str(tmp_path / "simple_aligned.mos-fra.jsonl"), str(tmp_path / "simple_aligned.mos-eng.jsonl")]
+        )
+
+        fra_lines = (tmp_path / "simple_aligned.mos-fra.jsonl").read_text(encoding="utf-8").splitlines()
+        eng_lines = (tmp_path / "simple_aligned.mos-eng.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(fra_lines) == 2
+        assert len(eng_lines) == 1
