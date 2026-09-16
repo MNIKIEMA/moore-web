@@ -628,12 +628,12 @@ def align(
     ] = 0.0,
     jsonl: Annotated[
         bool,
-        typer.Option("--jsonl", is_flag=True, help="Write output as JSONL instead of JSON."),
-    ] = False,
+        typer.Option("--jsonl/--json", help="Write output as JSONL (default) or a single JSON file."),
+    ] = True,
 ) -> None:
     """Align a ParallelText JSON using LASER embeddings + FastDTW.
 
-    Example: moore-web align parallel.json -o aligned.json --min-laser-score 0.6
+    Example: moore-web align parallel.json -o aligned.jsonl --min-laser-score 0.6
     """
     from moore_web.align_corpus import align as _align
     from moore_web.flatten import ParallelText
@@ -920,8 +920,8 @@ def e2e(
     ] = False,
     jsonl: Annotated[
         bool,
-        typer.Option("--jsonl", is_flag=True, help="Write output as JSONL instead of JSON."),
-    ] = False,
+        typer.Option("--jsonl/--json", help="Write output as JSONL (default) or a single JSON file."),
+    ] = True,
     add_lang_id: Annotated[
         bool,
         typer.Option("--add-lang-id", is_flag=True, help="Annotate aligned output with GlotLID scores."),
@@ -979,12 +979,12 @@ def e2e(
 ) -> None:
     """End-to-end pipeline: parse → flatten → align.
 
-    [bold]sida:[/bold]              moore-web e2e -s sida -i book.pdf -o aligned.json
-    [bold]kade:[/bold]              moore-web e2e -s kade --fr-input fr.pdf --mo-input mo.pdf -o aligned.json
-    [bold]news:[/bold]              moore-web e2e -s news -i corpus.json -o aligned.json
-    [bold]simple:[/bold]            moore-web e2e -s simple -i dict.pdf -o aligned.json
-    [bold]digital (terms):[/bold]   moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --jsonl
-    [bold]digital (both):[/bold]    moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --definitions-output defs.jsonl --jsonl --add-laser-score --add-comet-qe --add-quality-warn
+    [bold]sida:[/bold]              moore-web e2e -s sida -i book.pdf -o aligned.jsonl
+    [bold]kade:[/bold]              moore-web e2e -s kade --fr-input fr.pdf --mo-input mo.pdf -o aligned.jsonl
+    [bold]news:[/bold]              moore-web e2e -s news -i corpus.json -o aligned.jsonl
+    [bold]simple:[/bold]            moore-web e2e -s simple -i dict.pdf -o aligned.jsonl
+    [bold]digital (terms):[/bold]   moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl
+    [bold]digital (both):[/bold]    moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --definitions-output defs.jsonl --add-laser-score --add-comet-qe --add-quality-warn
     [bold]HF output:[/bold]         moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
     if do_annotate:
