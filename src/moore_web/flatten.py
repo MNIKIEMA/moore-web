@@ -35,7 +35,7 @@ _MULTI_SPACE_RE = re.compile(r" {2,}")
 _SENT_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 _NUMBER_ONLY_RE = re.compile(r"^\d+\.+$")
 _MISSING_SPACE_RE = re.compile(r"(?<=[.!?])(?=[A-ZÀ-Ö][a-zà-öø-ÿ])")
-_PAGE_REF_RE = re.compile(r"\([^)]*\bp\.?\s*\d+\)", re.IGNORECASE)
+_PAGE_REF_RE = re.compile(r"\([^)]*\bp\.?\s*\d+(?:\s*[-–]\s*\d+)?\)", re.IGNORECASE)
 _STANDALONE_NUM_RE = re.compile(r"^\s*\d+(?:[-–]\d+)?(?:[.,;:\s]+\d+(?:[-–]\d+)?)*[.,;:]?\s*$")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 _COPYRIGHT_RE = re.compile(r"©")
@@ -463,6 +463,7 @@ def flatten_facilitateur_pair(
             and not _STANDALONE_NUM_RE.match(s)
             and not _URL_RE.search(s)
             and not _COPYRIGHT_RE.search(s)
+            and any(ch.isalpha() for ch in s)
         )
 
     if segment:
