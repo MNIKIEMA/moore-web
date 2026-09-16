@@ -91,6 +91,7 @@ MOORE_SECTION_TITLES = [
     "Reem la yɩɩla",
     "Wẽnnaam sebra sẽn yet bũmb ningã",
     "Wẽnnaam sebra sẽn yet bũmb ninga",
+    "Wẽnnaam sebra sẽn yet bûmb ninga",
     "Pʋʋsg la tʋʋmde",
     "Pʋʋsog la tʋʋma",
     "Pʋʋsgo la tʋʋma",
