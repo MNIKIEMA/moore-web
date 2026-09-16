@@ -19,7 +19,7 @@ Usage
 
 Input JSON  (ParallelText)
 --------------------------
-    {"french": ["sent1", "sent2", ...], "moore": ["sent1", ...], "source": "sida"}
+    {"french": ["sent1", "sent2", ...], "moore": ["sent1", ...], "source": "sida-bilingual-book"}
 
 Output JSON
 -----------

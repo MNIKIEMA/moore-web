@@ -63,25 +63,26 @@ class ParallelText(msgspec.Struct):
 
 
 # Original (not-translated) language for each known ``source`` tag, used by
-# AlignedCorpus.to_jsonl_rows to set ``is_source_orig``. Kadé and SIDA are both
-# translations of an uncaptured English original (the underlying Shellbook
-# Publishing Systems story), so French isn't truly "original" there either --
-# but Mooré was translated FROM the French text, which is what this field
-# tracks: translation direction within this corpus, not ultimate authorship.
-# conseils/news (Raamde) are drafted in French then translated to Mooré
-# (confirmed: conseils via sig.gov.bf's file naming, news via explicit
-# "Kibarã yii <French source>" attribution lines in ~half the articles).
-# simple/digital are lexical: a Mooré headword/term with French/English
-# glosses, so Mooré is the "original" side.
+# AlignedCorpus.to_jsonl_rows to set ``is_source_orig``. Kadé and sida-bilingual-book
+# are both translations of an uncaptured English original (the underlying
+# Shellbook Publishing Systems story), so French isn't truly "original" there
+# either -- but Mooré was translated FROM the French text, which is what this
+# field tracks: translation direction within this corpus, not ultimate
+# authorship. conseils/raamde-news are drafted in French then translated to
+# Mooré (confirmed: conseils via sig.gov.bf's file naming, raamde-news via
+# explicit "Kibarã yii <French source>" attribution lines in ~half the
+# articles). moore-fr-eng-dictionary/digital-postal-glossary(-term)(-definition)
+# are lexical: a Mooré headword/term with French/English glosses, so Mooré is
+# the "original" side.
 ORIGINAL_LANGUAGE: dict[str, str] = {
-    "sida": "fra",
+    "sida-bilingual-book": "fra",
     "kade": "fra",
-    "news": "fra",
+    "raamde-news": "fra",
     "conseils": "fra",
-    "simple": "mos",
-    "digital": "mos",
-    "digital-term": "mos",
-    "digital-term-definition": "mos",
+    "moore-fr-eng-dictionary": "mos",
+    "digital-postal-glossary": "mos",
+    "digital-postal-glossary-term": "mos",
+    "digital-postal-glossary-term-definition": "mos",
 }
 
 
@@ -421,7 +422,7 @@ def flatten_sida_book(
         chapters: Output of :func:`moore_web.book_parser.parse_pdf_to_json`.
         segment:  If True, run sentence segmentation on each text block.
     """
-    result = ParallelText(source="sida")
+    result = ParallelText(source="sida-bilingual-book")
     # FIXME: normalization add extra spaces.@critical
 
     for chapter in chapters:
@@ -495,7 +496,7 @@ def flatten_sida_book_per_unit(
             if not fr_raw or not mo_raw:
                 continue
 
-            parallel = ParallelText(source="sida")
+            parallel = ParallelText(source="sida-bilingual-book")
             if segment:
                 parallel.french.extend(normalize_fr(s) for s in segment_fr(fr_raw))
                 parallel.moore.extend(normalize_mo(s) for s in segment_mo(mo_raw))
@@ -507,7 +508,7 @@ def flatten_sida_book_per_unit(
                 results.append((f"page-{page.page_number}", parallel))
 
         for enum in chapter.enums:
-            parallel = ParallelText(source="sida")
+            parallel = ParallelText(source="sida-bilingual-book")
 
             fr_title = normalize_fr(_join_lines(enum.french_title))
             mo_title = normalize_mo(_join_lines(enum.moore_title))
@@ -640,7 +641,7 @@ def flatten_simple_parser(
     """
     from moore_web.models import DictionaryEntry
 
-    result = ParallelText(source="simple")
+    result = ParallelText(source="moore-fr-eng-dictionary")
 
     def _clean(text: str | None) -> str:
         text = text or ""
@@ -759,7 +760,7 @@ def flatten_news_entries(
         entries: Annotated corpus entries.
         segment: If True, run sentence segmentation on each entry's text.
     """
-    result = ParallelText(source="news")
+    result = ParallelText(source="raamde-news")
 
     for item in entries:
         segs = item.get("segments", {})

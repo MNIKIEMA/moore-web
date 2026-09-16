@@ -1119,7 +1119,7 @@ def e2e(
             moore=all_mo,
             scores=all_scores,
             doc_ids=all_doc_ids,
-            source="sida",
+            source="sida-bilingual-book",
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
@@ -1191,7 +1191,7 @@ def e2e(
             moore=all_mo,
             scores=all_scores,
             doc_ids=all_doc_ids,
-            source="news",
+            source="raamde-news",
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
@@ -1330,7 +1330,7 @@ def e2e(
                 mo_texts = [p.mos_term for p in valid]
                 # Terms are aligned by exact key match → score 1.0 is appropriate.
                 scores = cast(_Scores, [1.0] * len(fr_texts))
-                label = "digital-term"
+                label = "digital-postal-glossary-term"
             elif inc_definitions and not inc_terms:
                 valid = [p for p in pairs if p.fr_definition and p.mos_definition]
                 fr_texts = [p.fr_definition for p in valid]
@@ -1338,14 +1338,14 @@ def e2e(
                 # Definitions are structurally paired (same glossary entry) but not
                 # alignment-scored; use None to signal the score is absent.
                 scores = cast(_Scores, [None] * len(fr_texts))
-                label = "digital-term-definition"
+                label = "digital-postal-glossary-term-definition"
             else:
                 term_pairs = [p for p in pairs if p.fr_term and p.mos_term]
                 def_pairs = [p for p in pairs if p.fr_definition and p.mos_definition]
                 fr_texts = [p.fr_term for p in term_pairs] + [p.fr_definition for p in def_pairs]
                 mo_texts = [p.mos_term for p in term_pairs] + [p.mos_definition for p in def_pairs]
                 scores = cast(_Scores, [1.0] * len(term_pairs) + [None] * len(def_pairs))
-                label = "digital"
+                label = "digital-postal-glossary"
             a = AlignedCorpus(
                 french=fr_texts,
                 moore=mo_texts,
