@@ -180,7 +180,7 @@ class TestFlatRowsToLong:
         ]
 
     def test_mos_source_puts_moore_as_source_text(self):
-        rows = flat_rows_to_long([{"french": "chat", "moore": "bagre", "laser_score": 1.0}], "moore-fr-eng-dictionary")
+        rows = flat_rows_to_long([{"french": "chat", "moore": "bagre", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng")
         row = rows[0]
         assert row["src_lang"] == "mos"
         assert row["tgt_lang"] == "fra"
@@ -194,16 +194,16 @@ class TestFlatRowsToLong:
 
     def test_english_triplet_becomes_two_rows_sharing_id(self):
         rows = flat_rows_to_long(
-            [{"french": "chat", "moore": "bagre", "english": "cat", "laser_score": 1.0}], "moore-fr-eng-dictionary"
+            [{"french": "chat", "moore": "bagre", "english": "cat", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng"
         )
         assert len(rows) == 2
-        assert rows[0]["id"] == rows[1]["id"] == "moore-fr-eng-dictionary-000000"
+        assert rows[0]["id"] == rows[1]["id"] == "niggli-dictionary-mos-fra-eng-000000"
         assert (rows[0]["tgt_lang"], rows[1]["tgt_lang"]) == ("fra", "eng")
         assert rows[1]["source_text"] == "bagre"
         assert rows[1]["target_text"] == "cat"
 
     def test_no_english_is_single_row(self):
-        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "moore-fr-eng-dictionary")
+        rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng")
         assert len(rows) == 1
 
     def test_all_none_scores_omit_laser_score_field(self):
@@ -264,7 +264,7 @@ class TestFlatRowsToLong:
     def test_english_row_shares_doc_id(self):
         rows = flat_rows_to_long(
             [{"french": "chat", "moore": "bagre", "english": "cat", "laser_score": 1.0, "doc_id": "entry-42"}],
-            "moore-fr-eng-dictionary",
+            "niggli-dictionary-mos-fra-eng",
         )
         assert rows[0]["doc_id"] == rows[1]["doc_id"] == "entry-42"
         assert rows[0]["id"] == rows[1]["id"]
@@ -279,7 +279,7 @@ class TestAlignedCorpusToJsonlRows:
 
     def test_includes_english_when_present(self):
         aligned = AlignedCorpus(
-            french=["chat"], moore=["bagre"], english=["cat"], scores=[1.0], source="moore-fr-eng-dictionary"
+            french=["chat"], moore=["bagre"], english=["cat"], scores=[1.0], source="niggli-dictionary-mos-fra-eng"
         )
         rows = aligned.to_jsonl_rows()
         assert len(rows) == 2
@@ -312,7 +312,7 @@ class TestAlignedCorpusWriteJsonl:
 
     def test_mixed_lang_pairs_split_into_separate_files(self, tmp_path):
         aligned = AlignedCorpus(
-            french=["chat", "eau"], moore=["bagre", "koom"], english=["cat", ""], scores=[1.0, 1.0], source="moore-fr-eng-dictionary"
+            french=["chat", "eau"], moore=["bagre", "koom"], english=["cat", ""], scores=[1.0, 1.0], source="niggli-dictionary-mos-fra-eng"
         )
         out = tmp_path / "simple_aligned.jsonl"
         written = aligned.write_jsonl(str(out))

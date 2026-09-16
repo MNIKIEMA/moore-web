@@ -71,15 +71,15 @@ class ParallelText(msgspec.Struct):
 # authorship. conseils/raamde-news are drafted in French then translated to
 # Mooré (confirmed: conseils via sig.gov.bf's file naming, raamde-news via
 # explicit "Kibarã yii <French source>" attribution lines in ~half the
-# articles). moore-fr-eng-dictionary/digital-postal-glossary(-term)(-definition)
-# are lexical: a Mooré headword/term with French/English glosses, so Mooré is
-# the "original" side.
+# articles). niggli-dictionary-mos-fra-eng and digital-postal-glossary
+# (-term)(-definition) are lexical: a Mooré headword/term with French/English
+# glosses, so Mooré is the "original" side.
 ORIGINAL_LANGUAGE: dict[str, str] = {
     "sida-bilingual-book": "fra",
     "kade": "fra",
     "raamde-news": "fra",
     "conseils": "fra",
-    "moore-fr-eng-dictionary": "mos",
+    "niggli-dictionary-mos-fra-eng": "mos",
     "digital-postal-glossary": "mos",
     "digital-postal-glossary-term": "mos",
     "digital-postal-glossary-term-definition": "mos",
@@ -641,7 +641,7 @@ def flatten_simple_parser(
     """
     from moore_web.models import DictionaryEntry
 
-    result = ParallelText(source="moore-fr-eng-dictionary")
+    result = ParallelText(source="niggli-dictionary-mos-fra-eng")
 
     def _clean(text: str | None) -> str:
         text = text or ""
