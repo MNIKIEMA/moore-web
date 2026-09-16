@@ -1,8 +1,14 @@
 """Extract raw text from PDF files using PyMuPDF."""
 
+import re
 from typing import Optional
 
 import pymupdf
+
+# Stray C0 control bytes PyMuPDF sometimes emits for a symbol-font glyph with
+# no real Unicode mapping (e.g. a decorative sub-bullet rendered as \x01).
+# Strip them; \n and \t carry real line/tab structure and are left alone.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 # Typographic ligatures that PyMuPDF may emit verbatim when the PDF font's
 # encoding table lacks proper Unicode mappings.  Expand them to plain ASCII so
@@ -25,7 +31,7 @@ _LIGATURE_MAP = str.maketrans(
 
 
 def _expand_ligatures(text: str) -> str:
-    return text.translate(_LIGATURE_MAP)
+    return _CONTROL_CHAR_RE.sub("", text.translate(_LIGATURE_MAP))
 
 
 def extract_pdf_blocks(
