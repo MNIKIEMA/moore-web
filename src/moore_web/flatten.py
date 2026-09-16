@@ -115,12 +115,11 @@ def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
     """
     orig_lang = ORIGINAL_LANGUAGE.get(source)
     is_orig = True if orig_lang is not None else None
-    omit_score = all(r.get("laser_score") is None for r in rows) if rows else True
 
     def _pair_row(
         row_id: str, src_lang: str, tgt_lang: str, source_text: str, target_text: str, score, doc_id
     ) -> dict:
-        r: dict = {
+        return {
             "id": row_id,
             "src_lang": src_lang,
             "tgt_lang": tgt_lang,
@@ -129,10 +128,14 @@ def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
             "is_source_orig": is_orig,
             "doc_id": doc_id,
             "source": source,
+            # Always present, even when every row's score is None (e.g.
+            # definition pairs, which aren't LASER-scored) -- a key that's
+            # sometimes missing and sometimes present across different
+            # rows/files/configs can cause a schema mismatch for HF/Arrow
+            # consumers (e.g. concatenate_datasets); a null value in an
+            # always-present column is the normal, well-handled case.
+            "laser_score": round(score, 4) if score is not None else None,
         }
-        if not omit_score:
-            r["laser_score"] = round(score, 4) if score is not None else None
-        return r
 
     doc_ordinal: dict[str, int] = {}
     doc_row_count: dict[str, int] = {}

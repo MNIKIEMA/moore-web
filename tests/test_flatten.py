@@ -206,12 +206,15 @@ class TestFlatRowsToLong:
         rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng")
         assert len(rows) == 1
 
-    def test_all_none_scores_omit_laser_score_field(self):
+    def test_all_none_scores_keep_laser_score_field_as_null(self):
+        # A missing key (present on some rows/files, absent on others) can
+        # cause a schema mismatch for HF/Arrow consumers; the key must always
+        # be present, with a null value when there's no score.
         rows = flat_rows_to_long(
             [{"french": "a", "moore": "b", "laser_score": None}, {"french": "c", "moore": "d", "laser_score": None}],
             "kade",
         )
-        assert all("laser_score" not in r for r in rows)
+        assert all("laser_score" in r and r["laser_score"] is None for r in rows)
 
     def test_ids_increment_per_row(self):
         rows = flat_rows_to_long(
