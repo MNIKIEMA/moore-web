@@ -33,6 +33,11 @@ from pathlib import Path
 class NumberedItem(Struct):
     number: int
     text: str
+    # True for an item inside a "Zãmsog a N soaba" (Lesson N) scripture-reference
+    # group: each entry is a terse "topic. reference" citation whose internal
+    # period is not a real sentence boundary, so it should stay one corpus line
+    # instead of being sentence-split like ordinary prose items.
+    atomic: bool = False
 
 
 class BulletItem(Struct):
@@ -159,6 +164,11 @@ NUMBERED_ITEM_RE = re.compile(r"^\s*(?:\([^)]+\)\s+)?(\d+)\.\s+(.+)")
 NUMBERED_ITEM_BARE_RE = re.compile(r"^\s*(?:\([^)]+\)\s+)?(\d+)\.\s*$")
 BULLET_ITEM_RE = re.compile(r"^\s*•\s+(.+)")
 
+# Mooré "Lesson N" group label introducing a scripture-reference list, e.g.
+# "Zãmsog a yembr (1) soaba", "Zãmsog a yiib soaba (2)" -- the "(N)" position
+# varies (before or after "soaba"), so both are matched.
+LESSON_GROUP_RE = re.compile(r"^\s*Zãmsog\s+a\s+\S+\s*(?:\(\d+\)\s*)?soaba\s*(?:\(\d+\)\s*)?$", re.IGNORECASE)
+
 LISEZ_RE = re.compile(r"^Lisez\s+.+", re.IGNORECASE)
 
 
@@ -264,10 +274,12 @@ def _classify_items_lines(
     mode: Optional[str] = None  # None | "item" | "bullet"
     current_num: Optional[int] = None
     current_parts: list[str] = []
+    current_atomic = False
+    in_lesson_group = False
 
     def flush() -> None:
         if mode == "item" and current_num is not None and current_parts:
-            items.append(NumberedItem(current_num, normalize(" ".join(current_parts))))
+            items.append(NumberedItem(current_num, normalize(" ".join(current_parts)), atomic=current_atomic))
         elif mode == "bullet" and current_parts:
             bullets.append(BulletItem(normalize(" ".join(current_parts))))
 
@@ -277,14 +289,26 @@ def _classify_items_lines(
         bare_num_m = NUMBERED_ITEM_BARE_RE.match(raw)
         bullet_m = BULLET_ITEM_RE.match(raw)
         bare_bullet_m = _BARE_BULLET_RE.match(raw)
+        lesson_m = LESSON_GROUP_RE.match(raw)
 
-        if num_m:
+        if lesson_m:
+            # Ends whatever item/bullet was open so the "Zãmsog a N soaba"
+            # label doesn't get glued onto it as trailing text. The label
+            # itself isn't kept as content -- it's a group marker, not
+            # translatable prose.
+            flush()
+            mode, current_parts = None, []
+            in_lesson_group = True
+            consumed.add(idx)
+        elif num_m:
             flush()
             mode, current_num, current_parts = "item", int(num_m.group(1)), [num_m.group(2).strip()]
+            current_atomic = in_lesson_group
             consumed.add(idx)
         elif bare_num_m:
             flush()
             mode, current_num, current_parts = "item", int(bare_num_m.group(1)), []
+            current_atomic = in_lesson_group
             consumed.add(idx)
         elif bullet_m:
             flush()
@@ -642,6 +666,22 @@ def flatten_book_to_list(book: Book) -> list[str]:
             result.extend(flatten_section_content(section))
             for sub in section.subsections:
                 result.extend(flatten_section_content(sub))
+    return result
+
+
+def atomic_item_texts(book: Book) -> set[str]:
+    """Cleaned text of every NumberedItem marked atomic (see NumberedItem.atomic).
+
+    Matches the exact string flatten_book_to_list/flatten_section_content
+    would produce for that item (`clean(item.text)`), so callers can check
+    `part in atomic_item_texts(book)` against a flattened part to decide
+    whether to keep it as one corpus line instead of sentence-splitting it.
+    """
+    result: set[str] = set()
+    for chapter in book.chapters:
+        for section in chapter.sections:
+            for sec_or_sub in (section, *section.subsections):
+                result.update(clean(item.text) for item in sec_or_sub.items if item.atomic)
     return result
 
 

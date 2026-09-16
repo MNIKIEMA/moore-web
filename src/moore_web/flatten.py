@@ -420,7 +420,11 @@ def flatten_facilitateur_pair(
         mo_book: Parsed Mooré Kadé book.
         segment: If True, run sentence segmentation on each item.
     """
-    from moore_web.book_parser_facilitateur import flatten_book_to_list, replace_facilitateur_names_fr
+    from moore_web.book_parser_facilitateur import (
+        atomic_item_texts,
+        flatten_book_to_list,
+        replace_facilitateur_names_fr,
+    )
 
     result = ParallelText(source="kade")
 
@@ -451,6 +455,7 @@ def flatten_facilitateur_pair(
     # Section content
     fr_list = flatten_book_to_list(fr_book)
     mo_list = flatten_book_to_list(mo_book)
+    mo_atomic = atomic_item_texts(mo_book)
 
     def _keep(s: str) -> bool:
         return (
@@ -468,9 +473,16 @@ def flatten_facilitateur_pair(
                 if _keep(sent)
             )
         for s in mo_list:
-            result.moore.extend(
-                normalize_mo(sent) for sent in segment_mo(_PAGE_REF_RE.sub("", s)) if _keep(sent)
-            )
+            cleaned = _PAGE_REF_RE.sub("", s)
+            if s in mo_atomic:
+                # A "Zãmsog a N soaba" (Lesson N) scripture-reference entry:
+                # its internal period isn't a real sentence boundary, so keep
+                # it as one corpus line instead of sentence-splitting it.
+                text = normalize_mo(cleaned)
+                if _keep(text):
+                    result.moore.append(text)
+            else:
+                result.moore.extend(normalize_mo(sent) for sent in segment_mo(cleaned) if _keep(sent))
     else:
         result.french.extend(
             normalize_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", s))) for s in fr_list if _keep(s)
