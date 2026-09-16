@@ -235,7 +235,7 @@ def _parse_kade_file(
     sec_patterns = [_re.compile(_re.escape(t), _re.IGNORECASE) for t in sec_titles]
     intro_patterns = [_re.compile(_re.escape(t), _re.IGNORECASE) for t in intro_titles]
     intro_sub_patterns = [
-        _re.compile(r"(?:\d+\.\s+)?" + _re.escape(t), _re.IGNORECASE) for t in intro_sub_titles
+        _re.compile(r"(?:\d+\.\s+)?" + _re.escape(t) + r"\s*$", _re.IGNORECASE) for t in intro_sub_titles
     ]
     intro_sub_map = {intro_sub_key: (intro_sub_patterns, intro_sub_titles)}
 

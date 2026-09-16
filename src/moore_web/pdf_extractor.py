@@ -60,7 +60,9 @@ def extract_pdf_blocks(
         for page_num in range(start, end):
             page = doc[page_num]
             blocks = page.get_text("blocks", sort=True)
-            page_text = [block[4].strip() for block in blocks if block[4].strip()]
+            page_text = [
+                block[4].strip() for block in blocks if block[4].strip() and not block[4].strip().isdigit()
+            ]
             if page_text:
                 extracted_pages.append("\n\n".join(page_text))
 

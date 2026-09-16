@@ -90,8 +90,10 @@ MOORE_SECTION_TITLES = [
     "Reem la yɩɩlle",
     "Reem la yɩɩla",
     "Wẽnnaam sebra sẽn yet bũmb ningã",
+    "Wẽnnaam sebra sẽn yet bũmb ninga",
     "Pʋʋsg la tʋʋmde",
     "Pʋʋsog la tʋʋma",
+    "Pʋʋsgo la tʋʋma",
 ]
 
 MOORE_INTRO_SECTION_TITLES = [
@@ -123,6 +125,7 @@ FRENCH_INTRO_SUBSECTION_TITLES = [
     "Choses à apprendre",
     "Sketch et chant",
     "Ce que dit la Bible",
+    "Prier et agir",
 ]
 
 CHAPTER_RE = re.compile(r"^(?:chapitre|sak\s+a)\s+(\d+)(?:\s+soaba)?\s*[:\-–]?\s*(.*)$", re.IGNORECASE)
@@ -347,6 +350,63 @@ def _split_into_subsections(
     return subsections
 
 
+def _match_heading_line(
+    norm_line: str, patterns: list[re.Pattern], titles: list[Optional[str]]
+) -> Optional[str]:
+    """Return the canonical title if `norm_line` starts with a heading, else None.
+
+    Rejects a match immediately followed by a lowercase letter: that means the
+    title text was found as a *prefix of a longer word or phrase* (e.g. Mooré
+    "Reem" matching inside "reemd", a running-text verb form), not a real
+    heading. A heading is followed by whitespace, punctuation, end of line, or
+    another heading glued on with no separator (uppercase).
+    """
+    for regex, canonical_title in zip(patterns, titles):
+        m = regex.match(norm_line)
+        if m and not norm_line[m.end() : m.end() + 1].islower():
+            return canonical_title or match_section_title(norm_line) or norm_line
+    return None
+
+
+def _lookahead_heading(
+    lines: list[str],
+    start: int,
+    patterns: list[re.Pattern],
+    titles: list[Optional[str]],
+    max_lookahead: int = 6,
+) -> tuple[Optional[str], int]:
+    """Match a heading whose text was split across consecutive PDF text blocks
+    (e.g. "Wẽnnaam Sebra sẽn yet" / "bũmb ninga" on separate lines, with a
+    *blank* line in between from `extract_pdf_blocks` joining each block with
+    "\\n\\n" — a block boundary landed mid-heading).
+
+    Grows the accumulated text by skipping blank lines and appending the next
+    non-blank one, but only while the result stays a strict prefix of some
+    canonical title; stops the moment growth is no longer plausible. Returns
+    (canonical_title, raw_lines_consumed_including_blanks) or (None, 0).
+    """
+    acc = normalize(lines[start])
+    idx = start + 1
+    end = min(len(lines), start + 1 + max_lookahead)
+    while idx < end:
+        next_line = normalize(lines[idx])
+        idx += 1
+        if not next_line:
+            continue  # blank separator between PDF blocks -- keep looking
+        candidate = f"{acc} {next_line}"
+        title = _match_heading_line(candidate, patterns, titles)
+        if title:
+            return title, idx - start
+        if not any(
+            t and len(candidate) < len(t) and t.lower().startswith(candidate.lower())
+            for t in titles
+            if t
+        ):
+            return None, 0
+        acc = candidate
+    return None, 0
+
+
 def split_and_parse_by_sections(
     text: str,
     section_regexes: list[re.Pattern],
@@ -402,26 +462,33 @@ def split_and_parse_by_sections(
     current_heading: Optional[str] = None
     current_lines: list[str] = []
 
-    for line in lines:
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         norm_line = normalize(line)
 
         if stop_before and stop_before.match(norm_line):
             break
 
-        matched = False
-        for regex, canonical_title in zip(section_regexes, _titles):
-            if regex.match(norm_line):
-                if current_heading is not None or current_lines:
-                    sections.append(_build_section(current_title or "Intro", current_lines))
+        canonical_title = _match_heading_line(norm_line, section_regexes, _titles)
+        consumed = 1
+        if canonical_title is None:
+            # The heading may have been split across a PDF block boundary
+            # (e.g. "Wẽnnaam Sebra sẽn yet" / "bũmb ninga" on two lines).
+            canonical_title, consumed = _lookahead_heading(lines, i, section_regexes, _titles)
 
-                current_heading = line
-                current_title = canonical_title or match_section_title(line) or line
-                current_lines = []
-                matched = True
-                break
+        if canonical_title is not None:
+            if current_heading is not None or current_lines:
+                sections.append(_build_section(current_title or "Intro", current_lines))
 
-        if not matched:
-            current_lines.append(line)
+            current_heading = line
+            current_title = canonical_title
+            current_lines = []
+            i += consumed
+            continue
+
+        current_lines.append(line)
+        i += 1
 
     if current_heading is not None or current_lines:
         sections.append(_build_section(current_title or "Intro", current_lines))
