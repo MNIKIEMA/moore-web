@@ -89,8 +89,43 @@ def load_data(path: str, split: str = "train"):
     return Dataset.from_list(rows)
 
 
+def _split_by_lang_pair(dataset) -> dict[tuple[str, str], "Dataset"] | None:
+    """Split a dataset into one sub-dataset per distinct (src_lang, tgt_lang) pair.
+
+    Returns ``None`` (nothing to split) when the dataset has no
+    ``src_lang``/``tgt_lang`` columns, or only one distinct pair is present.
+    """
+    if "src_lang" not in dataset.column_names or "tgt_lang" not in dataset.column_names:
+        return None
+    pairs = sorted(set(zip(dataset["src_lang"], dataset["tgt_lang"])))
+    if len(pairs) <= 1:
+        return None
+    return {
+        pair: dataset.filter(lambda r, sl=pair[0], tl=pair[1]: r["src_lang"] == sl and r["tgt_lang"] == tl)
+        for pair in pairs
+    }
+
+
+def _write_jsonl_file(dataset, out: Path) -> None:
+    with out.open("w", encoding="utf-8") as f:
+        for row in dataset:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def save_data(dataset, path: str, private: bool = False, split: str = "train") -> None:
-    """Write an annotated dataset to a local JSONL file or push to HuggingFace Hub.
+    """Write an annotated dataset to local JSONL file(s) or push to HuggingFace Hub.
+
+    A dataset with more than one distinct (src_lang, tgt_lang) pair (e.g. a
+    trilingual dictionary's mos-fra rows mixed with its mos-eng rows) is split
+    into one clean bitext per pair instead of one file/config a consumer has
+    to filter first -- the convention most HF parallel-data consumers expect
+    (e.g. opus100 ships separate en-fr, en-de, ... configs). Locally, each
+    pair gets its own file (``out.stem + ".{src}-{tgt}" + out.suffix``); on
+    the Hub, each pair is pushed as its own config within the same repo
+    (``load_dataset(repo, "mos-fra")`` vs. ``load_dataset(repo, "mos-eng")``).
+    A dataset with zero or one pair (or without src_lang/tgt_lang columns at
+    all -- e.g. a legacy flat french/moore dataset) is written as a single
+    file/config, unchanged from before.
 
     Args:
         dataset: A ``datasets.Dataset``.
@@ -98,19 +133,31 @@ def save_data(dataset, path: str, private: bool = False, split: str = "train") -
         private: Push as a private dataset (HF mode only).
         split:   Split name used when wrapping in a ``DatasetDict`` (HF mode only).
     """
+    by_pair = _split_by_lang_pair(dataset)
+
     if _is_hf(path):
         repo = _hf_repo(path)
-        print(f"Pushing {len(dataset):,} rows → '{repo}' …")
-        DatasetDict({split: dataset}).push_to_hub(repo, private=private)
+        if by_pair is None:
+            print(f"Pushing {len(dataset):,} rows → '{repo}' …")
+            DatasetDict({split: dataset}).push_to_hub(repo, private=private)
+        else:
+            for (src_lang, tgt_lang), sub in by_pair.items():
+                config_name = f"{src_lang}-{tgt_lang}"
+                print(f"Pushing {len(sub):,} rows ({config_name}) → '{repo}' …")
+                DatasetDict({split: sub}).push_to_hub(repo, config_name=config_name, private=private)
         print(f"Done. https://huggingface.co/datasets/{repo}")
         return
 
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Writing {len(dataset):,} rows → {out} …")
-    with out.open("w", encoding="utf-8") as f:
-        for row in dataset:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if by_pair is None:
+        print(f"Writing {len(dataset):,} rows → {out} …")
+        _write_jsonl_file(dataset, out)
+    else:
+        for (src_lang, tgt_lang), sub in by_pair.items():
+            sub_path = out.with_name(f"{out.stem}.{src_lang}-{tgt_lang}{out.suffix}")
+            print(f"Writing {len(sub):,} rows ({src_lang}-{tgt_lang}) → {sub_path} …")
+            _write_jsonl_file(sub, sub_path)
     print("Done.")
 
 

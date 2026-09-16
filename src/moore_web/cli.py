@@ -103,7 +103,12 @@ def _load_kade_book(path: Path):
 
 def _write_aligned(aligned, out: Path, use_jsonl: bool) -> None:
     if use_jsonl:
-        aligned.write_jsonl(str(out))
+        written = aligned.write_jsonl(str(out))
+        if len(written) > 1:
+            typer.echo(f"Wrote {len(aligned.french)} aligned pairs across {len(written)} files:")
+            for w in written:
+                typer.echo(f"  → {w}")
+            return
     else:
         out.write_bytes(msgspec.json.encode(aligned))
     typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")

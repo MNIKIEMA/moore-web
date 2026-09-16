@@ -213,13 +213,41 @@ class AlignedCorpus(ParallelText):
                 row["doc_id"] = doc_id
         return flat_rows_to_long(flat, self.source)
 
-    def write_jsonl(self, path: str) -> None:
-        """Write aligned pairs to a JSONL file."""
-        import json
+    def write_jsonl(self, path: str) -> list[str]:
+        """Write aligned pairs to JSONL file(s).
 
-        with open(path, "w", encoding="utf-8") as f:
-            for row in self.to_jsonl_rows():
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        Split into one file per distinct (src_lang, tgt_lang) pair when more
+        than one is present (e.g. a trilingual dictionary's mos-fra rows
+        mixed with its mos-eng rows) -- one clean bitext per pair instead of
+        one file a consumer has to filter first, matching the convention
+        used on the HF-push path (see ``moore_web.annotate.save_data``).
+        A single-pair (or empty) corpus is written to ``path`` unchanged.
+
+        Returns the list of file paths written.
+        """
+        import json
+        from pathlib import Path as _Path
+
+        def _write(dest: str, subset: list[dict]) -> None:
+            with open(dest, "w", encoding="utf-8") as f:
+                for row in subset:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+        rows = self.to_jsonl_rows()
+        pairs = sorted({(r["src_lang"], r["tgt_lang"]) for r in rows})
+
+        if len(pairs) <= 1:
+            _write(path, rows)
+            return [path]
+
+        base = _Path(path)
+        written: list[str] = []
+        for src_lang, tgt_lang in pairs:
+            subset = [r for r in rows if (r["src_lang"], r["tgt_lang"]) == (src_lang, tgt_lang)]
+            sub_path = base.with_name(f"{base.stem}.{src_lang}-{tgt_lang}{base.suffix}")
+            _write(str(sub_path), subset)
+            written.append(str(sub_path))
+        return written
 
 
 # ---------------------------------------------------------------------------

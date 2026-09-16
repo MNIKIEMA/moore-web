@@ -300,3 +300,29 @@ class TestAlignedCorpusToJsonlRows:
     def test_mismatched_doc_ids_length_raises(self):
         with pytest.raises(ValueError, match="doc_ids"):
             AlignedCorpus(french=["a", "c"], moore=["b", "d"], scores=[1.0, 1.0], doc_ids=["only-one"], source="x")
+
+
+class TestAlignedCorpusWriteJsonl:
+    def test_single_pair_writes_one_file(self, tmp_path):
+        aligned = AlignedCorpus(french=["Bonjour."], moore=["Ne y sõma."], scores=[0.8], source="kade")
+        out = tmp_path / "kade_aligned.jsonl"
+        written = aligned.write_jsonl(str(out))
+        assert written == [str(out)]
+        assert out.exists()
+
+    def test_mixed_lang_pairs_split_into_separate_files(self, tmp_path):
+        aligned = AlignedCorpus(
+            french=["chat", "eau"], moore=["bagre", "koom"], english=["cat", ""], scores=[1.0, 1.0], source="simple"
+        )
+        out = tmp_path / "simple_aligned.jsonl"
+        written = aligned.write_jsonl(str(out))
+
+        assert not out.exists()
+        assert sorted(written) == sorted(
+            [str(tmp_path / "simple_aligned.mos-fra.jsonl"), str(tmp_path / "simple_aligned.mos-eng.jsonl")]
+        )
+
+        fra_lines = (tmp_path / "simple_aligned.mos-fra.jsonl").read_text(encoding="utf-8").splitlines()
+        eng_lines = (tmp_path / "simple_aligned.mos-eng.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(fra_lines) == 2
+        assert len(eng_lines) == 1
