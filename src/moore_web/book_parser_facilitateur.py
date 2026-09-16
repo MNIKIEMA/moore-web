@@ -293,6 +293,48 @@ def collect_items(lines: list[str]) -> tuple[list[NumberedItem], list[BulletItem
     return collect_numbered_items(lines), collect_bullet_items(lines)
 
 
+def _lines_consumed_by_items(lines: list[str]) -> set[int]:
+    """Indices of lines absorbed into a numbered item or bullet item.
+
+    A numbered/bullet item is often wrapped across many short PDF lines, and
+    only its first line matches NUMBERED_ITEM_RE / BULLET_ITEM_RE -- the
+    continuation lines don't. Mirrors collect_numbered_items and
+    collect_bullet_items' own line-consumption exactly (each run
+    independently, same as the real itemization), so callers can exclude
+    every line that ended up inside `items`/`bullet_items` from `body`
+    instead of only excluding each item's first line, which otherwise
+    duplicates the continuation text into both.
+    """
+    consumed: set[int] = set()
+
+    current_num: Optional[int] = None
+    for idx, raw in enumerate(lines):
+        line = normalize(raw)
+        if NUMBERED_ITEM_RE.match(raw):
+            current_num = int(NUMBERED_ITEM_RE.match(raw).group(1))
+            consumed.add(idx)
+        elif current_num is not None and line:
+            consumed.add(idx)
+
+    in_bullet_item = False
+    for idx, raw in enumerate(lines):
+        if re.match(r"^\s*•\s*$", raw) or BULLET_ITEM_RE.match(raw):
+            in_bullet_item = True
+            consumed.add(idx)
+        elif in_bullet_item and normalize(raw):
+            consumed.add(idx)
+
+    return consumed
+
+
+def _body_from_lines(lines: list[str]) -> str:
+    """Join the lines that aren't part of any numbered/bullet item into body text."""
+    consumed = _lines_consumed_by_items(lines)
+    return normalize(
+        " ".join(normalize(ln) for idx, ln in enumerate(lines) if idx not in consumed and normalize(ln))
+    )
+
+
 def _extract_intro_title(text: str, section_patterns: list[re.Pattern]) -> str:
     """Return the last non-empty paragraph before the first section heading."""
     lines = text.splitlines()
@@ -323,13 +365,7 @@ def _split_into_subsections(
         sub = Subsection(title=current_title)
         sub.items = collect_numbered_items(current_lines)
         sub.bullet_items = collect_bullet_items(current_lines)
-        body = normalize(
-            " ".join(
-                normalize(ln)
-                for ln in current_lines
-                if normalize(ln) and not NUMBERED_ITEM_RE.match(ln) and not BULLET_ITEM_RE.match(ln)
-            )
-        )
+        body = _body_from_lines(current_lines)
         if body:
             sub.body = body
         subsections.append(sub)
@@ -444,13 +480,7 @@ def split_and_parse_by_sections(
             sec.subsections = _split_into_subsections(sec_lines, sub_patterns, sub_titles)
         else:
             sec.items, sec.bullet_items = collect_items(sec_lines)
-            body = normalize(
-                " ".join(
-                    normalize(ln)
-                    for ln in sec_lines
-                    if normalize(ln) and not NUMBERED_ITEM_RE.match(ln) and not BULLET_ITEM_RE.match(ln)
-                )
-            )
+            body = _body_from_lines(sec_lines)
             if body:
                 sec.body = body
         return sec
