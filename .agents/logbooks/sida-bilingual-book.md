@@ -47,6 +47,26 @@ for the physical layout and parsing hierarchy.
   instead of a general-purpose CAT tool over all ~280 lines. Not yet
   implemented as of this entry — pick this up before repeating the OmegaT
   attempt.
+- **Built that reviewer, then generalized it beyond just this book.**
+  `scripts/export_review_units.py` exports any bilingual source into a
+  shared JSONL schema (one line per unit: `{"<unit_id>": {"fra": [...],
+  "mos": [...]}}`, `unit_id` an opaque stable string — `page-3`, an article
+  URL, whatever's natural for that source) and `notebooks/merge_review.py`
+  reviews any file in that schema — it doesn't import `moore_web` or know
+  what a "SIDA book" is at all. Editing model ended up as two plain
+  `mo.ui.text_area`s (one per language, one sentence per line) with a
+  read-only colored-stripe preview above each (HTML textareas can't render
+  color themselves) rather than the initially-tried checkbox-per-operation
+  UI (merge/move controls) — checkboxes-plus-apply-button worked for merge,
+  but free-text editing covers merge/split/reorder/typo-fix as one
+  primitive and needed far less code. Raw textarea contents auto-save to a
+  `*_drafts.json` sidecar on blur so closing mid-edit doesn't lose
+  un-"Applied" work; `*_review.json` holds the committed (split-by-line)
+  state; export skips any unit whose FR/MO counts still don't match.
+  Wired up for `sida` (`flatten_sida_book_per_unit`) and `raamde`
+  (`flatten_news_per_entry`, one line per article URL) — see the Kadé
+  facilitateur book's own logbook for that source's per-unit flattener,
+  added the same day using this same schema.
 
 ## 2026-09-14
 

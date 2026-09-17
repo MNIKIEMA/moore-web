@@ -6,6 +6,76 @@ order. See [`docs/kade-facilitator-manual.md`](../../docs/kade-facilitator-manua
 for the physical layout and parsing hierarchy. Also referenced elsewhere as
 "sida-facilitateur" (its `final_data/` output name).
 
+## 2026-09-17
+
+- **Added `flatten_facilitateur_pair_per_unit`**, a per-unit sibling of
+  `flatten_facilitateur_pair` for `notebooks/merge_review.py` (built for the
+  SIDA book, generalized to accept any source's `{uid: {fra, mos}}` JSONL —
+  see that book's logbook entry from today). Reuses the same
+  role-matching approach the 2026-09-16 session introduced (chapters matched
+  by `Chapter.number`, sections matched by canonical bilingual role via
+  `_FACILITATEUR_SECTION_ROLES`/`_FACILITATEUR_ROLE_ORDER`) but emits one
+  `ParallelText` per chapter-title and per role instead of two long flat
+  lists — 38 units total (6 chapter titles + roles per chapter) against the
+  real Kadé PDFs, with `ValueError` on a chapter/role-set mismatch instead
+  of silently pairing unrelated text. Shared cleaning helpers
+  (`_facilitateur_clean_title_fr/mo`, `_facilitateur_keep`,
+  `_facilitateur_flatten_fr/mo_parts`) were extracted out of
+  `flatten_facilitateur_pair` itself to avoid duplicating logic between the
+  two — behavior-preserving refactor, same regression tests still pass.
+- **Resolves the 2026-09-16 "open, not investigated further" question**
+  about chapter 0's Mooré intro having fewer recognized sections than
+  French's: it's not a missing-title bug. Chapter 0's Mooré "Intro" section
+  body is *entirely* a French-language colophon (`"Langue : Mooré parlée au
+  Burkina Faso ... Traduit par : GANSAONRE Guillaume ... © SIL Région
+  Afrique 2007. Utilisée avec autorisation. ... © Shellbook Publishing
+  Systems"`) — real publisher credits, not story/context content, and nothing
+  the French "Intro" (just the book's title) meaningfully corresponds to.
+  The two are still folded into the same `kade-ch0-context` unit today since
+  role-matching doesn't know this section is different in kind, not just
+  content — worth revisiting if chapter 0 keeps needing special-casing.
+- **Bug found and fixed: copyright-boilerplate leak.** That same colophon's
+  `"Utilisée avec autorisation."` sentence leaked into the Mooré corpus
+  (found by inspecting `data/omegat/sida-facilitateur_mo.txt` directly).
+  `_COPYRIGHT_RE` only matched a literal `©`; this sentence has none of its
+  own; `segment_mo` splits the colophon into three sentences and only the
+  first/third contain `©`. Fixed by extending `_COPYRIGHT_RE` to also match
+  `"[Uu]tilisée?s? avec (l')?autorisation"` — a standard SIL/Shellbook
+  permission-notice phrase likely to recur in other books from the same
+  publisher family (the SIDA bilingual book's front matter credits the same
+  Shellbook Publishing Systems origin).
+- **Two more correctness bugs found via code-review + verified against the
+  real Kadé PDFs, both fixed:**
+  - `segment=False` paths in `_facilitateur_flatten_fr/mo_parts` filtered
+    `_facilitateur_keep()` on the raw string *before* `_PAGE_REF_RE` stripped
+    it, so a line that's entirely a page reference (e.g. `"(voir p. 12)"`)
+    passed the filter but became an empty string after cleaning, appending
+    empty entries. Didn't reproduce against the real book (no body line
+    there is purely a page ref) but is real and reachable via `moore-web
+    flatten -s kade --no-segment`. Fixed by filtering on the cleaned text.
+  - The `kade-ch{N}-title` unit was guarded by the raw, uncleaned
+    `chapter.title.strip()` check instead of re-checking `_facilitateur_keep()`
+    on the cleaned title the way every section/subsection title append
+    already does — a title that's entirely a page reference would produce an
+    empty-string title unit. Fixed to match the existing pattern.
+- **One review finding refuted by testing against the real PDFs**: a claim
+  that Mooré chapter headings use word-numerals (not digits) that
+  `CHAPTER_RE`'s `(\d+)` can't match, desyncing chapter-number pairing. Ran
+  `flatten_facilitateur_pair_per_unit` end-to-end against both real PDFs:
+  chapters matched 0–5 correctly on both sides, no `ValueError`. The
+  finding's cited supporting test doesn't exist in the repo. **Method note:**
+  always re-verify a review finding against real data before acting on it,
+  especially ones citing "existing tests" as evidence — this one didn't.
+- **`scripts/export_review_units.py --source kade` (alias `facilitateur`)**
+  added, taking `--fr-input`/`--mo-input`. This is also what actually fixes
+  the proper-name bug found in `data/omegat/sida-facilitateur_fr.txt`
+  (`Kadé`/`Kaluu`/`Katiu`/... never replaced with the SIDA book's standard
+  names): that file was a scratch export that skipped
+  `replace_facilitateur_names_fr`; the new script goes through
+  `flatten_facilitateur_pair_per_unit`, which calls it correctly via the
+  shared `_facilitateur_flatten_fr_parts` helper. Verified: 0 unreplaced
+  names in the new export vs. 148 in the old one.
+
 ## 2026-09-16
 
 Session started from a request to check segmentation quality; escalated into
