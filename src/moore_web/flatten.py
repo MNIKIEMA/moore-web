@@ -38,7 +38,12 @@ _MISSING_SPACE_RE = re.compile(r"(?<=[.!?])(?=[A-ZÀ-Ö][a-zà-öø-ÿ])")
 _PAGE_REF_RE = re.compile(r"\([^)]*\bp\.?\s*\d+(?:\s*[-–]\s*\d+)?\)", re.IGNORECASE)
 _STANDALONE_NUM_RE = re.compile(r"^\s*\d+(?:[-–]\d+)?(?:[.,;:\s]+\d+(?:[-–]\d+)?)*[.,;:]?\s*$")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
-_COPYRIGHT_RE = re.compile(r"©")
+# "©" catches copyright lines directly; the permission-notice phrase is
+# needed separately because segmentation splits it off as its own sentence
+# with no "©" of its own (e.g. Kadé chapter 0's Mooré colophon: "... © SIL
+# Région Afrique 2007. Utilisée avec autorisation." -- the first sentence is
+# caught by "©", the second isn't without this).
+_COPYRIGHT_RE = re.compile(r"©|[Uu]tilisée?s? avec (l')?autorisation")
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +542,139 @@ def flatten_sida_book_per_unit(
     return results
 
 
+def _facilitateur_clean_title_fr(t: str) -> str:
+    from moore_web.book_parser_facilitateur import replace_facilitateur_names_fr
+
+    return normalize_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", t).strip()))
+
+
+def _facilitateur_clean_title_mo(t: str) -> str:
+    return normalize_mo(_PAGE_REF_RE.sub("", t).strip())
+
+
+def _facilitateur_keep(s: str) -> bool:
+    return (
+        bool(s.strip())
+        and not _STANDALONE_NUM_RE.match(s)
+        and not _URL_RE.search(s)
+        and not _COPYRIGHT_RE.search(s)
+        and any(ch.isalpha() for ch in s)
+    )
+
+
+def _facilitateur_flatten_fr_parts(parts: list[str], segment: bool) -> list[str]:
+    from moore_web.book_parser_facilitateur import replace_facilitateur_names_fr
+
+    out: list[str] = []
+    if segment:
+        for s in parts:
+            out.extend(
+                normalize_fr(sent)
+                for sent in segment_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", s)))
+                if _facilitateur_keep(sent)
+            )
+    else:
+        for s in parts:
+            # Filter on the cleaned text, not the raw string -- a line that's
+            # entirely a page reference (e.g. "(voir p. 12)") passes a raw
+            # check but becomes empty once _PAGE_REF_RE strips it.
+            cleaned = normalize_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", s)))
+            if _facilitateur_keep(cleaned):
+                out.append(cleaned)
+    return out
+
+
+def _facilitateur_flatten_mo_parts(parts: list[str], atomic_texts: set[str], segment: bool) -> list[str]:
+    out: list[str] = []
+    if segment:
+        for s in parts:
+            cleaned = _PAGE_REF_RE.sub("", s)
+            if s in atomic_texts:
+                # A "Zãmsog a N soaba" (Lesson N) scripture-reference entry:
+                # its internal period isn't a real sentence boundary, so keep
+                # it as one corpus line instead of sentence-splitting it.
+                text = normalize_mo(cleaned)
+                if _facilitateur_keep(text):
+                    out.append(text)
+            else:
+                out.extend(normalize_mo(sent) for sent in segment_mo(cleaned) if _facilitateur_keep(sent))
+    else:
+        for s in parts:
+            cleaned = normalize_mo(_PAGE_REF_RE.sub("", s))
+            if _facilitateur_keep(cleaned):
+                out.append(cleaned)
+    return out
+
+
+_FACILITATEUR_SECTION_ROLES = {
+    # Preface. The Mooré parser intentionally has fewer top-level sections
+    # than the French parser, so related French sections are folded into the
+    # same bilingual review unit.
+    "quel est le problème": "context",
+    "comment l'église pourrait-elle répondre à ce problème": "context",
+    "yellã yaa bʋgo": "context",
+    "wẽndooga na n maana a wãn n tõog n leok yell kãngã": "context",
+    "à propos de ce manuel": "manual",
+    "comment utiliser ce manuel": "manual",
+    "sẽn n kẽed ne seb kãngã": "manual",
+    "d na n bãnga sebrã a wãn wãna": "manual",
+    # Regular chapter sections. All spelling variants below are canonical
+    # titles emitted by book_parser_facilitateur.
+    "l'histoire de kadé": "story",
+    "karem-y kibarã": "story",
+    "kibarã": "story",
+    "questions à discuter": "questions",
+    "sõaseg sokdse": "questions",
+    "choses à apprendre": "learning",
+    "d sẽn segd n zãms bũmb niisi": "learning",
+    "bũmb d sẽn tõe n zãmse": "learning",
+    "sketch et chant": "sketch",
+    "sketch": "sketch",
+    "reem": "sketch",
+    "reem la yɩɩlle": "sketch",
+    "reem la yɩɩla": "sketch",
+    "ce que dit la bible": "bible",
+    "wẽnnaam sebra sẽn yet bũmb ningã": "bible",
+    "wẽnnaam sebra sẽn yet bũmb ninga": "bible",
+    "wẽnnaam sebra sẽn yet bûmb ninga": "bible",
+    "prier et agir": "prayer",
+    "pʋʋsg la tʋʋmde": "prayer",
+    "pʋʋsog la tʋʋma": "prayer",
+    "pʋʋsgo la tʋʋma": "prayer",
+}
+
+_FACILITATEUR_ROLE_ORDER = (
+    "context",
+    "manual",
+    "story",
+    "questions",
+    "learning",
+    "sketch",
+    "bible",
+    "prayer",
+)
+
+
+def _facilitateur_section_role(title: str, chapter_number: int) -> str:
+    """Map a language-specific canonical heading to a bilingual role."""
+    cleaned = _PAGE_REF_RE.sub("", title)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .?!:").casefold()
+
+    # Content before the first recognised heading is represented by the
+    # parser as an ``Intro`` section. In numbered chapters that is the story;
+    # in chapter zero it is front-matter context.
+    if cleaned == "intro":
+        return "context" if chapter_number == 0 else "story"
+
+    try:
+        return _FACILITATEUR_SECTION_ROLES[cleaned]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown Kadé section title in chapter {chapter_number}: {title!r}. "
+            "Add its bilingual role to _FACILITATEUR_SECTION_ROLES before exporting."
+        ) from exc
+
+
 def flatten_facilitateur_pair(
     fr_book: Book,
     mo_book: Book,
@@ -556,77 +694,136 @@ def flatten_facilitateur_pair(
         mo_book: Parsed Mooré Kadé book.
         segment: If True, run sentence segmentation on each item.
     """
-    from moore_web.book_parser_facilitateur import (
-        atomic_item_texts,
-        flatten_book_to_list,
-        replace_facilitateur_names_fr,
-    )
+    from moore_web.book_parser_facilitateur import atomic_item_texts, flatten_book_to_list
 
     result = ParallelText(source="kade")
-
-    def _clean_title_fr(t: str) -> str:
-        return normalize_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", t).strip()))
-
-    def _clean_title_mo(t: str) -> str:
-        return normalize_mo(_PAGE_REF_RE.sub("", t).strip())
 
     # Titles as alignment anchors
     for ch in fr_book.chapters:
         if ch.title.strip():
-            result.french.append(_clean_title_fr(ch.title))
+            result.french.append(_facilitateur_clean_title_fr(ch.title))
         for sec in ch.sections:
             if sec.title.strip():
-                result.french.append(_clean_title_fr(sec.title))
+                result.french.append(_facilitateur_clean_title_fr(sec.title))
             for sub in sec.subsections:
                 if sub.title.strip():
-                    result.french.append(_clean_title_fr(sub.title))
+                    result.french.append(_facilitateur_clean_title_fr(sub.title))
 
     for ch in mo_book.chapters:
         if ch.title.strip():
-            result.moore.append(_clean_title_mo(ch.title))
+            result.moore.append(_facilitateur_clean_title_mo(ch.title))
         for sec in ch.sections:
             if sec.title.strip():
-                result.moore.append(_clean_title_mo(sec.title))
+                result.moore.append(_facilitateur_clean_title_mo(sec.title))
 
     # Section content
     fr_list = flatten_book_to_list(fr_book)
     mo_list = flatten_book_to_list(mo_book)
     mo_atomic = atomic_item_texts(mo_book)
 
-    def _keep(s: str) -> bool:
-        return (
-            bool(s.strip())
-            and not _STANDALONE_NUM_RE.match(s)
-            and not _URL_RE.search(s)
-            and not _COPYRIGHT_RE.search(s)
-            and any(ch.isalpha() for ch in s)
-        )
-
-    if segment:
-        for s in fr_list:
-            result.french.extend(
-                normalize_fr(sent)
-                for sent in segment_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", s)))
-                if _keep(sent)
-            )
-        for s in mo_list:
-            cleaned = _PAGE_REF_RE.sub("", s)
-            if s in mo_atomic:
-                # A "Zãmsog a N soaba" (Lesson N) scripture-reference entry:
-                # its internal period isn't a real sentence boundary, so keep
-                # it as one corpus line instead of sentence-splitting it.
-                text = normalize_mo(cleaned)
-                if _keep(text):
-                    result.moore.append(text)
-            else:
-                result.moore.extend(normalize_mo(sent) for sent in segment_mo(cleaned) if _keep(sent))
-    else:
-        result.french.extend(
-            normalize_fr(replace_facilitateur_names_fr(_PAGE_REF_RE.sub("", s))) for s in fr_list if _keep(s)
-        )
-        result.moore.extend(normalize_mo(_PAGE_REF_RE.sub("", s)) for s in mo_list if _keep(s))
+    result.french.extend(_facilitateur_flatten_fr_parts(fr_list, segment))
+    result.moore.extend(_facilitateur_flatten_mo_parts(mo_list, mo_atomic, segment))
 
     return result
+
+
+def flatten_facilitateur_pair_per_unit(
+    fr_book: Book,
+    mo_book: Book,
+    segment: bool = True,
+) -> list[tuple[str, ParallelText]]:
+    """Flatten Kadé books into one bilingual unit per semantic section.
+
+    Chapters are matched by number. Sections are matched by their canonical
+    bilingual role rather than position because the independently parsed
+    French and Mooré editions do not always have the same top-level shape.
+    Repeated sections with the same role are folded together, as are each
+    section's subsections. A chapter-title unit is emitted separately.
+
+    Unknown headings or different role sets raise ``ValueError`` rather than
+    silently crossing unrelated French and Mooré text.
+
+    Args:
+        fr_book: Parsed French Kadé book.
+        mo_book: Parsed Mooré Kadé book.
+        segment: If True, run sentence segmentation on each unit's content.
+    """
+    from moore_web.book_parser_facilitateur import clean, flatten_section_content
+
+    def _section_atomic_texts(section) -> set[str]:
+        result: set[str] = set()
+        for sec_or_sub in (section, *section.subsections):
+            result.update(clean(item.text) for item in sec_or_sub.items if item.atomic)
+        return result
+
+    def _sections_by_role(chapter) -> dict[str, list]:
+        grouped: dict[str, list] = {}
+        for section in chapter.sections:
+            role = _facilitateur_section_role(section.title, chapter.number)
+            grouped.setdefault(role, []).append(section)
+        return grouped
+
+    def _append_sections(unit: ParallelText, sections: list, language: str) -> None:
+        is_french = language == "fra"
+        target = unit.french if is_french else unit.moore
+        clean_title = _facilitateur_clean_title_fr if is_french else _facilitateur_clean_title_mo
+
+        for section in sections:
+            title = clean_title(section.title)
+            if section.title != "Intro" and _facilitateur_keep(title):
+                target.append(title)
+
+            parts = list(flatten_section_content(section))
+            for subsection in section.subsections:
+                subtitle = clean_title(subsection.title)
+                if _facilitateur_keep(subtitle):
+                    target.append(subtitle)
+                parts.extend(flatten_section_content(subsection))
+
+            if is_french:
+                target.extend(_facilitateur_flatten_fr_parts(parts, segment))
+            else:
+                target.extend(_facilitateur_flatten_mo_parts(parts, _section_atomic_texts(section), segment))
+
+    results: list[tuple[str, ParallelText]] = []
+    fr_chapters_by_number = {chapter.number: chapter for chapter in fr_book.chapters}
+    mo_chapters_by_number = {chapter.number: chapter for chapter in mo_book.chapters}
+
+    if fr_chapters_by_number.keys() != mo_chapters_by_number.keys():
+        raise ValueError(
+            "Kadé chapter numbers differ between languages: "
+            f"French={sorted(fr_chapters_by_number)}, Mooré={sorted(mo_chapters_by_number)}"
+        )
+
+    for chapter_number, fr_chapter in fr_chapters_by_number.items():
+        mo_chapter = mo_chapters_by_number[chapter_number]
+
+        fr_title = _facilitateur_clean_title_fr(fr_chapter.title)
+        mo_title = _facilitateur_clean_title_mo(mo_chapter.title)
+        if _facilitateur_keep(fr_title) and _facilitateur_keep(mo_title):
+            title_unit = ParallelText(source="kade")
+            title_unit.french.append(fr_title)
+            title_unit.moore.append(mo_title)
+            results.append((f"kade-ch{chapter_number}-title", title_unit))
+
+        fr_by_role = _sections_by_role(fr_chapter)
+        mo_by_role = _sections_by_role(mo_chapter)
+        if fr_by_role.keys() != mo_by_role.keys():
+            raise ValueError(
+                f"Kadé section roles differ in chapter {chapter_number}: "
+                f"French={sorted(fr_by_role)}, Mooré={sorted(mo_by_role)}"
+            )
+
+        for role in _FACILITATEUR_ROLE_ORDER:
+            if role not in fr_by_role:
+                continue
+            unit = ParallelText(source="kade")
+            _append_sections(unit, fr_by_role[role], "fra")
+            _append_sections(unit, mo_by_role[role], "mos")
+            if unit.french and unit.moore:
+                results.append((f"kade-ch{chapter_number}-{role}", unit))
+
+    return results
 
 
 def flatten_simple_parser(

@@ -18,6 +18,12 @@ Usage:
     uv run python scripts/export_review_units.py --source raamde \
         --input data/raamde/raamde_corpus_with_lang_id.json \
         -o data/review/raamde_units.jsonl
+
+    uv run python scripts/export_review_units.py --source kade \
+        --fr-input "kadé_fr.pdf" --mo-input "kadé_mos.pdf" \
+        -o data/review/kade_units.jsonl
+
+    ``--source facilitateur`` is accepted as an alias for ``kade``.
 """
 
 from __future__ import annotations
@@ -56,9 +62,26 @@ def export_raamde(input_path: str, output_path: str) -> int:
     return _write_units(units, output_path)
 
 
+def export_kade(fr_input: str, mo_input: str, output_path: str) -> int:
+    from moore_web.cli import KadeLang, _parse_kade_file
+    from moore_web.flatten import flatten_facilitateur_pair_per_unit
+
+    fr_book = _parse_kade_file(Path(fr_input), KadeLang.french)
+    mo_book = _parse_kade_file(Path(mo_input), KadeLang.moore)
+    units = flatten_facilitateur_pair_per_unit(fr_book, mo_book, segment=True)
+    return _write_units(units, output_path)
+
+
+# Sources needing one input (PDF, JSON, ...).
 EXPORTERS = {
     "sida": export_sida,
     "raamde": export_raamde,
+}
+
+# Sources needing two independently parsed monolingual books.
+PAIR_EXPORTERS = {
+    "facilitateur": export_kade,
+    "kade": export_kade,
 }
 
 
@@ -70,19 +93,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--source",
         required=True,
-        choices=sorted(EXPORTERS),
-        help="Which document family to export. Adding another source means writing an "
-        "export_<source>(input_path, output_path) -> int that yields the same "
+        choices=sorted([*EXPORTERS, *PAIR_EXPORTERS]),
+        help="Which document family to export. Adding another single-input source means "
+        "writing an export_<source>(input_path, output_path) -> int that yields the same "
         "{uid: {fra, mos}} shape per line and registering it in EXPORTERS.",
     )
-    p.add_argument("--input", "-i", required=True, help="Path to the source file (PDF, JSON, ...).")
+    p.add_argument(
+        "--input", "-i", help="Path to the source file (PDF, JSON, ...) -- single-input sources only."
+    )
+    p.add_argument("--fr-input", help="Path to the French Kadé PDF/TXT (paired sources only).")
+    p.add_argument("--mo-input", help="Path to the Mooré Kadé PDF/TXT (paired sources only).")
     p.add_argument("--output", "-o", required=True, help="Output JSONL path.")
     return p
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    n = EXPORTERS[args.source](args.input, args.output)
+
+    if args.source in PAIR_EXPORTERS:
+        if not args.fr_input or not args.mo_input:
+            raise SystemExit(f"--fr-input and --mo-input are both required for --source {args.source}")
+        n = PAIR_EXPORTERS[args.source](args.fr_input, args.mo_input, args.output)
+    else:
+        if not args.input:
+            raise SystemExit(f"--input is required for --source {args.source}")
+        n = EXPORTERS[args.source](args.input, args.output)
+
     print(f"Wrote {n} units -> {args.output}")
 
 
