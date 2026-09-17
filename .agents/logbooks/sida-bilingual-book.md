@@ -5,6 +5,49 @@ left, French right) on every content page, plus six enumerated Q&A items in
 Chapter 5. See [`docs/sida-bilingual-book.md`](../../docs/sida-bilingual-book.md)
 for the physical layout and parsing hierarchy.
 
+## 2026-09-17
+
+- **Tried OmegaT for human-reviewed alignment; abandoned it.** After the
+  segmentation fixes below, 19/42 page+enum units already matched exactly and
+  the rest had known, page-localized causes — looked like a good candidate
+  for a manual alignment pass instead of trusting LASER+FastDTW blindly.
+  Exported `data/omegat/sida_fr.txt` / `sida_mo.txt` (one sentence per line,
+  book order, `==page-N==`/`==enum-N==` marker lines every unit) for
+  OmegaT's Tools → Align Files.
+- **Finding: OmegaT's language pickers in Align Files are NOT restricted to
+  a whitelist.** `sourceLanguagePicker`/`targetLanguagePicker` are editable
+  `JComboBox`es (confirmed in upstream source,
+  `aligner/.../AlignFilePicker.form`: `editable=true`), and whatever you
+  type is checked by `Language.verifySingleLangCode()`, which is just
+  `Locale.forLanguageTag(code)` — a BCP-47 *syntax* check, not a lookup
+  against known/supported languages. Typing the real ISO 639-3 code `mos`
+  works fine (falls back to `DefaultTokenizer`, which is all this alignment
+  needs). The initial failure with Arabic/Ukrainian tokenizers was just
+  OmegaT's out-of-the-box template languages (`ar-LB`/`uk-UA`) never having
+  been overwritten in the project, not a genuine language-support limit.
+- **Finding: making OmegaT respect our pre-computed sentence boundaries
+  needs two separate settings, not a custom SRX rule.** A hand-rolled "split
+  on `\n`" SRX rule is insufficient by itself — the default punctuation-based
+  break rules would still fire *inside* a line and undo fixes like the
+  dialogue-tag merge. Confirmed via source (`Aligner.java`,
+  `TextOptionsDialog.java`) that OmegaT already has purpose-built settings
+  for this: (1) Options → Global File Filters → select `Text` → **Options...**
+  (not Edit...) → **Line breaks** (makes each line its own paragraph), and
+  (2) in the Align Files window's own Options menu, uncheck **Segment**
+  (`Aligner.segment` field — when off, raw paragraphs are aligned directly,
+  skipping SRX resegmentation entirely).
+- **Decided against finishing the OmegaT pass.** Reasons: (a) real setup
+  friction working through the above two settings (nested dialogs, "Edit..."
+  vs "Options..." look identical at a glance); (b) the review UI treats
+  every line pair as equally uncertain, when we already know page/enum
+  boundaries are reliable and which specific units need a human look; (c)
+  unrelated system memory pressure (swap 65% full from other running apps)
+  made the Swing UI laggy in this environment. Decision: build a small
+  custom side-by-side reviewer scoped to just the ~23 mismatched units
+  instead of a general-purpose CAT tool over all ~280 lines. Not yet
+  implemented as of this entry — pick this up before repeating the OmegaT
+  attempt.
+
 ## 2026-09-14
 
 - **Duplication bug found and fixed in `flatten_sida_book`.** Chapter 5's
