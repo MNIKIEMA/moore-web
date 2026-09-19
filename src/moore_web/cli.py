@@ -1386,6 +1386,68 @@ def e2e(
 
 
 # ---------------------------------------------------------------------------
+# expert translation batch
+# ---------------------------------------------------------------------------
+
+
+@app.command("parse-expert-translations")
+def parse_expert_translation_batch(
+    input_pdf: Annotated[
+        Path, typer.Option("--input", "-i", exists=True, dir_okay=False, help="Expert translation PDF.")
+    ],
+    output_jsonl: Annotated[Path, typer.Option("--output", "-o", help="Aligned JSONL output.")],
+    document_id: Annotated[
+        Optional[str], typer.Option("--document-id", help="Override the PDF stem used as document ID.")
+    ] = None,
+) -> None:
+    """Extract existing French–Mooré table row pairs and their QA metadata."""
+    from moore_web.expert_translation_parser import parse_expert_translations, write_jsonl
+
+    records = parse_expert_translations(input_pdf, doc_id=document_id)
+    write_jsonl(records, output_jsonl)
+    typer.echo(f"Wrote {len(records)} expert translation pairs → {output_jsonl}")
+
+
+# ---------------------------------------------------------------------------
+# Mooré proverb app
+# ---------------------------------------------------------------------------
+
+
+@app.command("parse-moore-proverbs")
+def parse_moore_proverb_app(
+    input_dir: Annotated[
+        Path, typer.Option("--input-dir", exists=True, file_okay=False, help="Archived proverb app directory.")
+    ],
+    output_jsonl: Annotated[Path, typer.Option("--output", "-o", help="Proverb pairs as JSONL.")],
+) -> None:
+    """Pair Mooré proverbs with their French renderings from the archived app."""
+    from moore_web.moore_proverbs_parser import parse_moore_proverbs, write_jsonl
+
+    records = parse_moore_proverbs(input_dir)
+    write_jsonl(records, output_jsonl)
+    typer.echo(f"Wrote {len(records)} Mooré/French proverb pairs → {output_jsonl}")
+
+
+# ---------------------------------------------------------------------------
+# abcBurkina coépouses tale
+# ---------------------------------------------------------------------------
+
+
+@app.command("segment-abc-coepouses")
+def segment_abc_coepouses_tale(
+    fr_input: Annotated[Path, typer.Option("--fr-input", exists=True, dir_okay=False)],
+    mo_input: Annotated[Path, typer.Option("--mo-input", exists=True, dir_okay=False)],
+    output_jsonl: Annotated[Path, typer.Option("--output", "-o")],
+) -> None:
+    """Pair French and Mooré story beats in the archived coépouses tale."""
+    from moore_web.abc_coepouses_parser import parse_abc_coepouses, write_jsonl
+
+    units = parse_abc_coepouses(fr_input, mo_input)
+    write_jsonl(units, output_jsonl)
+    typer.echo(f"Wrote {len(units)} paired tale units → {output_jsonl}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

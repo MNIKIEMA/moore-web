@@ -54,6 +54,9 @@ moore-web --help
 | `annotate` | Enrich an aligned dataset with quality signals |
 | `e2e` | Full pipeline: parse → flatten → align (with optional annotation) |
 | `clean-lexicon` | Clean a lexicon JSONL file (synonym splitting, proverb stripping) |
+| `parse-expert-translations` | Extract existing French–Mooré PDF table pairs with QA notes |
+| `parse-moore-proverbs` | Pair archived Mooré proverbs with French renderings |
+| `segment-abc-coepouses` | Segment the French/Mooré abcBurkina tale into paired story units |
 
 ### Sources
 
@@ -64,6 +67,47 @@ moore-web --help
 | `news` | Raamde news corpus (JSON with `text_units` lists) |
 | `simple` | Simple bilingual dictionary PDF |
 | `conseils` | Conseil-des-ministres bilingual corpus (JSON) |
+
+### Expert translation batch
+
+The expert translation PDF already pairs each French source with its Mooré
+translation in one table row. Extract the rows and preserve their review notes:
+
+```bash
+moore-web parse-expert-translations \
+  -i '../faso-web-docs/expert-translations/mos_Mossi_seed_batch2 (3).pdf' \
+  -o expert_translations.jsonl
+```
+
+See [the source format and output fields](docs/expert-translations.md).
+
+### Mooré proverbs
+
+The archived Proverbs Volume 1 app has a Mooré saying, a French rendering,
+and a repeated Mooré reading on each page. Extract one pair per page:
+
+```bash
+moore-web parse-moore-proverbs \
+  --input-dir ../faso-web-docs/mooreburkina-priority/apps/mos-proverbes-volume-1 \
+  --output moore_proverbs.jsonl
+```
+
+See [the source format and pairing checks](docs/moore-proverbs.md).
+
+### abcBurkina coépouses tale
+
+The French and Mooré editions have different paragraph breaks. Segment them
+into hand-anchored parallel story units, with separate sentence lists for later
+alignment:
+
+```bash
+moore-web segment-abc-coepouses \
+  --fr-input ../faso-web-docs/abcburkina-contes/text/266-les-couses.txt \
+  --mo-input ../faso-web-docs/abcburkina-contes/text/267-les-co-epouses-moore.txt \
+  --output abc_coepouses_units.jsonl
+```
+
+See [the source format and anchor list](docs/abc-coepouses.md).
 
 ### Examples
 
