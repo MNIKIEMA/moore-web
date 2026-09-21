@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 
+from htmltools import Tag
 from shiny import App, Inputs, Outputs, Session, reactive, render, ui
 
 from moore_web import review_store
@@ -36,17 +37,124 @@ body { background: #f7f8fa; }
 .side.mo { background: #fff8e6; }
 .side h4 { font-size: 0.95rem; margin: 0 0 8px; }
 .side ol { margin: 0; padding-left: 24px; }
-.side li { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.side li { margin: 4px 0; padding: 3px 8px; border-left: 5px solid var(--line-bd, #94a3b8);
+  background: var(--line-bg, #fff); border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.side li::marker { font-weight: 700; color: var(--line-bd, #64748b); }
+.pair-0 { --line-bd: #2563eb; --line-bg: #dbeafe; }
+.pair-1 { --line-bd: #16a34a; --line-bg: #dcfce7; }
+.unpaired { --line-bd: #dc2626; --line-bg: #fee2e2; }
+.side li.unpaired { border-left-style: dashed; }
+.legend { color: #475569; font-size: 0.85rem; margin: 0 0 8px; }
+.legend .unpaired-swatch { display: inline-block; width: 12px; height: 12px; margin: 0 4px -1px 0;
+  background: #fee2e2; border: 1px dashed #dc2626; border-radius: 2px; }
 .unit-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0 2px; }
 .modal-dialog { max-width: min(1200px, 96vw); }
-.editor-text .form-control { font-family: inherit; line-height: 1.5; }
+.hl-wrap { position: relative; font: inherit; line-height: 1.5; }
+.hl-wrap textarea, .hl-mirror { display: block; box-sizing: border-box; width: 100%; margin: 0;
+  font: inherit; line-height: 1.5; letter-spacing: normal; tab-size: 8;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; }
+.hl-wrap textarea { position: relative; padding: 6px 12px; border: 1px solid #cbd5e1; resize: none;
+  overflow: hidden; background: transparent !important; }
+.hl-mirror { position: absolute; inset: 0; padding: 6px 0; border: 1px solid transparent;
+  color: transparent; pointer-events: none; overflow: hidden; }
+.hl-mirror div { padding: 0 12px; box-shadow: inset 5px 0 0 var(--line-bd, transparent);
+  background: var(--line-bg, transparent); }
 @media (max-width: 700px) { .parallel { grid-template-columns: 1fr; } }
 """
 
 
-def _side(title: str, sentences: list[str], class_name: str) -> object:
+EDITOR_JS = """
+(function () {
+  const IDS = ['edit_fra', 'edit_mos'];
+  const COLORS = 2;
+
+  function lines(area) { return area.value.split(/\\r?\\n/); }
+  function count(area) { return lines(area).filter(l => l.trim()).length; }
+
+  function paint(area, otherCount) {
+    let n = 0;
+    const mirror = area.previousElementSibling;
+    mirror.replaceChildren(...lines(area).map(text => {
+      const row = document.createElement('div');
+      row.textContent = text || '\\u200b';
+      if (text.trim()) row.className = n >= otherCount ? 'unpaired' : 'pair-' + (n % COLORS);
+      if (text.trim()) n += 1;
+      return row;
+    }));
+    area.style.height = 'auto';
+    area.style.height = area.scrollHeight + 2 + 'px';
+  }
+
+  function refresh() {
+    const [fra, mos] = IDS.map(id => document.getElementById(id));
+    if (!fra || !mos || !fra.dataset.hl || !mos.dataset.hl) return;
+    paint(fra, count(mos));
+    paint(mos, count(fra));
+  }
+
+  // The modal is still hidden (zero width) when the textareas are inserted; re-measure once shown.
+  const widths = new ResizeObserver(entries => {
+    if (entries.some(e => e.target.dataset.w !== String(e.contentRect.width))) {
+      entries.forEach(e => { e.target.dataset.w = String(e.contentRect.width); });
+      refresh();
+    }
+  });
+
+  function attach() {
+    const areas = IDS.map(id => document.getElementById(id));
+    if (areas.some(a => !a || a.dataset.hl)) return;
+    areas.forEach(area => {
+      const wrap = document.createElement('div');
+      wrap.className = 'hl-wrap';
+      const mirror = document.createElement('div');
+      mirror.className = 'hl-mirror';
+      mirror.setAttribute('aria-hidden', 'true');
+      area.parentNode.insertBefore(wrap, area);
+      wrap.append(mirror, area);
+      area.dataset.hl = '1';
+      widths.observe(wrap);
+    });
+    refresh();
+    requestAnimationFrame(refresh);
+  }
+
+  new MutationObserver(attach).observe(document.body, { childList: true, subtree: true });
+  // jQuery, not addEventListener: Shiny's update_text_area fires a jQuery-only change event.
+  $(document).on('input change', '#edit_fra, #edit_mos', refresh);
+  window.addEventListener('resize', refresh);
+})();
+"""
+
+
+PAIR_COLORS = 2
+
+
+def _line_class(index: int, other_count: int) -> str:
+    """Same colour for line N on both sides; red when the other side has no line N."""
+    return "unpaired" if index >= other_count else f"pair-{index % PAIR_COLORS}"
+
+
+def _side(title: str, sentences: list[str], class_name: str, other_count: int) -> Tag:
     return ui.div(
-        ui.tags.h4(title), ui.tags.ol(*(ui.tags.li(s) for s in sentences)), class_=f"side {class_name}"
+        ui.tags.h4(title),
+        ui.tags.ol(*(ui.tags.li(s, class_=_line_class(i, other_count)) for i, s in enumerate(sentences))),
+        class_=f"side {class_name}",
+    )
+
+
+def _parallel(unit: dict) -> Tag:
+    return ui.div(
+        ui.p(
+            "Line N has the same colour on both sides. ",
+            ui.span(class_="unpaired-swatch"),
+            "Red dashed = no counterpart on the other side.",
+            class_="legend",
+        ),
+        ui.div(
+            _side("French", unit["fra"], "fr", len(unit["mos"])),
+            _side("Mooré", unit["mos"], "mo", len(unit["fra"])),
+            class_="parallel",
+        ),
     )
 
 
@@ -65,7 +173,7 @@ def _unit_card(unit: dict) -> object:
             ui.span(counts, class_="counts"),
         ),
         ui.div(
-            ui.div(_side("French", unit["fra"], "fr"), _side("Mooré", unit["mos"], "mo"), class_="parallel"),
+            _parallel(unit),
             ui.div(
                 ui.tags.button(
                     "Edit / review",
@@ -104,7 +212,8 @@ def _editor_modal(unit: dict, draft: dict | None) -> object:
     return ui.modal(
         conflict_message,
         ui.p(
-            "One sentence per line. Remove a line break to merge; add one to split; cut and paste to reorder."
+            "One sentence per line. Remove a line break to merge; add one to split; cut and paste to reorder. "
+            "Line N has the same colour on both sides; red means the other side has no line N."
         ),
         ui.div(
             ui.div(
@@ -120,7 +229,7 @@ def _editor_modal(unit: dict, draft: dict | None) -> object:
         ui.output_text("editor_counts"),
         ui.tags.details(
             ui.tags.summary("Current accepted text for comparison"),
-            ui.div(_side("French", unit["fra"], "fr"), _side("Mooré", unit["mos"], "mo"), class_="parallel"),
+            _parallel(unit),
         ),
         title=f"{unit['source']} · {unit['unit_uid']}",
         footer=ui.div(
@@ -142,6 +251,7 @@ def make_app(db_path: Path = DB_PATH, input_dir: Path = INPUT_DIR) -> App:
 
     app_ui = ui.page_fluid(
         ui.tags.style(CSS),
+        ui.tags.script(EDITOR_JS),
         ui.div(
             ui.h1("Bilingual unit review"),
             ui.p("Browse imported units in manageable pages and open any unit to review its sentences."),
