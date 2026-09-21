@@ -109,6 +109,35 @@ moore-web segment-abc-coepouses \
 
 See [the source format and anchor list](docs/abc-coepouses.md).
 
+### Review bilingual units in Shiny
+
+Export source files with `scripts/export_review_units.py`, then run:
+
+```bash
+uv run shiny run apps/review_app.py --host <host> --port <port>
+```
+
+The app imports **all** `data/review/*_units.jsonl` files into
+`data/review/reviews.sqlite3` and shows units in pages of 25, 50, or 100.
+Filter the list by review status or source, expand or collapse visible units,
+enter a reviewer name, and use **Edit / review** to change sentence boundaries
+or text. **Save draft** stores work under that reviewer name; **Restore source
+text** loads the original sentences into the editor; **Mark reviewed** requires
+equal, nonzero French and Mooré line counts.
+If another reviewer accepted a newer version, the app retains the draft and
+asks for an explicit comparison before it can be accepted.
+
+**Download aligned pairs JSONL** exports every unit with equal sentence counts,
+including untouched units, matching the Marimo notebook's export behavior.
+**Download reviewed only** exports accepted units. Both downloads use
+`{"french": ..., "moore": ..., "source": ..., "unit": ...}` rows.
+
+You can set `REVIEW_INPUT_DIR` and `REVIEW_DB_PATH` to use other locations.
+The database imports new units on startup and preserves existing edits. Keep
+the SQLite database on the app server's local disk. Reviewer names identify
+drafts but do not provide authentication; use authenticated hosting before
+making the app available to an untrusted audience.
+
 ### Examples
 
 **End-to-end pipeline:**
