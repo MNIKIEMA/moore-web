@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 
+from htmltools import Tag
 from shiny import App, Inputs, Outputs, Session, reactive, render, ui
 
 from moore_web import review_store
@@ -36,7 +37,19 @@ body { background: #f7f8fa; }
 .side.mo { background: #fff8e6; }
 .side h4 { font-size: 0.95rem; margin: 0 0 8px; }
 .side ol { margin: 0; padding-left: 24px; }
-.side li { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.side li { margin: 4px 0; padding: 3px 8px; border-left: 5px solid var(--line-bd, #94a3b8);
+  background: var(--line-bg, #fff); border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.side li::marker { font-weight: 700; color: var(--line-bd, #64748b); }
+.side li.pair-0 { --line-bd: #2563eb; --line-bg: #dbeafe; }
+.side li.pair-1 { --line-bd: #16a34a; --line-bg: #dcfce7; }
+.side li.pair-2 { --line-bd: #d97706; --line-bg: #fef3c7; }
+.side li.pair-3 { --line-bd: #9333ea; --line-bg: #f3e8ff; }
+.side li.pair-4 { --line-bd: #0d9488; --line-bg: #ccfbf1; }
+.side li.pair-5 { --line-bd: #db2777; --line-bg: #fce7f3; }
+.side li.unpaired { --line-bd: #dc2626; --line-bg: #fee2e2; border-left-style: dashed; }
+.legend { color: #475569; font-size: 0.85rem; margin: 0 0 8px; }
+.legend .unpaired-swatch { display: inline-block; width: 12px; height: 12px; margin: 0 4px -1px 0;
+  background: #fee2e2; border: 1px dashed #dc2626; border-radius: 2px; }
 .unit-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0 2px; }
 .modal-dialog { max-width: min(1200px, 96vw); }
 .editor-text .form-control { font-family: inherit; line-height: 1.5; }
@@ -44,9 +57,35 @@ body { background: #f7f8fa; }
 """
 
 
-def _side(title: str, sentences: list[str], class_name: str) -> object:
+PAIR_COLORS = 6
+
+
+def _line_class(index: int, other_count: int) -> str:
+    """Same colour for line N on both sides; red when the other side has no line N."""
+    return "unpaired" if index >= other_count else f"pair-{index % PAIR_COLORS}"
+
+
+def _side(title: str, sentences: list[str], class_name: str, other_count: int) -> Tag:
     return ui.div(
-        ui.tags.h4(title), ui.tags.ol(*(ui.tags.li(s) for s in sentences)), class_=f"side {class_name}"
+        ui.tags.h4(title),
+        ui.tags.ol(*(ui.tags.li(s, class_=_line_class(i, other_count)) for i, s in enumerate(sentences))),
+        class_=f"side {class_name}",
+    )
+
+
+def _parallel(unit: dict) -> Tag:
+    return ui.div(
+        ui.p(
+            "Line N has the same colour on both sides. ",
+            ui.span(class_="unpaired-swatch"),
+            "Red dashed = no counterpart on the other side.",
+            class_="legend",
+        ),
+        ui.div(
+            _side("French", unit["fra"], "fr", len(unit["mos"])),
+            _side("Mooré", unit["mos"], "mo", len(unit["fra"])),
+            class_="parallel",
+        ),
     )
 
 
@@ -65,7 +104,7 @@ def _unit_card(unit: dict) -> object:
             ui.span(counts, class_="counts"),
         ),
         ui.div(
-            ui.div(_side("French", unit["fra"], "fr"), _side("Mooré", unit["mos"], "mo"), class_="parallel"),
+            _parallel(unit),
             ui.div(
                 ui.tags.button(
                     "Edit / review",
@@ -120,7 +159,7 @@ def _editor_modal(unit: dict, draft: dict | None) -> object:
         ui.output_text("editor_counts"),
         ui.tags.details(
             ui.tags.summary("Current accepted text for comparison"),
-            ui.div(_side("French", unit["fra"], "fr"), _side("Mooré", unit["mos"], "mo"), class_="parallel"),
+            _parallel(unit),
         ),
         title=f"{unit['source']} · {unit['unit_uid']}",
         footer=ui.div(
