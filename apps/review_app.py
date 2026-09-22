@@ -49,79 +49,170 @@ body { background: #f7f8fa; }
   background: #fee2e2; border: 1px dashed #dc2626; border-radius: 2px; }
 .unit-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0 2px; }
 .modal-dialog { max-width: min(1200px, 96vw); }
-.hl-wrap { position: relative; font: inherit; line-height: 1.5; }
-.hl-wrap textarea, .hl-mirror { display: block; box-sizing: border-box; width: 100%; margin: 0;
-  font: inherit; line-height: 1.5; letter-spacing: normal; tab-size: 8;
-  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; }
-.hl-wrap textarea { position: relative; padding: 6px 12px; border: 1px solid #cbd5e1; resize: none;
-  overflow: hidden; background: transparent !important; }
-.hl-mirror { position: absolute; inset: 0; padding: 6px 0; border: 1px solid transparent;
-  color: transparent; pointer-events: none; overflow: hidden; }
-.hl-mirror div { padding: 0 12px; box-shadow: inset 5px 0 0 var(--line-bd, transparent);
-  background: var(--line-bg, transparent); }
-@media (max-width: 700px) { .parallel { grid-template-columns: 1fr; } }
+.hidden-editor-fields { display: none; }
+.line-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 12px; margin: 10px 0; }
+.line-grid .cell { box-sizing: border-box; border-radius: 4px; border-left: 5px solid var(--line-bd, #94a3b8);
+  background: var(--line-bg, #fff); }
+.line-grid .cell.pair-0 { --line-bd: #2563eb; --line-bg: #dbeafe; }
+.line-grid .cell.pair-1 { --line-bd: #16a34a; --line-bg: #dcfce7; }
+.line-grid .cell.unpaired { --line-bd: #dc2626; --line-bg: #fee2e2; border-left-style: dashed; }
+.line-grid .cell.empty-cell { border: 1px dashed #cbd5e1; background: transparent; }
+.line-grid .cell textarea { display: block; width: 100%; height: 100%; box-sizing: border-box;
+  margin: 0; border: none; background: transparent; resize: none; overflow: hidden;
+  font: inherit; line-height: 1.5; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: break-word; }
+.line-grid .cell textarea:focus { outline: 2px solid #2563eb66; outline-offset: -2px; }
+@media (max-width: 700px) { .parallel { grid-template-columns: 1fr; } .line-grid { grid-template-columns: 1fr; } }
 """
 
 
 EDITOR_JS = """
 (function () {
-  const IDS = ['edit_fra', 'edit_mos'];
-  const COLORS = 2;
+  // Two hidden Shiny textareas (#edit_fra, #edit_mos) hold the text Shiny reads from / writes to.
+  // This builds a visible grid on top of them: one row per line index, French and Moore
+  // side by side, so row N always lines up with row N even when a line wraps or the two
+  // sides have different lengths.
+  const SIDES = { fra: [], mos: [] };
+  const lastSynced = { fra: null, mos: null };
 
-  function lines(area) { return area.value.split(/\\r?\\n/); }
-  function count(area) { return lines(area).filter(l => l.trim()).length; }
+  function splitLines(text) { return text.split(/\\r?\\n/); }
+  function hiddenArea(side) { return document.getElementById('edit_' + side); }
+  function cellClass(index, otherLen) { return index >= otherLen ? 'unpaired' : 'pair-' + (index % 2); }
 
-  function paint(area, otherCount) {
-    let n = 0;
-    const mirror = area.previousElementSibling;
-    mirror.replaceChildren(...lines(area).map(text => {
-      const row = document.createElement('div');
-      row.textContent = text || '\\u200b';
-      if (text.trim()) row.className = n >= otherCount ? 'unpaired' : 'pair-' + (n % COLORS);
-      if (text.trim()) n += 1;
-      return row;
-    }));
-    area.style.height = 'auto';
-    area.style.height = area.scrollHeight + 2 + 'px';
+  function syncHidden(side) {
+    const area = hiddenArea(side);
+    if (!area) return;
+    const text = SIDES[side].join('\\n');
+    if (area.value === text) return;
+    area.value = text;
+    lastSynced[side] = text;
+    $(area).trigger('change');
   }
 
-  function refresh() {
-    const [fra, mos] = IDS.map(id => document.getElementById(id));
-    if (!fra || !mos || !fra.dataset.hl || !mos.dataset.hl) return;
-    paint(fra, count(mos));
-    paint(mos, count(fra));
-  }
-
-  // The modal is still hidden (zero width) when the textareas are inserted; re-measure once shown.
-  const widths = new ResizeObserver(entries => {
-    if (entries.some(e => e.target.dataset.w !== String(e.contentRect.width))) {
-      entries.forEach(e => { e.target.dataset.w = String(e.contentRect.width); });
-      refresh();
+  // A row's two textareas must end up the same height so line N+1 starts at the same y on both
+  // sides, even when one side's line wraps to two rows and the other's does not.
+  function syncRowHeights() {
+    const grid = document.getElementById('line_grid');
+    if (!grid) return;
+    const cells = [...grid.children];
+    for (let i = 0; i < cells.length; i += 2) {
+      const areas = [cells[i], cells[i + 1]].map(c => c && c.querySelector('textarea')).filter(Boolean);
+      if (!areas.length) continue;
+      areas.forEach(el => { el.style.height = 'auto'; });
+      const max = Math.max(...areas.map(el => el.scrollHeight));
+      areas.forEach(el => { el.style.height = max + 'px'; });
     }
-  });
+  }
+
+  function cell(index, side, arr, otherLen) {
+    if (index > arr.length) {
+      const div = document.createElement('div');
+      div.className = 'cell empty-cell';
+      return div;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'cell ' + cellClass(index, otherLen);
+    const area = document.createElement('textarea');
+    area.value = arr[index] ?? '';
+    area.rows = 1;
+    area.dataset.side = side;
+    area.dataset.index = String(index);
+    area.addEventListener('input', () => onInput(area));
+    area.addEventListener('keydown', (e) => onKeydown(e, area));
+    wrap.append(area);
+    return wrap;
+  }
+
+  function render(focus) {
+    const grid = document.getElementById('line_grid');
+    if (!grid) return;
+    const fra = SIDES.fra, mos = SIDES.mos;
+    const maxLen = Math.max(fra.length, mos.length);
+    grid.replaceChildren();
+    for (let i = 0; i < maxLen; i++) {
+      grid.append(cell(i, 'fra', fra, mos.length), cell(i, 'mos', mos, fra.length));
+    }
+    if (focus) {
+      const el = grid.querySelector(`textarea[data-side="${focus.side}"][data-index="${focus.index}"]`);
+      if (el) {
+        el.focus();
+        const pos = Math.min(focus.pos, el.value.length);
+        el.setSelectionRange(pos, pos);
+      }
+    }
+    requestAnimationFrame(syncRowHeights);
+  }
+
+  function onInput(area) {
+    const side = area.dataset.side;
+    const index = Number(area.dataset.index);
+    const arr = SIDES[side];
+    const isNew = index === arr.length;
+    arr[index] = area.value;
+    syncHidden(side);
+    // Typing into the one blank "add a line" cell past the end: re-render to reveal the next one.
+    if (isNew) {
+      render({ side, index, pos: area.selectionStart });
+    } else {
+      syncRowHeights();
+    }
+  }
+
+  function onKeydown(e, area) {
+    const side = area.dataset.side;
+    const index = Number(area.dataset.index);
+    const arr = SIDES[side];
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const pos = area.selectionStart;
+      arr.splice(index, 1, area.value.slice(0, pos), area.value.slice(pos));
+      syncHidden(side);
+      render({ side, index: index + 1, pos: 0 });
+    } else if (e.key === 'Backspace' && area.selectionStart === 0 && area.selectionEnd === 0) {
+      if (index > 0) {
+        e.preventDefault();
+        const mergePos = arr[index - 1].length;
+        arr.splice(index - 1, 2, arr[index - 1] + arr[index]);
+        syncHidden(side);
+        render({ side, index: index - 1, pos: mergePos });
+      } else if (arr.length > 1 && area.value === '') {
+        e.preventDefault();
+        arr.splice(index, 1);
+        syncHidden(side);
+        render({ side, index: 0, pos: 0 });
+      }
+    }
+  }
 
   function attach() {
-    const areas = IDS.map(id => document.getElementById(id));
-    if (areas.some(a => !a || a.dataset.hl)) return;
-    areas.forEach(area => {
-      const wrap = document.createElement('div');
-      wrap.className = 'hl-wrap';
-      const mirror = document.createElement('div');
-      mirror.className = 'hl-mirror';
-      mirror.setAttribute('aria-hidden', 'true');
-      area.parentNode.insertBefore(wrap, area);
-      wrap.append(mirror, area);
-      area.dataset.hl = '1';
-      widths.observe(wrap);
-    });
-    refresh();
-    requestAnimationFrame(refresh);
+    const fraArea = hiddenArea('fra'), mosArea = hiddenArea('mos');
+    if (!fraArea || !mosArea || fraArea.dataset.init) return;
+    fraArea.dataset.init = '1';
+    SIDES.fra = splitLines(fraArea.value);
+    SIDES.mos = splitLines(mosArea.value);
+    lastSynced.fra = fraArea.value;
+    lastSynced.mos = mosArea.value;
+    render(null);
+    // The modal is still zero-width while it animates in; re-measure once it has real width.
+    const grid = document.getElementById('line_grid');
+    new ResizeObserver(entries => {
+      if (entries.some(e => e.contentRect.width > 0)) syncRowHeights();
+    }).observe(grid);
   }
 
   new MutationObserver(attach).observe(document.body, { childList: true, subtree: true });
-  // jQuery, not addEventListener: Shiny's update_text_area fires a jQuery-only change event.
-  $(document).on('input change', '#edit_fra, #edit_mos', refresh);
-  window.addEventListener('resize', refresh);
+
+  // "Restore source" / "use latest as base" set the hidden textarea value directly from the
+  // server, which fires a jQuery-only change event (not a real user input) -- rebuild the grid
+  // from it. Skip our own echo: syncHidden() also triggers this same event after every edit.
+  $(document).on('change', '#edit_fra, #edit_mos', function () {
+    const side = this.id === 'edit_fra' ? 'fra' : 'mos';
+    if (this.value === lastSynced[side]) return;
+    SIDES[side] = splitLines(this.value);
+    lastSynced[side] = this.value;
+    render(null);
+  });
+
+  window.addEventListener('resize', syncRowHeights);
 })();
 """
 
@@ -212,20 +303,17 @@ def _editor_modal(unit: dict, draft: dict | None) -> object:
     return ui.modal(
         conflict_message,
         ui.p(
-            "One sentence per line. Remove a line break to merge; add one to split; cut and paste to reorder. "
-            "Line N has the same colour on both sides; red means the other side has no line N."
+            "Each row is one sentence pair, French and Mooré side by side, so line N always sits next to line N. "
+            "Press Enter to split a line, Backspace at the start of a line merges it into the line above, "
+            "and cut/paste text between boxes to reorder. Red dashed cells have no counterpart yet — "
+            "type into one to add the missing line."
         ),
         ui.div(
-            ui.div(
-                ui.input_text_area("edit_fra", "French", value=fra_text, rows=18, width="100%"),
-                class_="editor-text side fr",
-            ),
-            ui.div(
-                ui.input_text_area("edit_mos", "Mooré", value=mos_text, rows=18, width="100%"),
-                class_="editor-text side mo",
-            ),
-            class_="parallel",
+            ui.input_text_area("edit_fra", "French", value=fra_text, rows=18, width="100%"),
+            ui.input_text_area("edit_mos", "Mooré", value=mos_text, rows=18, width="100%"),
+            class_="hidden-editor-fields",
         ),
+        ui.div(id="line_grid", class_="line-grid"),
         ui.output_text("editor_counts"),
         ui.tags.details(
             ui.tags.summary("Current accepted text for comparison"),
