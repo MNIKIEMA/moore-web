@@ -21,3 +21,32 @@ different sentence counts in the two languages.
 The source-specific anchors are checked for uniqueness and order. If either
 archived text changes, the parser fails rather than silently shifting a
 boundary or dropping text. The output covers both article bodies in full.
+
+## Sentence pairs with `e2e`
+
+`e2e -s abc-coepouses` pairs the story beats at the same anchors, then aligns
+the sentences inside each beat with LASER + FastDTW (never across beats):
+
+```bash
+moore-web e2e -s abc-coepouses \
+  --fr-input ../faso-web-docs/abcburkina-contes/text/266-les-couses.txt \
+  --mo-input ../faso-web-docs/abcburkina-contes/text/267-les-co-epouses-moore.txt \
+  -o abc_coepouses_aligned.jsonl
+```
+
+`--no-segment` skips LASER and writes the 25 story beats as whole pairs
+(`laser_score` null). Rows use `source = "abcburkina-contes"` and the unit id
+as `doc_id`. In the songs, French keeps the quoted song as one sentence while
+Mooré splits it into lines, so FastDTW repeats the French side with low
+scores; review those in the annotation app.
+
+## Review app
+
+```bash
+uv run python scripts/export_review_units.py --source abc-coepouses \
+  --fr-input ../faso-web-docs/abcburkina-contes/text/266-les-couses.txt \
+  --mo-input ../faso-web-docs/abcburkina-contes/text/267-les-co-epouses-moore.txt \
+  -o data/review/abcburkina-contes_units.jsonl
+```
+
+One unit per story beat (`les-coepouses-01` … `-25`), sentence-segmented.

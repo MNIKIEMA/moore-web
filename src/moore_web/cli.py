@@ -45,6 +45,7 @@ class Source(str, Enum):
     conseils = "conseils"
     digital = "digital"
     udhr = "udhr"
+    abc_coepouses = "abc-coepouses"
 
 
 class KadeLang(str, Enum):
@@ -227,6 +228,42 @@ def _dedup_aligned(aligned):
         doc_ids=[p["doc_id"] for p in pairs] if has_doc_ids else [],
         source=aligned.source,
     )
+
+
+def _align_per_unit(unit_parallels, min_score: float, source: str):
+    """Align each unit's sentences independently with LASER + FastDTW and concatenate.
+
+    For sources whose units are already known to correspond, so FastDTW never
+    has to guess correspondence across unit boundaries.
+    """
+    from laser_encoders import LaserEncoderPipeline
+
+    from moore_web.align_corpus import align_from_embeddings as _align_from_embs
+    from moore_web.flatten import AlignedCorpus
+
+    laser_fr = LaserEncoderPipeline(lang="fra")
+    laser_mo = LaserEncoderPipeline(lang="mos")
+    all_fr_embs = laser_fr.encode_sentences(
+        [s for _, dp in unit_parallels for s in dp.french], normalize_embeddings=True
+    )
+    all_mo_embs = laser_mo.encode_sentences(
+        [s for _, dp in unit_parallels for s in dp.moore], normalize_embeddings=True
+    )
+
+    all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
+    fr_offset = mo_offset = 0
+    for unit_id, dp in unit_parallels:
+        fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
+        aligned_dp = _align_from_embs(
+            dp, all_fr_embs[fr_offset:fr_end], all_mo_embs[mo_offset:mo_end], min_score=min_score
+        )
+        fr_offset, mo_offset = fr_end, mo_end
+        all_fr.extend(aligned_dp.french)
+        all_mo.extend(aligned_dp.moore)
+        all_scores.extend(aligned_dp.scores)
+        all_doc_ids.extend([unit_id] * len(aligned_dp.french))
+
+    return AlignedCorpus(french=all_fr, moore=all_mo, scores=all_scores, doc_ids=all_doc_ids, source=source)
 
 
 # Default page ranges for Kadé PDFs (content pages only, excludes front/back matter).
@@ -900,11 +937,21 @@ def e2e(
     ] = None,
     fr_input: Annotated[
         Optional[Path],
-        typer.Option("--fr-input", exists=True, dir_okay=False, help="French PDF/TXT (kade, digital, udhr)."),
+        typer.Option(
+            "--fr-input",
+            exists=True,
+            dir_okay=False,
+            help="French PDF/TXT (kade, digital, udhr, abc-coepouses).",
+        ),
     ] = None,
     mo_input: Annotated[
         Optional[Path],
-        typer.Option("--mo-input", exists=True, dir_okay=False, help="Mooré PDF/TXT (kade, digital, udhr)."),
+        typer.Option(
+            "--mo-input",
+            exists=True,
+            dir_okay=False,
+            help="Mooré PDF/TXT (kade, digital, udhr, abc-coepouses).",
+        ),
     ] = None,
     output: Annotated[
         Optional[str],
@@ -1034,6 +1081,7 @@ def e2e(
     [bold]digital (terms):[/bold]   moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl
     [bold]digital (both):[/bold]    moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --definitions-output defs.jsonl --add-laser-score --add-comet-qe --add-quality-warn
     [bold]udhr:[/bold]              moore-web e2e -s udhr --fr-input udhr-fra.txt --mo-input udhr-mos.txt -o udhr.jsonl
+    [bold]abc-coepouses:[/bold]     moore-web e2e -s abc-coepouses --fr-input 266-les-couses.txt --mo-input 267-les-co-epouses-moore.txt -o tale.jsonl
     [bold]HF output:[/bold]         moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
     if do_annotate:
@@ -1328,6 +1376,44 @@ def e2e(
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
         out = output or fr_input.with_name(f"udhr_aligned{_ext}")
+        _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
+        return
+
+    elif source == Source.abc_coepouses:
+        if fr_input is None or mo_input is None:
+            _err(
+                "--fr-input and --mo-input (archived tale text files) are required for --source abc-coepouses."
+            )
+            raise typer.Exit(1)
+
+        from moore_web.abc_coepouses_parser import SOURCE as _TALE_SOURCE
+        from moore_web.abc_coepouses_parser import parse_abc_coepouses
+        from moore_web.flatten import AlignedCorpus, ParallelText
+
+        typer.echo("[1/2] Pairing story beats at the hand-picked anchors…")
+        units = parse_abc_coepouses(fr_input, mo_input)
+        out = output or fr_input.with_name(f"abc_coepouses_aligned{_ext}")
+        if segment:
+            typer.echo(
+                f"[2/2] Aligning sentences within each of {len(units)} story beats with LASER + FastDTW…"
+            )
+            unit_parallels = [
+                (u.id, ParallelText(french=u.source_sentences, moore=u.target_sentences, source=_TALE_SOURCE))
+                for u in units
+            ]
+            aligned = _align_per_unit(unit_parallels, min_score=min_score, source=_TALE_SOURCE)
+        else:
+            # The anchors already pair whole story beats; no alignment needed.
+            typer.echo(f"[2/2] Keeping {len(units)} story beats as whole pairs…")
+            aligned = AlignedCorpus(
+                french=[u.source_text for u in units],
+                moore=[u.target_text for u in units],
+                scores=[None] * len(units),
+                doc_ids=[u.id for u in units],
+                source=_TALE_SOURCE,
+            )
+        if drop_duplicate:
+            aligned = _dedup_aligned(aligned)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 

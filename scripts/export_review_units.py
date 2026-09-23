@@ -32,6 +32,11 @@ Usage:
         --mo-input ../faso-web-docs/universal-declaration-human-rights/udhr-mos.txt \
         -o data/review/udhr_units.jsonl
 
+    uv run python scripts/export_review_units.py --source abc-coepouses \
+        --fr-input ../faso-web-docs/abcburkina-contes/text/266-les-couses.txt \
+        --mo-input ../faso-web-docs/abcburkina-contes/text/267-les-co-epouses-moore.txt \
+        -o data/review/abcburkina-contes_units.jsonl
+
     ``--source facilitateur`` is accepted as an alias for ``kade``.
 """
 
@@ -106,6 +111,21 @@ def export_udhr(fr_input: str, mo_input: str, output_path: str) -> int:
     return _write_units(units, output_path)
 
 
+def export_abc_coepouses(fr_input: str, mo_input: str, output_path: str) -> int:
+    """One unit per hand-anchored story beat of the abcBurkina tale."""
+    from moore_web.abc_coepouses_parser import parse_abc_coepouses
+    from moore_web.flatten import ParallelText
+
+    units = [
+        (
+            f"{u.doc_id}-{u.unit_index:02d}",
+            ParallelText(french=u.source_sentences, moore=u.target_sentences, source=u.source),
+        )
+        for u in parse_abc_coepouses(fr_input, mo_input)
+    ]
+    return _write_units(units, output_path)
+
+
 # Sources needing one input (PDF, JSON, directory, ...).
 EXPORTERS = {
     "sida": export_sida,
@@ -118,6 +138,7 @@ PAIR_EXPORTERS = {
     "facilitateur": export_kade,
     "kade": export_kade,
     "udhr": export_udhr,
+    "abc-coepouses": export_abc_coepouses,
 }
 
 
