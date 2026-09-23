@@ -134,7 +134,9 @@ def process_page_blocks(page: pymupdf.Page, middle_x: float) -> tuple[list[str],
     moore_parts: list[str] = []
     french_parts: list[str] = []
 
-    blocks = page.get_text("blocks", sort=True)
+    # Order by the top edge: `sort=True` orders by the bottom edge, so a block
+    # whose box overhangs a following heading (page 42) was emitted after it.
+    blocks = sorted(page.get_text("blocks"), key=lambda b: (b[1], b[0]))
 
     for b in blocks:
         x0, y0, x1, y1, text = b[:5]
@@ -142,7 +144,10 @@ def process_page_blocks(page: pymupdf.Page, middle_x: float) -> tuple[list[str],
 
         if not text or text.isdigit():
             continue
-        if x0 < middle_x:
+        # Classify by the block's midpoint: without a drawn separator the page
+        # centre is used, and French blocks starting a few points left of it
+        # (page 39) were put in the Mooré column.
+        if (x0 + x1) / 2 < middle_x:
             moore_parts.append(text)
         else:
             french_parts.append(text)
