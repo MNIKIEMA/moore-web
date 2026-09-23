@@ -38,10 +38,15 @@ class NumberedItem(Struct):
     # period is not a real sentence boundary, so it should stay one corpus line
     # instead of being sentence-split like ordinary prose items.
     atomic: bool = False
+    # Index of the item's first line within its section/subsection, so items
+    # and bullets can be flattened back in document order. -1 when unknown
+    # (e.g. a book JSON saved before this field existed).
+    line: int = -1
 
 
 class BulletItem(Struct):
     text: str
+    line: int = -1
 
 
 class Subsection(Struct):
@@ -275,13 +280,18 @@ def _classify_items_lines(
     current_num: Optional[int] = None
     current_parts: list[str] = []
     current_atomic = False
+    current_start = -1
     in_lesson_group = False
 
     def flush() -> None:
         if mode == "item" and current_num is not None and current_parts:
-            items.append(NumberedItem(current_num, normalize(" ".join(current_parts)), atomic=current_atomic))
+            items.append(
+                NumberedItem(
+                    current_num, normalize(" ".join(current_parts)), atomic=current_atomic, line=current_start
+                )
+            )
         elif mode == "bullet" and current_parts:
-            bullets.append(BulletItem(normalize(" ".join(current_parts))))
+            bullets.append(BulletItem(normalize(" ".join(current_parts)), line=current_start))
 
     for idx, raw in enumerate(lines):
         line = normalize(raw)
@@ -303,20 +313,24 @@ def _classify_items_lines(
         elif num_m:
             flush()
             mode, current_num, current_parts = "item", int(num_m.group(1)), [num_m.group(2).strip()]
+            current_start = idx
             current_atomic = in_lesson_group
             consumed.add(idx)
         elif bare_num_m:
             flush()
             mode, current_num, current_parts = "item", int(bare_num_m.group(1)), []
+            current_start = idx
             current_atomic = in_lesson_group
             consumed.add(idx)
         elif bullet_m:
             flush()
             mode, current_parts = "bullet", [bullet_m.group(1).strip()]
+            current_start = idx
             consumed.add(idx)
         elif bare_bullet_m:
             flush()
             mode, current_parts = "bullet", []
+            current_start = idx
             consumed.add(idx)
         elif mode is not None and line:
             current_parts.append(line)
@@ -643,14 +657,17 @@ def flatten_content(
     bullet_items: list[BulletItem],
     body: str,
 ) -> list[str]:
-    """Flatten numbered items, bullet items, and body text into a list of strings."""
+    """Flatten body text, then numbered items and bullet items in document order.
+
+    Items and bullets are interleaved by the line they start on, so bullets
+    nested under a numbered item stay right after it. Without positions (all
+    ``line == -1``) the stable sort keeps items before bullets.
+    """
     result: list[str] = []
     if body:
         result.append(clean(body))
-    for item in items:
-        result.append(clean(item.text))
-    for bullet in bullet_items:
-        result.append(clean(bullet.text))
+    for entry in sorted([*items, *bullet_items], key=lambda e: e.line):
+        result.append(clean(entry.text))
     return result
 
 

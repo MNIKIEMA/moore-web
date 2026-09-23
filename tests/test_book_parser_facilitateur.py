@@ -3,7 +3,11 @@ and start_after / stop_before sentinels in split_and_parse_by_sections."""
 
 from moore_web.book_parser_facilitateur import (
     NUMBERED_ITEM_RE,
+    BulletItem,
+    NumberedItem,
+    collect_items,
     collect_numbered_items,
+    flatten_content,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,3 +97,36 @@ class TestCollectNumberedItems:
         items = collect_numbered_items(lines)
         assert len(items) == 3
         assert [i.number for i in items] == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# flatten_content — document order of items and bullets (issue #44)
+# ---------------------------------------------------------------------------
+
+
+class TestFlattenContentOrder:
+    def test_bullets_nested_under_an_item_stay_after_it(self):
+        # Mooré ch5 "Bũmb d sẽn tõe n zãmse": three bullets under item 2, then
+        # the next question (absorbed into the last bullet) and its own items.
+        lines = [
+            "1. Tõnd segd n tagsame.",
+            "2. Yãmb sãn n dɩk tẽeb kãense, yãmb na yã :",
+            "• Tẽeb sẽn ya sõngre.",
+            "• Tẽeb sẽn wat ne bãag saagre.",
+            "Tẽeb bʋs n ya sõama ?",
+            "1. Tẽms wʋsog pʋsẽ.",
+        ]
+        items, bullets = collect_items(lines)
+        assert flatten_content(items, bullets, "") == [
+            "Tõnd segd n tagsame.",
+            "Yãmb sãn n dɩk tẽeb kãense, yãmb na yã :",
+            "Tẽeb sẽn ya sõngre.",
+            "Tẽeb sẽn wat ne bãag saagre. Tẽeb bʋs n ya sõama ?",
+            "Tẽms wʋsog pʋsẽ.",
+        ]
+
+    def test_items_without_positions_keep_items_before_bullets(self):
+        # A book JSON saved before `line` existed decodes with line == -1.
+        items = [NumberedItem(1, "Item one"), NumberedItem(2, "Item two")]
+        bullets = [BulletItem("Bullet")]
+        assert flatten_content(items, bullets, "Body") == ["Body", "Item one", "Item two", "Bullet"]
