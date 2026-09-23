@@ -44,6 +44,7 @@ class Source(str, Enum):
     one_column_dict = "one-column-dict"
     conseils = "conseils"
     digital = "digital"
+    udhr = "udhr"
 
 
 class KadeLang(str, Enum):
@@ -899,11 +900,11 @@ def e2e(
     ] = None,
     fr_input: Annotated[
         Optional[Path],
-        typer.Option("--fr-input", exists=True, dir_okay=False, help="French PDF/TXT (kade only)."),
+        typer.Option("--fr-input", exists=True, dir_okay=False, help="French PDF/TXT (kade, digital, udhr)."),
     ] = None,
     mo_input: Annotated[
         Optional[Path],
-        typer.Option("--mo-input", exists=True, dir_okay=False, help="Mooré PDF/TXT (kade only)."),
+        typer.Option("--mo-input", exists=True, dir_okay=False, help="Mooré PDF/TXT (kade, digital, udhr)."),
     ] = None,
     output: Annotated[
         Optional[str],
@@ -1032,6 +1033,7 @@ def e2e(
     [bold]simple:[/bold]            moore-web e2e -s simple -i dict.pdf -o aligned.jsonl
     [bold]digital (terms):[/bold]   moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl
     [bold]digital (both):[/bold]    moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --definitions-output defs.jsonl --add-laser-score --add-comet-qe --add-quality-warn
+    [bold]udhr:[/bold]              moore-web e2e -s udhr --fr-input udhr-fra.txt --mo-input udhr-mos.txt -o udhr.jsonl
     [bold]HF output:[/bold]         moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
     if do_annotate:
@@ -1308,6 +1310,24 @@ def e2e(
         )
         if drop_duplicate:
             aligned = _dedup_aligned(aligned)
+        _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
+        return
+
+    elif source == Source.udhr:
+        if fr_input is None or mo_input is None:
+            _err("--fr-input and --mo-input (UDHR text files) are required for --source udhr.")
+            raise typer.Exit(1)
+
+        from moore_web.udhr import pair_udhr_files
+
+        # Paired by article and paragraph position, so there is no LASER step.
+        typer.echo("[1/1] Pairing UDHR articles…")
+        aligned, skipped = pair_udhr_files(fr_input, mo_input, segment=segment)
+        for reason in skipped:
+            typer.echo(f"      skipped {reason}")
+        if drop_duplicate:
+            aligned = _dedup_aligned(aligned)
+        out = output or fr_input.with_name(f"udhr_aligned{_ext}")
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 

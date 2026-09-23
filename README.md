@@ -67,6 +67,7 @@ moore-web --help
 | `news` | Raamde news corpus (JSON with `text_units` lists) |
 | `simple` | Simple bilingual dictionary PDF |
 | `conseils` | Conseil-des-ministres bilingual corpus (JSON) |
+| `udhr` | Universal Declaration of Human Rights (French and Mooré TXT, paired by article) |
 
 ### Presidential New Year messages
 
@@ -84,6 +85,24 @@ moore-web align messages-nouvel-an.parallel.json \
 
 Blank lines in each UTF-8 text file are preserved as manually curated segment
 boundaries. PDF extraction for the other languages is handled in `faso-web`.
+
+### Universal Declaration of Human Rights
+
+The French and Mooré texts share the same structure, so `e2e -s udhr` pairs
+them article by article and paragraph by paragraph instead of using LASER:
+
+```bash
+moore-web e2e -s udhr \
+  --fr-input ../faso-web-docs/universal-declaration-human-rights/udhr-fra.txt \
+  --mo-input ../faso-web-docs/universal-declaration-human-rights/udhr-mos.txt \
+  --output udhr.aligned.jsonl
+```
+
+Segmentation (on by default; `--no-segment` keeps whole paragraphs) splits a
+paragraph pair into sentence pairs only when both sides split into the same
+number of sentences. Sections missing on one side are
+skipped and reported: the Mooré translation has no article 12 (the source text
+only holds an `&1` placeholder) and no closing proclamation of the preamble.
 
 ### Expert translation batch
 
