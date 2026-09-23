@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from moore_web.flatten import AlignedCorpus
+from moore_web.flatten import AlignedCorpus, ParallelText
 from moore_web.new_year_message import read_presegmented_text
 
 SOURCE = "udhr"
@@ -65,23 +65,17 @@ def _strip_list_number(paragraph: str) -> tuple[str | None, str]:
     return match.group(1), paragraph[match.end() :]
 
 
-def pair_sections(
+def paired_paragraphs(
     fra: dict[str, list[str]],
     mos: dict[str, list[str]],
-    segment: bool = False,
-) -> tuple[AlignedCorpus, list[str]]:
-    """Pair paragraphs of sections present on both sides with the same paragraph count.
+) -> tuple[list[tuple[str, list[tuple[str, str]]]], list[str]]:
+    """Pair the paragraphs of sections present on both sides with the same paragraph count.
 
-    Returns the aligned corpus and a list of human-readable reasons for every
-    section that was skipped. With ``segment``, each paragraph pair is split
-    into sentences and paired sentence by sentence when both sides split into
-    the same number; otherwise the paragraph pair is kept whole.
+    Returns ``(section key, [(French, Mooré), ...])`` per paired section, with
+    list numbers ("1. ") stripped, and a human-readable reason for every
+    section that was skipped.
     """
-    from moore_web.flatten import segment_fr, segment_mo
-
-    french: list[str] = []
-    moore: list[str] = []
-    doc_ids: list[str] = []
+    sections: list[tuple[str, list[tuple[str, str]]]] = []
     skipped: list[str] = []
 
     for key in [*fra, *(k for k in mos if k not in fra)]:
@@ -93,11 +87,37 @@ def pair_sections(
         if len(fr_paragraphs) != len(mo_paragraphs):
             skipped.append(f"{key}: {len(fr_paragraphs)} French vs {len(mo_paragraphs)} Mooré paragraphs")
             continue
+        pairs = []
         for fr_paragraph, mo_paragraph in zip(fr_paragraphs, mo_paragraphs):
             fr_number, fr_text = _strip_list_number(fr_paragraph)
             mo_number, mo_text = _strip_list_number(mo_paragraph)
             if fr_number != mo_number:
                 raise ValueError(f"{key}: list item {fr_number} (French) paired with {mo_number} (Mooré)")
+            pairs.append((fr_text, mo_text))
+        sections.append((key, pairs))
+    return sections, skipped
+
+
+def pair_sections(
+    fra: dict[str, list[str]],
+    mos: dict[str, list[str]],
+    segment: bool = False,
+) -> tuple[AlignedCorpus, list[str]]:
+    """Flatten :func:`paired_paragraphs` into an aligned corpus.
+
+    With ``segment``, each paragraph pair is split into sentences and paired
+    sentence by sentence when both sides split into the same number;
+    otherwise the paragraph pair is kept whole.
+    """
+    from moore_web.flatten import segment_fr, segment_mo
+
+    french: list[str] = []
+    moore: list[str] = []
+    doc_ids: list[str] = []
+
+    sections, skipped = paired_paragraphs(fra, mos)
+    for key, pairs in sections:
+        for fr_text, mo_text in pairs:
             fr_parts, mo_parts = [fr_text], [mo_text]
             if segment:
                 fr_sentences, mo_sentences = segment_fr(fr_text), segment_mo(mo_text)
@@ -122,3 +142,29 @@ def pair_udhr_files(fr_path: Path, mo_path: Path, segment: bool = False) -> tupl
     fra = split_sections(read_presegmented_text(fr_path), "fra")
     mos = split_sections(read_presegmented_text(mo_path), "mos")
     return pair_sections(fra, mos, segment=segment)
+
+
+def udhr_review_units(fr_path: Path, mo_path: Path) -> tuple[list[tuple[str, ParallelText]], list[str]]:
+    """One sentence-segmented review unit per paired section (title, preamble, article-NN).
+
+    Unlike :func:`pair_sections`, paragraphs are always split into sentences,
+    so a paragraph whose sentence counts differ shows up as a count mismatch
+    for a reviewer to resolve.
+    """
+    from moore_web.flatten import segment_fr, segment_mo
+
+    fra = split_sections(read_presegmented_text(fr_path), "fra")
+    mos = split_sections(read_presegmented_text(mo_path), "mos")
+    sections, skipped = paired_paragraphs(fra, mos)
+    units = [
+        (
+            key,
+            ParallelText(
+                french=[s for fr_text, _ in pairs for s in segment_fr(fr_text)],
+                moore=[s for _, mo_text in pairs for s in segment_mo(mo_text)],
+                source=SOURCE,
+            ),
+        )
+        for key, pairs in sections
+    ]
+    return units, skipped

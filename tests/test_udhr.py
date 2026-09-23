@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from moore_web.udhr import pair_sections, pair_udhr_files, split_sections
+from moore_web.udhr import pair_sections, pair_udhr_files, split_sections, udhr_review_units
 
 FRA = """Déclaration universelle des droits de l’homme
 
@@ -98,3 +98,16 @@ def test_pair_sections_skips_paragraph_count_mismatch() -> None:
 def test_pair_sections_rejects_mismatched_list_numbers() -> None:
     with pytest.raises(ValueError, match="list item 1"):
         pair_sections({"article-11": ["1. A"]}, {"article-11": ["2. B"]})
+
+
+def test_udhr_review_units_are_per_section_and_always_segmented(tmp_path: Path) -> None:
+    units, skipped = udhr_review_units(*_write_texts(tmp_path))
+    assert skipped == ["proclamation: no Mooré text", "article-12: no Mooré text"]
+    assert [uid for uid, _ in units] == ["title", "preamble", "article-01", "article-11"]
+    article_1 = dict(units)["article-01"]
+    assert article_1.french == ["Tous naissent libres.", "Ils sont doués de raison."]
+    assert article_1.moore == ["Ninsaalbã fãa so b mense.", "Nebã fãa tara yam."]
+    assert dict(units)["article-11"].french == [
+        "Toute personne est présumée innocente.",
+        "Nul ne sera condamné.",
+    ]

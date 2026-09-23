@@ -23,6 +23,15 @@ Usage:
         --fr-input "kadé_fr.pdf" --mo-input "kadé_mos.pdf" \
         -o data/review/kade_units.jsonl
 
+    uv run python scripts/export_review_units.py --source messages-nouvel-an \
+        --input ../faso-web-docs/messages-nouvel-an \
+        -o data/review/messages-nouvel-an_units.jsonl
+
+    uv run python scripts/export_review_units.py --source udhr \
+        --fr-input ../faso-web-docs/universal-declaration-human-rights/udhr-fra.txt \
+        --mo-input ../faso-web-docs/universal-declaration-human-rights/udhr-mos.txt \
+        -o data/review/udhr_units.jsonl
+
     ``--source facilitateur`` is accepted as an alias for ``kade``.
 """
 
@@ -72,16 +81,43 @@ def export_kade(fr_input: str, mo_input: str, output_path: str) -> int:
     return _write_units(units, output_path)
 
 
-# Sources needing one input (PDF, JSON, ...).
+def export_new_year(input_path: str, output_path: str) -> int:
+    """One unit for the whole address: its curated blocks don't line up across languages."""
+    from moore_web.flatten import ParallelText, segment_fr, segment_mo
+    from moore_web.new_year_message import prepare_new_year_pair
+
+    collection_dir = Path(input_path)
+    parallel = prepare_new_year_pair(collection_dir)
+    manifest = json.loads((collection_dir / "manifest.json").read_text(encoding="utf-8"))
+    unit = ParallelText(
+        french=[s for block in parallel.french for s in segment_fr(block)],
+        moore=[s for block in parallel.moore for s in segment_mo(block)],
+        source=parallel.source,
+    )
+    return _write_units([(f"new-year-{manifest.get('subject_year', 'message')}", unit)], output_path)
+
+
+def export_udhr(fr_input: str, mo_input: str, output_path: str) -> int:
+    from moore_web.udhr import udhr_review_units
+
+    units, skipped = udhr_review_units(Path(fr_input), Path(mo_input))
+    for reason in skipped:
+        print(f"Skipped {reason}")
+    return _write_units(units, output_path)
+
+
+# Sources needing one input (PDF, JSON, directory, ...).
 EXPORTERS = {
     "sida": export_sida,
     "raamde": export_raamde,
+    "messages-nouvel-an": export_new_year,
 }
 
-# Sources needing two independently parsed monolingual books.
+# Sources needing a French and a Mooré input.
 PAIR_EXPORTERS = {
     "facilitateur": export_kade,
     "kade": export_kade,
+    "udhr": export_udhr,
 }
 
 
@@ -101,8 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--input", "-i", help="Path to the source file (PDF, JSON, ...) -- single-input sources only."
     )
-    p.add_argument("--fr-input", help="Path to the French Kadé PDF/TXT (paired sources only).")
-    p.add_argument("--mo-input", help="Path to the Mooré Kadé PDF/TXT (paired sources only).")
+    p.add_argument("--fr-input", help="Path to the French PDF/TXT (paired sources only).")
+    p.add_argument("--mo-input", help="Path to the Mooré PDF/TXT (paired sources only).")
     p.add_argument("--output", "-o", required=True, help="Output JSONL path.")
     return p
 
