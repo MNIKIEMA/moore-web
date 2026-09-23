@@ -68,6 +68,23 @@ moore-web --help
 | `simple` | Simple bilingual dictionary PDF |
 | `conseils` | Conseil-des-ministres bilingual corpus (JSON) |
 
+### Presidential New Year messages
+
+Prepare the curated French–Mooré texts named by the collection manifest, then
+use the existing alignment command:
+
+```bash
+moore-web prepare-new-year-message \
+  --collection-dir ../faso-web-docs/messages-nouvel-an \
+  --output messages-nouvel-an.parallel.json
+
+moore-web align messages-nouvel-an.parallel.json \
+  --output messages-nouvel-an.aligned.jsonl
+```
+
+Blank lines in each UTF-8 text file are preserved as manually curated segment
+boundaries. PDF extraction for the other languages is handled in `faso-web`.
+
 ### Expert translation batch
 
 The expert translation PDF already pairs each French source with its Mooré

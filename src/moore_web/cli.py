@@ -92,6 +92,23 @@ def _err(msg: str) -> None:
     typer.echo(f"Error: {msg}", err=True)
 
 
+@app.command("prepare-new-year-message")
+def prepare_new_year_message(
+    collection_dir: Annotated[
+        Path,
+        typer.Option("--collection-dir", exists=True, file_okay=False),
+    ],
+    output: Annotated[Path, typer.Option("--output", "-o")],
+) -> None:
+    """Prepare a manifest-backed French–Mooré New Year message for alignment."""
+    from moore_web.new_year_message import prepare_new_year_pair
+
+    parallel = prepare_new_year_pair(collection_dir)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(msgspec.json.encode(parallel))
+    typer.echo(f"FR: {len(parallel.french)} segments  MO: {len(parallel.moore)} segments → {output}")
+
+
 # TODO: replace Kadé by Poko and Katiu, Atega too
 
 

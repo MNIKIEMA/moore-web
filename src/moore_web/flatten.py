@@ -84,6 +84,7 @@ ORIGINAL_LANGUAGE: dict[str, str] = {
     "kade": "fra",
     "raamde-news": "fra",
     "conseils": "fra",
+    "messages-nouvel-an": "fra",
     "niggli-dictionary-mos-fra-eng": "mos",
     "digital-postal-glossary": "mos",
     "digital-postal-glossary-term": "mos",
