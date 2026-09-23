@@ -6,6 +6,31 @@ order. See [`docs/kade-facilitator-manual.md`](../../docs/kade-facilitator-manua
 for the physical layout and parsing hierarchy. Also referenced elsewhere as
 "sida-facilitateur" (its `final_data/` output name).
 
+## 2026-09-23
+
+- **Mooré `•` bullets are flattened out of order** (issue #44, not fixed
+  yet). `_classify_items_lines` keeps numbered items and bullets in two
+  separate lists and `flatten_content` emits items, then bullets, then
+  body, so bullets nested under a numbered item end up after *all* items of
+  the container. Compounded in Mooré "Bũmb d sẽn tõe n zãmse" (ch5), which
+  gets **no subsections**: question headings are absorbed as continuation
+  lines of the preceding item or bullet. Net effect in `kade-ch5-learning`:
+  the three "Tẽeb la mansem…" bullets plus the following question and its
+  instruction (9 Mooré lines) landed at the end of the unit instead of after
+  "…yãmb na yã :". French is unaffected (its sub-points are indented, not
+  bulleted). The PDF also has an empty `2.` under the circumcision
+  question; the parser opens item 2 and makes the next heading its text
+  (order stays correct).
+- **Verification technique:** diff the unit's tokens against
+  `pdftotext` of the exact page range as a word multiset/sequence — shows
+  in one pass that nothing is missing and exactly which block moved. Only
+  other differences were line-break artefacts (`kʋ- ba`, `bi- bɩɩlema`,
+  `ci- dessous`).
+- The ch5 unit was fixed by hand in the review app (draft by `madoss`) and
+  checked at 65/65 lines. Do not re-export the Kadé units while its
+  annotation is in progress; see the SIDA logbook (2026-09-23) for why a
+  re-export would not update existing units anyway.
+
 ## 2026-09-17
 
 - **Added `flatten_facilitateur_pair_per_unit`**, a per-unit sibling of

@@ -5,6 +5,43 @@ left, French right) on every content page, plus six enumerated Q&A items in
 Chapter 5. See [`docs/sida-bilingual-book.md`](../../docs/sida-bilingual-book.md)
 for the physical layout and parsing hierarchy.
 
+## 2026-09-23
+
+- **Two column-extraction bugs in `process_page_blocks` misaligned the
+  Chapter 5 enums; both fixed.** (1) `get_text("blocks", sort=True)` orders
+  blocks by their *bottom* edge. On page 42 the Mooré enum-3 continuation
+  block ("Nin-kãng toẽ n tara laafɩ…") has a box that overhangs the "4. Boẽ
+  ne boẽ…" heading, so the heading came first and those three sentences
+  were attached to enum-4. Now sorted by top edge `(y0, x0)`. (2) Page 39
+  has no drawn column separator, so the page centre (x=210) is used; several
+  French blocks start at x=207.8 (leading blank lines) and were classified
+  as Mooré — the French "1. Qu'est-ce que le SIDA…" heading was never found
+  and **enum-1 was silently dropped** from every output. Now classified by
+  block midpoint. Checked against the whole PDF: the only text changes are
+  pages 39 and 42 (plus page 2, the copyright page, outside any unit).
+- **Technique that found it:** dump `page.get_text("blocks")` with
+  coordinates for the suspect page and compare with `pdftotext -layout`.
+  The unit-level symptom (sentences in the wrong enum) looked like a
+  translation difference until the block boxes were printed.
+- **Remaining enum mismatches are content, not bugs** (consistent with the
+  2026-09-14 finding): enum-2 Mooré adds two abstinence/fidelity sentences
+  absent from the French PDF; enum-5 Mooré joins French 8+9 with `;`;
+  enum-6 French keeps `…abandonné?" Les gens…` as one sentence (the
+  quote-merge) while Mooré splits it, and Mooré 11+12 = French 10; stray
+  `"Ayo!"` interjections. French `quelquesuns` is a de-hyphenation leftover
+  (`quelques-\nuns`).
+- **Review-store gotcha:** `review_store.import_units` is `INSERT OR IGNORE`
+  on `(source, unit_uid)`. Re-exporting `data/review/*_units.jsonl` never
+  discards reviews or drafts, but it also **never updates existing units**
+  (not even `original_fra/mos`), and removed units stay in the DB. After
+  this fix, enum-1 is picked up as a new unit on app restart, but enum-3/4
+  had to be corrected separately: enum-4 (no draft, unreviewed) was updated
+  directly in `reviews.sqlite3` (`units.original_mos` + `reviews.mos`,
+  backup `reviews.sqlite3.bak-2026-09-23-enum4`); enum-3 had a live draft
+  and was left for the annotator to fix in the app. A new unit's `position`
+  comes from its line in the new file, so enum-1 ties with enum-2's stored
+  position and lists after it.
+
 ## 2026-09-17
 
 - **Tried OmegaT for human-reviewed alignment; abandoned it.** After the
