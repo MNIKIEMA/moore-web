@@ -17,8 +17,8 @@ Source PDFs in repo root:
 - `Du_Moore_au_Francais_2_Noir_et_Blanc_pp_31-60_Lecons_17-31.pdf`
 - `Du_Moore_au_Francais_3_Noir_et_Blanc_pp.61-94_Lecons_32-48.pdf`
 
-Output: `du_moore_parallel.jsonl` (847 pairs across sections: vocab, sentences,
-key, passage).
+Output: `du_moore_parallel.jsonl` (834 pairs across sections: vocab, sentences,
+key; passages go to review only).
 
 ## 2026-09-14
 
@@ -87,3 +87,28 @@ key, passage).
   - Unmatched vocab: book 2 lesson 14 item 14 (MOS only:
     `nii tɩ b yãk yiibu kella yoobe`) and book 3 lesson 10 item 8 (FR only:
     `une fleur`).
+
+## 2026-09-24 (review export)
+
+- **Passages were also misaligned.** `zip` paired passage sentences by
+  position with no check; 6 of 9 passages had uneven counts (lesson 48:
+  9 FR vs 12 MOS, wrong from the first pair). Even equal counts don't hold:
+  after sentence splitting lesson 48 is 12/12 but rows 1–4 are shifted
+  (FR 1 = MOS 1+2, FR 3+4 = MOS 4). Passages are free translations, so they
+  are removed from the JSONL and paired only through review.
+- **Lessons 3 and 21 were never paired.** Header typos between the two pages
+  (`kaoreng`/`Kaoreng`, `pisi a la ye`/`pisi la a ye`) broke exact-header
+  matching. Pages now pair on the printed lesson number, and `lesson` in the
+  JSONL is that printed number (was the pair index within the PDF). Lessons
+  1–2 are alphabet drills with no parallel text.
+- **Lesson 47 MOS key was lost**: that page has no subtitle, so the
+  positional subtitle skip consumed the key. The skip now only applies to a
+  line without sentence punctuation.
+- **Review export added** (`--source du-moore`): one unit per lesson section,
+  `du-moore-<lesson>-<section>`, nothing dropped. Sections are split so a
+  vocab mismatch doesn't shift sentence rows. 138 units imported into the
+  review DB (backup `reviews.sqlite3.bak-2026-09-24-du-moore`); uneven ones:
+  sentences 19, 24, 37, 38; vocab 31, 41; passages 42–47. Lesson 48's
+  passage is 12/12 but misaligned -- review every passage, not just the
+  flagged ones.
+- JSONL: 847 → 834 pairs (key 46, vocab 574, sentences 214, no passage).

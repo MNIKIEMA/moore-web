@@ -16,6 +16,7 @@ Two lesson layouts exist across the three books:
 import re
 import json
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 import pdfplumber
 
@@ -118,11 +119,41 @@ def has_section_markers(lines: list[tuple[int, str]]) -> bool:
     return "①" in full or "②" in full
 
 
-def pair_lesson_pages(pdf) -> list[tuple[list, list]]:
+_LESSON_NO_RE = re.compile(r"\((\d+)\)")
+
+
+def lesson_number(header: str) -> int | None:
+    """Printed lesson number from 'Kaoreng … (30) soaba'."""
+    m = _LESSON_NO_RE.search(header)
+    return int(m.group(1)) if m else None
+
+
+def pair_tagged_pages(tagged: list[tuple[str, list]]) -> list[tuple[int | None, list, list]]:
     """
-    Return (fr_lines, mos_lines) pairs by matching consecutive pages that
-    share the same 'Kaoreng … soaba' header.  First page of each pair is
-    French, second is Mooré — consistent across all three books.
+    Pair consecutive (header, lines) pages of the same lesson → (number, fr_lines, mos_lines).
+
+    Pages are matched on the printed lesson number, not the whole header:
+    headers carry typos between the two pages ('kaoreng'/'Kaoreng',
+    'pisi a la ye'/'pisi la a ye') that used to drop lessons 3 and 21.
+    """
+    keyed = [(lesson_number(h) or h, lines) for h, lines in tagged]
+    pairs = []
+    i = 0
+    while i < len(keyed):
+        if i + 1 < len(keyed) and keyed[i][0] == keyed[i + 1][0]:
+            key = keyed[i][0]
+            pairs.append((key if isinstance(key, int) else None, keyed[i][1], keyed[i + 1][1]))
+            i += 2
+        else:
+            i += 1  # unpaired lesson page — skip
+    return pairs
+
+
+def pair_lesson_pages(pdf) -> list[tuple[int | None, list, list]]:
+    """
+    Return (lesson_number, fr_lines, mos_lines) for consecutive pages of the
+    same lesson.  First page of each pair is French, second is Mooré —
+    consistent across all three books.
     """
     tagged = []
     for page in pdf.pages:
@@ -130,16 +161,7 @@ def pair_lesson_pages(pdf) -> list[tuple[list, list]]:
         header = get_lesson_header(lines)
         if header:
             tagged.append((header, lines))
-
-    pairs = []
-    i = 0
-    while i < len(tagged):
-        if i + 1 < len(tagged) and tagged[i][0] == tagged[i + 1][0]:
-            pairs.append((tagged[i][1], tagged[i + 1][1]))
-            i += 2
-        else:
-            i += 1  # unpaired lesson page — skip
-    return pairs
+    return pair_tagged_pages(tagged)
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +194,9 @@ def extract_key(lines: list[tuple[int, str]]) -> str | None:
         if SUBTITLE_RE.search(t):
             subtitle_seen = True
             continue
-        # Positional fallback: if subtitle not yet seen, this line is it
-        if not subtitle_seen:
+        # Positional fallback: if subtitle not yet seen, this line is it —
+        # unless it is already a full sentence (lesson 47's MOS page has no subtitle)
+        if not subtitle_seen and not _SENT_END_RE.search(t):
             subtitle_seen = True
             continue
         # Stop at section markers or numbered vocab start
@@ -294,12 +317,11 @@ def extract_passage(lines: list[tuple[int, str]]) -> list[str]:
       1. Skip everything until the numbered vocab list starts.
       2. Skip all numbered vocab lines.
       3. Skip short non-sentence lines (titles, drop-cap fragments ≤ 20 chars).
-      4. Collect full sentences; merge wrapped continuation lines.
+      4. Rebuild sentences: merge wrapped lines, split lines holding several.
       5. Stop at comprehension questions / writing markers.
     """
-    sents: list[str] = []
+    chunks: list[str] = []
     past_vocab = False
-    in_passage = False
 
     for _, text in lines:
         t = text.strip()
@@ -314,96 +336,119 @@ def extract_passage(lines: list[tuple[int, str]]) -> list[str]:
         if re.search(r"\d+\s*[-–]", t):
             continue
         # Before passage: skip short lines (titles, interstitials)
-        if not in_passage and len(t) <= 20:
+        if not chunks and len(t) <= 20:
             continue
-        # First long non-numbered line marks passage start
-        in_passage = True
         if len(t) > 1:
-            if sents and not sents[-1].endswith((".", "!", "?")):
-                sents[-1] += " " + t  # merge wrapped line
-            else:
-                sents.append(t)
-    return sents
+            chunks.append(t)
+    return _merge_wrapped(chunks)
 
 
 # ---------------------------------------------------------------------------
-# Top-level parser
+# Per-lesson extraction
 # ---------------------------------------------------------------------------
 
 
-def parse_pdf(path: Path, book_num: int) -> list[dict]:
-    records = []
+@dataclass
+class Lesson:
+    """Everything extracted from one lesson's FR/MOS page pair, unpaired and unfiltered."""
+
+    book: int
+    number: int | None  # printed lesson number, 1–48 across the three books
+    key: tuple[str | None, str | None]
+    vocab: tuple[dict[int, str], dict[int, str]]
+    sentences: tuple[list[str], list[str]]  # section ② (sectioned layout)
+    passage: tuple[list[str], list[str]]  # reading text (prose layout)
+
+
+def extract_lessons(path: Path, book_num: int) -> list[Lesson]:
     with pdfplumber.open(path) as pdf:
         pairs = pair_lesson_pages(pdf)
 
-    for lesson, (fr_lines, mos_lines) in enumerate(pairs, start=1):
-        src = f"Du_Moore_{book_num}"
-
-        # Key sentence (same logic for all layouts)
-        fr_k = extract_key(fr_lines)
-        mos_k = extract_key(mos_lines)
-        if fr_k and mos_k:
-            records.append({"fr": fr_k, "mos": mos_k, "source": src, "lesson": lesson, "section": "key"})
-
+    lessons = []
+    for number, fr_lines, mos_lines in pairs:
+        key = (extract_key(fr_lines), extract_key(mos_lines))
         if has_section_markers(fr_lines):
-            # --- sectioned layout ---
-            fr_v = extract_vocab_sectioned(fr_lines)
-            mos_v = extract_vocab_sectioned(mos_lines)
-            for num in sorted(set(fr_v) & set(mos_v)):
-                records.append(
-                    {
-                        "fr": fr_v[num],
-                        "mos": mos_v[num],
-                        "source": src,
-                        "lesson": lesson,
-                        "section": "vocab",
-                        "item": num,
-                    }
-                )
-
-            fr_s = extract_sentences_sectioned(fr_lines)
-            mos_s = extract_sentences_sectioned(mos_lines)
-            if len(fr_s) != len(mos_s):
-                print(
-                    f"  [warn] book {book_num} lesson {lesson}: {len(fr_s)} fr vs {len(mos_s)} mos sentences, skipped"
-                )
-                fr_s = mos_s = []
-            for j, (f, m) in enumerate(zip(fr_s, mos_s)):
-                records.append(
-                    {
-                        "fr": f,
-                        "mos": m,
-                        "source": src,
-                        "lesson": lesson,
-                        "section": "sentences",
-                        "item": j + 1,
-                    }
-                )
-
+            vocab = (extract_vocab_sectioned(fr_lines), extract_vocab_sectioned(mos_lines))
+            sentences = (extract_sentences_sectioned(fr_lines), extract_sentences_sectioned(mos_lines))
+            passage: tuple[list[str], list[str]] = ([], [])
         else:
-            # --- prose layout ---
-            fr_v = extract_vocab_prose(fr_lines)
-            mos_v = extract_vocab_prose(mos_lines)
-            for num in sorted(set(fr_v) & set(mos_v)):
-                records.append(
-                    {
-                        "fr": fr_v[num],
-                        "mos": mos_v[num],
-                        "source": src,
-                        "lesson": lesson,
-                        "section": "vocab",
-                        "item": num,
-                    }
-                )
+            vocab = (extract_vocab_prose(fr_lines), extract_vocab_prose(mos_lines))
+            sentences = ([], [])
+            passage = (extract_passage(fr_lines), extract_passage(mos_lines))
+        lessons.append(Lesson(book_num, number, key, vocab, sentences, passage))
+    return lessons
 
-            fr_p = extract_passage(fr_lines)
-            mos_p = extract_passage(mos_lines)
-            for j, (f, m) in enumerate(zip(fr_p, mos_p)):
-                records.append(
-                    {"fr": f, "mos": m, "source": src, "lesson": lesson, "section": "passage", "item": j + 1}
-                )
 
+# ---------------------------------------------------------------------------
+# Outputs: sentence pairs (JSONL) and review units
+# ---------------------------------------------------------------------------
+
+
+def lesson_pairs(lesson: Lesson) -> list[dict]:
+    """
+    Sentence pairs for the JSONL.  Only pairs that are safe without review:
+    vocab by item number, and ② sentences only when both sides have the
+    same count (otherwise zip would shift every pair).  Passages are left
+    out: they are free translations, and even equal counts misalign
+    (lesson 48: FR 1 = MOS 1+2, FR 3+4 = MOS 4).  They go through review.
+    """
+    base = {"source": f"Du_Moore_{lesson.book}", "lesson": lesson.number}
+    records = []
+    fr_k, mos_k = lesson.key
+    if fr_k and mos_k:
+        records.append({"fr": fr_k, "mos": mos_k, **base, "section": "key"})
+
+    fr_v, mos_v = lesson.vocab
+    for num in sorted(set(fr_v) & set(mos_v)):
+        records.append({"fr": fr_v[num], "mos": mos_v[num], **base, "section": "vocab", "item": num})
+
+    fr_s, mos_s = lesson.sentences
+    if len(fr_s) != len(mos_s):
+        print(f"  [warn] lesson {lesson.number}: {len(fr_s)} fr vs {len(mos_s)} mos sentences, skipped")
+        fr_s = mos_s = []
+    for j, (f, m) in enumerate(zip(fr_s, mos_s), start=1):
+        records.append({"fr": f, "mos": m, **base, "section": "sentences", "item": j})
     return records
+
+
+def parse_pdf(path: Path, book_num: int) -> list[dict]:
+    return [r for lesson in extract_lessons(path, book_num) for r in lesson_pairs(lesson)]
+
+
+def lesson_review_units(lesson: Lesson) -> list[tuple[str, list[str], list[str]]]:
+    """
+    Review units for one lesson: (unit_id, fra_lines, mos_lines) per non-empty
+    section, nothing dropped.  Uneven sides are left for the reviewer.
+
+    Vocab rows matched by item number come first so they line up; items
+    found on one side only are appended at the end of that side.
+    """
+    prefix = f"du-moore-{lesson.number:02d}" if lesson.number else f"du-moore-b{lesson.book}"
+    fr_v, mos_v = lesson.vocab
+    both = sorted(set(fr_v) & set(mos_v))
+    sections = {
+        "key": tuple([t] if t else [] for t in lesson.key),
+        "vocab": (
+            [fr_v[n] for n in both] + [fr_v[n] for n in sorted(set(fr_v) - set(mos_v))],
+            [mos_v[n] for n in both] + [mos_v[n] for n in sorted(set(mos_v) - set(fr_v))],
+        ),
+        "sentences": lesson.sentences,
+        "passage": lesson.passage,
+    }
+    return [(f"{prefix}-{name}", list(fr), list(mos)) for name, (fr, mos) in sections.items() if fr or mos]
+
+
+def review_units(pdf_dir: Path) -> list[tuple[str, list[str], list[str]]]:
+    """Review units for every lesson of the three books found in pdf_dir, in book order."""
+    units = []
+    for fname, book_num in PDFS:
+        path = pdf_dir / fname
+        if not path.exists():
+            print(f"  [skip] {fname} not found")
+            continue
+        for lesson in extract_lessons(path, book_num):
+            units.extend(lesson_review_units(lesson))
+    return units
 
 
 def main():

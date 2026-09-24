@@ -37,6 +37,10 @@ Usage:
         --mo-input ../faso-web-docs/abcburkina-contes/text/267-les-co-epouses-moore.txt \
         -o data/review/abcburkina-contes_units.jsonl
 
+    uv run python scripts/export_review_units.py --source du-moore \
+        --input ../faso-web-docs/du-moore-literacy-series \
+        -o data/review/du-moore_units.jsonl
+
     ``--source facilitateur`` is accepted as an alias for ``kade``.
 """
 
@@ -126,11 +130,24 @@ def export_abc_coepouses(fr_input: str, mo_input: str, output_path: str) -> int:
     return _write_units(units, output_path)
 
 
+def export_du_moore(input_path: str, output_path: str) -> int:
+    """One unit per lesson section (key, vocab, sentences, passage), nothing dropped."""
+    from moore_web.flatten import ParallelText
+    from moore_web.parse_du_moore import review_units
+
+    units = [
+        (uid, ParallelText(french=fra, moore=mos, source="du-moore-literacy-series"))
+        for uid, fra, mos in review_units(Path(input_path))
+    ]
+    return _write_units(units, output_path)
+
+
 # Sources needing one input (PDF, JSON, directory, ...).
 EXPORTERS = {
     "sida": export_sida,
     "raamde": export_raamde,
     "messages-nouvel-an": export_new_year,
+    "du-moore": export_du_moore,
 }
 
 # Sources needing a French and a Mooré input.
