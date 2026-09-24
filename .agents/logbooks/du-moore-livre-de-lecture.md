@@ -77,3 +77,13 @@ key, passage).
 - Result: 716 → 847 pairs. vocab 390 → 551 (2 unmatched items left),
   sentences 230 → 200 but now aligned, key 43 (one truncated key fixed),
   passage 53 unchanged.
+- **Known limitation / follow-ups** (not fixed):
+  - Book 3 lesson 7: MOS `… waooɡr ye Yaa wʋnɡã …` lacks a period, so two
+    sentences merge. A split before a capital after `ye` would recover it.
+  - Book 2 lesson 7: last FR sentence (`… Burkina Faso, je l’aime`) is two
+    MOS sentences -- recoverable with 1:2 pairing.
+  - Book 2 lesson 3 (A/B dialogue lines) and book 3 lesson 6 (extra MOS
+    sentence) need manual review.
+  - Unmatched vocab: book 2 lesson 14 item 14 (MOS only:
+    `nii tɩ b yãk yiibu kella yoobe`) and book 3 lesson 10 item 8 (FR only:
+    `une fleur`).
