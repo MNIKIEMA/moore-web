@@ -17,7 +17,7 @@ Source PDFs in repo root:
 - `Du_Moore_au_Francais_2_Noir_et_Blanc_pp_31-60_Lecons_17-31.pdf`
 - `Du_Moore_au_Francais_3_Noir_et_Blanc_pp.61-94_Lecons_32-48.pdf`
 
-Output: `du_moore_parallel.jsonl` (716 pairs across sections: vocab, sentences,
+Output: `du_moore_parallel.jsonl` (847 pairs across sections: vocab, sentences,
 key, passage).
 
 ## 2026-09-14
@@ -48,3 +48,32 @@ key, passage).
   artefact where pdfplumber inserts a space after the first letter (e.g.
   `L e bébé`) via `_fix_dropcap_space`. Applied to French pages only;
   Mooré pages don't exhibit this artefact in the tested volumes.
+
+## 2026-09-24
+
+- **Bug found and fixed -- most sectioned lessons lost vocab and misaligned
+  sentences.** 31/35 sectioned lessons had vocab items missing on one side
+  and 32/35 had different FR/MOS sentence counts, so `zip` shifted every pair
+  after the first discrepancy (e.g. `"ade jolies ceintures."` ↔ `"Yibeoog-kãnɡa…"`).
+  Three root causes:
+  1. `page_lines` snapped `top` to a 5 px grid. Item numbers, bold names and
+     drop caps sit 1–4 px off the rest of their line, so lines straddling a
+     bucket boundary split (`'① 1 7 –'` / `'–les ceintures la peinture'`).
+     Fix: cluster by chaining `bottom` edges (≤ 5 px between neighbours).
+  2. Drop caps: pdfplumber leaves the tall capital alone (`C écile`), glues
+     it to the previous token (`deC éline`) or both (`voisineCaroline`); the
+     old 1–4-letter prefix logic missed `Alain` (5 letters) entirely. Fix:
+     geometric detection in `_join_words` (capital > 1.15× taller than the
+     next non-capital word, gap < 8 px). `_fix_dropcap_space` and the prefix
+     logic are removed -- the text regex would have turned `A la` into `Ala`.
+  3. Section ② treated each printed line as a sentence; FR and MOS wrap
+     differently. Fix: `_merge_wrapped` joins lines lacking terminal
+     punctuation and splits lines holding several sentences.
+- **Earlier claim corrected**: "`zip` by index is correct and sufficient"
+  only holds after lines are rebuilt into sentences. Lessons whose counts
+  still differ are now skipped with a warning: book 2 lessons 3 (MOS has A/B
+  dialogue lines) and 7 (one FR sentence → two MOS), book 3 lessons 6 (extra
+  MOS sentence) and 7 (MOS missing a period).
+- Result: 716 → 847 pairs. vocab 390 → 551 (2 unmatched items left),
+  sentences 230 → 200 but now aligned, key 43 (one truncated key fixed),
+  passage 53 unchanged.

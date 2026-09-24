@@ -33,6 +33,7 @@ _SECTION2_STOP = {"D ɡom fãrende", "Kʋmbɡo", "Expression libre"}
 PASSAGE_STOP = {"Questions de compréhension", "Ecriture", "E criture", "Copie", "C opie"}
 
 Y_TOL = 5
+BASELINE_TOL = 5  # max bottom-edge step between neighbouring words of one line (line pitch is >= 17 px)
 
 
 # ---------------------------------------------------------------------------
@@ -40,14 +41,64 @@ Y_TOL = 5
 # ---------------------------------------------------------------------------
 
 
+_GLUED_CAP_RE = re.compile(r"(?<=[^\sA-ZÀ-Ý])[A-ZÀ-Ý]$")
+_INNER_CAP_RE = re.compile(r"(?<=[a-zà-ÿ.,])(?=[A-ZÀ-Ý][a-zà-ÿ])")
+
+
+def _is_dropcap(w: dict, nxt: dict) -> bool:
+    """A word ending in a capital noticeably taller than the non-capital word right after it."""
+    h, nh = w["bottom"] - w["top"], nxt["bottom"] - nxt["top"]
+    return (
+        w["text"][-1:].isalpha()
+        and w["text"][-1].isupper()
+        and not nxt["text"][:1].isupper()
+        and h > 1.15 * nh
+        and nxt["x0"] - w["x1"] < 8
+    )
+
+
+def _join_words(ws: list[dict]) -> str:
+    """
+    Join words with spaces, reattaching drop caps to their word.  pdfplumber
+    either leaves the drop cap alone ('C', 'écile') or glues it to the
+    previous token ('deC', 'éline'); both become '... Cécile'.
+    """
+    out = ""
+    for i, w in enumerate(ws):
+        t = w["text"]
+        nxt = ws[i + 1] if i + 1 < len(ws) else None
+        if nxt and _is_dropcap(w, nxt) and (len(t) == 1 or _GLUED_CAP_RE.search(t)):
+            t = (t[:-1] + " " if len(t) > 1 else "") + t[-1] + nxt["text"]
+            ws[i + 1] = {**nxt, "text": ""}
+        elif nxt and w["bottom"] - w["top"] > 1.15 * (nxt["bottom"] - nxt["top"]):
+            # drop cap glued on both sides: 'voisineCaroline' → 'voisine Caroline'
+            t = _INNER_CAP_RE.sub(" ", t)
+        if t:
+            out += (" " if out else "") + t
+    return out
+
+
 def page_lines(page) -> list[tuple[int, str]]:
-    """Return [(y_bucket, line_text)] sorted by y."""
-    words = page.extract_words(x_tolerance=5, y_tolerance=Y_TOL)
-    buckets: dict[int, list[str]] = {}
+    """
+    Return [(y, line_text)] sorted by y.
+
+    Words are clustered by their bottom edge rather than snapped to a fixed
+    grid: drop caps and item numbers sit a few px higher than the text they
+    belong to, but share (almost) the same baseline.  A fixed grid split such
+    lines in two whenever they straddled a bucket boundary.
+    """
+    words = sorted(page.extract_words(x_tolerance=5, y_tolerance=Y_TOL), key=lambda w: w["bottom"])
+    clusters: list[list[dict]] = []
     for w in words:
-        y = round(w["top"] / Y_TOL) * Y_TOL
-        buckets.setdefault(y, []).append(w["text"])
-    return [(y, " ".join(ws)) for y, ws in sorted(buckets.items())]
+        if clusters and w["bottom"] - clusters[-1][-1]["bottom"] <= BASELINE_TOL:
+            clusters[-1].append(w)
+        else:
+            clusters.append([w])
+    lines = []
+    for ws in clusters:
+        ws.sort(key=lambda w: w["x0"])
+        lines.append((round(min(w["top"] for w in ws)), _join_words(ws)))
+    return sorted(lines)
 
 
 def get_lesson_header(lines: list[tuple[int, str]]) -> str | None:
@@ -169,65 +220,45 @@ def extract_vocab_sectioned(lines: list[tuple[int, str]]) -> dict[int, str]:
     return items
 
 
-def _apply_prefix(prefix: str | None, text: str) -> str:
-    if not prefix:
-        return text
-    sep = "" if len(prefix) == 1 else " "
-    return prefix + sep + text
+_SENT_END_RE = re.compile(r"[.!?…][\"»”’)\s]*$")
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-ÝƐƆƖƲ])")
 
 
-def _fix_dropcap_space(text: str) -> str:
-    """'L e bébé' → 'Le bébé' (French drop-cap merged with a spurious space)."""
-    return re.sub(r"^([A-Za-zÀ-ÿ]) ([a-zà-ÿ])", lambda m: m.group(1) + m.group(2), text)
+def _merge_wrapped(chunks: list[str]) -> list[str]:
+    """
+    Rebuild sentences from PDF lines: a line without terminal punctuation
+    continues on the next, and a line holding several sentences is split.
+    """
+    sents: list[str] = []
+    for t in chunks:
+        if sents and not _SENT_END_RE.search(sents[-1]):
+            sents[-1] += " " + t
+        else:
+            sents.append(t)
+    return [part for s in sents for part in _SENT_SPLIT_RE.split(s)]
 
 
-def extract_sentences_sectioned(lines: list[tuple[int, str]], fix_dropcap: bool = False) -> list[str]:
-    """Section ②: parallel sentences in order."""
-    sents = []
+def extract_sentences_sectioned(lines: list[tuple[int, str]]) -> list[str]:
+    """
+    Section ②: parallel sentences in order.
+
+    French and Mooré pages wrap long sentences at different points, so lines
+    are merged into sentences before pairing by index.
+    """
+    chunks: list[str] = []
     in_sec = False
-    prefix: str | None = None
-    prev_y: int = 0
-
-    for y, text in lines:
-        if not in_sec and re.fullmatch(r"[A-Za-zÀ-ÿ]{1,4}", text.strip()):
-            prefix = text.strip()
-            prev_y = y
-            continue
-
+    for _, text in lines:
         if "②" in text:
             in_sec = True
-            remainder = re.sub(r"^②\s*", "", text).strip()
-            remainder = re.sub(r"^\d+\s*[–\-]\s*", "", remainder).strip()
-            if prefix is not None and y - prev_y <= 10:
-                remainder = _apply_prefix(prefix, remainder)
-            prefix = None
-            if fix_dropcap:
-                remainder = _fix_dropcap_space(remainder)
-            if len(remainder) > 2:
-                sents.append(remainder)
-            prev_y = y
+            text = text.split("②", 1)[1]
+        elif not in_sec:
             continue
-
-        if in_sec:
-            if any(m in text for m in _SECTION2_STOP):
-                break
-            t = text.strip()
-            if re.fullmatch(r"[A-Za-zÀ-ÿ]{1,4}", t):
-                prefix = t
-                prev_y = y
-                continue
-            t = re.sub(r"^\d+\s*[–\-]\s*", "", t)
-            if prefix is not None and y - prev_y <= 10:
-                t = _apply_prefix(prefix, t)
-            prefix = None
-            if fix_dropcap:
-                t = _fix_dropcap_space(t)
-            if len(t) > 2:
-                sents.append(t)
-
-        prev_y = y
-    return sents
-
+        elif any(m in text for m in _SECTION2_STOP):
+            break
+        t = re.sub(r"^\d+\s*[–\-]\s*", "", text.strip())
+        if len(t) > 2:
+            chunks.append(t)
+    return _merge_wrapped(chunks)
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +361,13 @@ def parse_pdf(path: Path, book_num: int) -> list[dict]:
                     }
                 )
 
-            fr_s = extract_sentences_sectioned(fr_lines, fix_dropcap=True)
-            mos_s = extract_sentences_sectioned(mos_lines, fix_dropcap=False)
+            fr_s = extract_sentences_sectioned(fr_lines)
+            mos_s = extract_sentences_sectioned(mos_lines)
+            if len(fr_s) != len(mos_s):
+                print(
+                    f"  [warn] book {book_num} lesson {lesson}: {len(fr_s)} fr vs {len(mos_s)} mos sentences, skipped"
+                )
+                fr_s = mos_s = []
             for j, (f, m) in enumerate(zip(fr_s, mos_s)):
                 records.append(
                     {

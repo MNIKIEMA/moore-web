@@ -88,7 +88,10 @@ Extract numbered vocabulary first. The first long non-numbered line afterwards s
 - Subtitles: skip lines matching `kaorengo`, `kaorenɡo`, or `karem`. If no explicit subtitle match is found, skip the first non-short line after the heading positionally.
 - Numbered vocabulary: split using a captured separator (`(\d+)\s*[–-]\s*`), not repeated `finditer`; this prevents a two-digit number such as `17` from being partly consumed.
 - Ignore an empty vocabulary slot: `N –` without a non-numeric value creates no record.
-- A one-to-four-letter line in a nearby y-bucket is a drop cap. Reattach it to the following sentence; for French, repair the artificial space (`L e bébé` → `Le bébé`).
+- Group words into lines by chaining bottom edges (≤ 5 px step between neighbours), not by snapping `top` to a fixed grid: drop caps, bold names and item numbers sit a few px off the text they belong to, and a grid split those lines in two.
+- A drop cap is a capital more than 1.15× taller than the following non-capital word, within 8 px. pdfplumber leaves it alone (`C écile`), glues it to the previous token (`deC éline`, `–C écile`) or glues it on both sides (`voisineCaroline`); all become `Cécile` / `de Céline` / `voisine Caroline`. This is geometric, so Mooré's one-letter words (`A`, `B`) are never glued.
+- Section ② lines are rebuilt into sentences before pairing: a line without terminal punctuation continues on the next, and a line holding several sentences is split at `. X`. French and Mooré wrap at different points, so pairing raw lines shifts every later pair.
+- If a lesson's French and Mooré ② sentence counts still differ, skip that lesson's sentences (with a warning) instead of zipping. The four remaining cases are real text differences (A/B dialogue lines, one sentence rendered as two, an extra or unpunctuated sentence).
 - In prose passages, append a following line to the preceding record if that record has no `.`, `!`, or `?` terminator. This restores PDF-wrapped sentences.
 
 ## Reproducibility
@@ -99,13 +102,13 @@ Run from the repository root:
 uv run python src/moore_web/parse_du_moore.py --output du_moore_parallel.jsonl
 ```
 
-The current three PDFs produce **941** pairs:
+The current three PDFs produce **847** pairs (key 43, vocab 551, sentences 200, passage 53):
 
 | Book | Pairs |
 | --- | ---: |
-| 1 | 249 |
-| 2 | 341 |
-| 3 | 351 |
-| Total | 941 |
+| 1 | 240 |
+| 2 | 284 |
+| 3 | 323 |
+| Total | 847 |
 
 The checked-in `du_moore_parallel.jsonl` was verified to match a fresh run byte-for-byte.
