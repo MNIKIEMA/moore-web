@@ -56,6 +56,7 @@ moore-web --help
 | `clean-lexicon` | Clean a lexicon JSONL file (synonym splitting, proverb stripping) |
 | `parse-expert-translations` | Extract existing French–Mooré PDF table pairs with QA notes |
 | `parse-moore-proverbs` | Pair archived Mooré proverbs with French renderings |
+| `parse-moore-tales` | Pair archived Mooré tales (volume 5) with their French translations |
 | `segment-abc-coepouses` | Segment the French/Mooré abcBurkina tale into paired story units |
 
 ### Sources
@@ -129,6 +130,24 @@ moore-web parse-moore-proverbs \
 ```
 
 See [the source format and pairing checks](docs/moore-proverbs.md).
+
+### Mooré tales, volume 5
+
+The archived Contes volume 5 app has 30 tales, each a Mooré page followed by
+its French translation. Extract one record per tale, or align sentences
+within each tale:
+
+```bash
+moore-web parse-moore-tales \
+  --input-dir ../faso-web-docs/mooreburkina-priority/apps/mos-contes-volume-5 \
+  --output moore_tales.jsonl
+
+moore-web e2e -s moore-tales \
+  -i ../faso-web-docs/mooreburkina-priority/apps/mos-contes-volume-5 \
+  -o moore_tales_aligned.jsonl
+```
+
+See [the source format and alignment notes](docs/moore-tales.md).
 
 ### abcBurkina coépouses tale
 

@@ -78,7 +78,8 @@ class ParallelText(msgspec.Struct):
 # explicit "Kibarã yii <French source>" attribution lines in ~half the
 # articles). niggli-dictionary-mos-fra-eng and digital-postal-glossary
 # (-term)(-definition) are lexical: a Mooré headword/term with French/English
-# glosses, so Mooré is the "original" side.
+# glosses, so Mooré is the "original" side. mos-contes-volume-5 are oral tales
+# narrated in Mooré with French translations (the French glosses Mooré words).
 ORIGINAL_LANGUAGE: dict[str, str] = {
     "sida-bilingual-book": "fra",
     "kade": "fra",
@@ -89,6 +90,7 @@ ORIGINAL_LANGUAGE: dict[str, str] = {
     "digital-postal-glossary": "mos",
     "digital-postal-glossary-term": "mos",
     "digital-postal-glossary-term-definition": "mos",
+    "mos-contes-volume-5": "mos",
 }
 
 

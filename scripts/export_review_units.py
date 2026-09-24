@@ -41,6 +41,10 @@ Usage:
         --input ../faso-web-docs/du-moore-literacy-series \
         -o data/review/du-moore_units.jsonl
 
+    uv run python scripts/export_review_units.py --source moore-tales \
+        --input ../faso-web-docs/mooreburkina-priority/apps/mos-contes-volume-5 \
+        -o data/review/mos-contes-volume-5_units.jsonl
+
     ``--source facilitateur`` is accepted as an alias for ``kade``.
 """
 
@@ -142,12 +146,25 @@ def export_du_moore(input_path: str, output_path: str) -> int:
     return _write_units(units, output_path)
 
 
+def export_moore_tales(input_path: str, output_path: str) -> int:
+    """One unit per tale (title first), sentence-segmented; the tale is the only reliable anchor."""
+    from moore_web.flatten import ParallelText
+    from moore_web.moore_tales_parser import parse_moore_tales
+
+    units = [
+        (t.id, ParallelText(french=t.target_sentences, moore=t.source_sentences, source=t.source))
+        for t in parse_moore_tales(input_path)
+    ]
+    return _write_units(units, output_path)
+
+
 # Sources needing one input (PDF, JSON, directory, ...).
 EXPORTERS = {
     "sida": export_sida,
     "raamde": export_raamde,
     "messages-nouvel-an": export_new_year,
     "du-moore": export_du_moore,
+    "moore-tales": export_moore_tales,
 }
 
 # Sources needing a French and a Mooré input.

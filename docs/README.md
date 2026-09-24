@@ -14,6 +14,7 @@ Historical fixes and their PDF evidence: [resolved issues](resolved-issues.md).
 | [Council of Ministers](council-of-ministers.md) | `conseils` | Same-date PDF/JSON documents in several languages |
 | [Digital glossaries](digital-glossaries.md) | `digital` | Two table-based PDFs joined by normalized French terms |
 | [Du Moore literacy series](du-moore-literacy-series.md) | `parse_du_moore.py` | Dynamically paired French/Mooré lesson pages |
+| [Mooré tales, volume 5](moore-tales.md) | `moore-tales` | Archived app; one Mooré and one French page per tale |
 
 ## Common extraction contract
 

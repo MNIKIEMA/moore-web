@@ -46,6 +46,7 @@ class Source(str, Enum):
     digital = "digital"
     udhr = "udhr"
     abc_coepouses = "abc-coepouses"
+    moore_tales = "moore-tales"
 
 
 class KadeLang(str, Enum):
@@ -926,9 +927,9 @@ def e2e(
             "--input",
             "-i",
             exists=True,
-            dir_okay=False,
             help=(
-                "Input file (sida PDF, news/conseils JSON, or simple PDF). "
+                "Input file (sida PDF, news/conseils JSON, or simple PDF), or the archived "
+                "app directory for moore-tales. "
                 "Must be a local path. For news/conseils corpora hosted on HuggingFace, "
                 "download the file first: "
                 "huggingface-cli download owner/repo corpus.json --repo-type dataset --local-dir ."
@@ -1082,6 +1083,7 @@ def e2e(
     [bold]digital (both):[/bold]    moore-web e2e -s digital --fr-input lexique.pdf --mo-input glossaire.pdf -o terms.jsonl --definitions-output defs.jsonl --add-laser-score --add-comet-qe --add-quality-warn
     [bold]udhr:[/bold]              moore-web e2e -s udhr --fr-input udhr-fra.txt --mo-input udhr-mos.txt -o udhr.jsonl
     [bold]abc-coepouses:[/bold]     moore-web e2e -s abc-coepouses --fr-input 266-les-couses.txt --mo-input 267-les-co-epouses-moore.txt -o tale.jsonl
+    [bold]moore-tales:[/bold]       moore-web e2e -s moore-tales -i apps/mos-contes-volume-5 -o tales.jsonl
     [bold]HF output:[/bold]         moore-web e2e -s sida -i book.pdf -o hf://owner/repo --annotate
     """
     if do_annotate:
@@ -1417,6 +1419,44 @@ def e2e(
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
+    elif source == Source.moore_tales:
+        if input is None or not input.is_dir():
+            _err(
+                "--input (the archived mos-contes-volume-5 app directory) is required for --source moore-tales."
+            )
+            raise typer.Exit(1)
+
+        from moore_web.flatten import AlignedCorpus, ParallelText
+        from moore_web.moore_tales_parser import COLLECTION_ID as _TALES_SOURCE
+        from moore_web.moore_tales_parser import parse_moore_tales
+
+        typer.echo("[1/2] Pairing Mooré and French tale pages by tale number…")
+        tales = parse_moore_tales(input)
+        out = output or input / f"moore_tales_aligned{_ext}"
+        if segment:
+            typer.echo(f"[2/2] Aligning sentences within each of {len(tales)} tales with LASER + FastDTW…")
+            unit_parallels = [
+                (
+                    t.id,
+                    ParallelText(french=t.target_sentences, moore=t.source_sentences, source=_TALES_SOURCE),
+                )
+                for t in tales
+            ]
+            aligned = _align_per_unit(unit_parallels, min_score=min_score, source=_TALES_SOURCE)
+        else:
+            typer.echo(f"[2/2] Keeping {len(tales)} tales as whole pairs…")
+            aligned = AlignedCorpus(
+                french=[t.target_text for t in tales],
+                moore=[t.source_text for t in tales],
+                scores=[None] * len(tales),
+                doc_ids=[t.id for t in tales],
+                source=_TALES_SOURCE,
+            )
+        if drop_duplicate:
+            aligned = _dedup_aligned(aligned)
+        _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
+        return
+
     elif source == Source.digital:
         if fr_input is None or mo_input is None:
             _err(
@@ -1549,6 +1589,21 @@ def parse_moore_proverb_app(
     records = parse_moore_proverbs(input_dir)
     write_jsonl(records, output_jsonl)
     typer.echo(f"Wrote {len(records)} Mooré/French proverb pairs → {output_jsonl}")
+
+
+@app.command("parse-moore-tales")
+def parse_moore_tale_app(
+    input_dir: Annotated[
+        Path, typer.Option("--input-dir", exists=True, file_okay=False, help="Archived tales app directory.")
+    ],
+    output_jsonl: Annotated[Path, typer.Option("--output", "-o", help="One record per tale, as JSONL.")],
+) -> None:
+    """Pair Mooré tales with their French translations from the archived app (Contes volume 5)."""
+    from moore_web.moore_tales_parser import parse_moore_tales, write_jsonl
+
+    tales = parse_moore_tales(input_dir)
+    write_jsonl(tales, output_jsonl)
+    typer.echo(f"Wrote {len(tales)} Mooré/French tales → {output_jsonl}")
 
 
 # ---------------------------------------------------------------------------
