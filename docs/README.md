@@ -4,6 +4,8 @@ These notes describe the *input structure* used by the parsers. They are intenti
 
 Historical fixes and their PDF evidence: [resolved issues](resolved-issues.md).
 
+How to review aligned units in the annotation app: [review guidelines](review-guidelines.md).
+
 | Format | Parser/source | Notes |
 | --- | --- | --- |
 | [One-column dictionary](one-column-dictionary.md) | `simple` | Block-ordered dictionary entries |
