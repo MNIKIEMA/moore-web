@@ -38,6 +38,8 @@ _MISSING_SPACE_RE = re.compile(r"(?<=[.!?])(?=[A-ZÀ-Ö][a-zà-öø-ÿ])")
 _PAGE_REF_RE = re.compile(r"\([^)]*\bp\.?\s*\d+(?:\s*[-–]\s*\d+)?\)", re.IGNORECASE)
 _STANDALONE_NUM_RE = re.compile(r"^\s*\d+(?:[-–]\d+)?(?:[.,;:\s]+\d+(?:[-–]\d+)?)*[.,;:]?\s*$")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+_SPACE_BEFORE_PUNCT_RE = re.compile(r" +([!?:;».,])")
+_SPACE_AFTER_GUILLEMET_RE = re.compile(r"([«]) +")
 # "©" catches copyright lines directly; the permission-notice phrase is
 # needed separately because segmentation splits it off as its own sentence
 # with no "©" of its own (e.g. Kadé chapter 0's Mooré colophon: "... © SIL
@@ -363,7 +365,13 @@ def _syntok_sentences(text: str) -> tuple[str, list[str]]:
 
 
 def segment_fr(text: str) -> list[str]:
-    """Segment French text into sentences using syntok."""
+    """Segment French text into sentences using syntok.
+
+    French typography puts a space before `»` (``sols ». Il``); syntok won't
+    end a sentence there, so tighten the spacing before segmenting.
+    """
+    text = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", text)
+    text = _SPACE_AFTER_GUILLEMET_RE.sub(r"\1", text)
     joined, sentences = _syntok_sentences(text)
     return _merge_open_quotes(sentences) or ([joined] if joined else [])
 
@@ -399,8 +407,8 @@ def normalize_fr(sentence: str) -> str:
     which corrupts the text for alignment.
     """
     sentence = sentence.replace("\u201c", '"').replace("\u201d", '"')
-    sentence = re.sub(r" +([!?:;».,])", r"\1", sentence)
-    sentence = re.sub(r"([«]) +", r"\1", sentence)
+    sentence = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", sentence)
+    sentence = _SPACE_AFTER_GUILLEMET_RE.sub(r"\1", sentence)
     return _MULTI_SPACE_RE.sub(" ", sentence).strip()
 
 
