@@ -71,9 +71,19 @@ class TestJoinLines:
         # »Le — » is not in [.!?], so no space inserted
         assert _join_lines("«phrase un.»Le lendemain") == "«phrase un.»Le lendemain"
 
-    def test_dot_before_opening_guillemet_unchanged(self):
-        # dot before «, not before [A-Z]
-        assert _join_lines("Il dit.«Bonjour»") == "Il dit.«Bonjour»"
+    def test_dot_before_opening_guillemet_gains_space(self):
+        # Scraped paragraphs glued as "Boussim.« En …"
+        assert _join_lines("Il dit.«Bonjour»") == "Il dit. «Bonjour»"
+
+    def test_dot_before_opening_typographic_quote_gains_space(self):
+        assert _join_lines("Il dit.“Bonjour”") == "Il dit. “Bonjour”"
+
+    def test_glued_quote_starts_new_sentence(self):
+        text = "Il l’a demandé au ministre Simon Pierre Boussim.« En février 2023, 43 sites ont été fermés », dit-il."
+        assert segment_fr(text) == [
+            "Il l’a demandé au ministre Simon Pierre Boussim.",
+            "«En février 2023, 43 sites ont été fermés», dit-il.",
+        ]
 
     # --- honorifics ---
 
