@@ -44,22 +44,32 @@ body { background: #f7f8fa; }
 .pair-1 { --line-bd: #16a34a; --line-bg: #dcfce7; }
 .unpaired { --line-bd: #dc2626; --line-bg: #fee2e2; }
 .side li.unpaired { border-left-style: dashed; }
+.rejected { --line-bd: #94a3b8; --line-bg: #eef1f5; }
+.side li.rejected, .line-grid .cell.rejected textarea { color: #94a3b8; text-decoration: line-through; }
 .legend { color: #475569; font-size: 0.85rem; margin: 0 0 8px; }
-.legend .unpaired-swatch { display: inline-block; width: 12px; height: 12px; margin: 0 4px -1px 0;
-  background: #fee2e2; border: 1px dashed #dc2626; border-radius: 2px; }
+.legend .unpaired-swatch, .legend .rejected-swatch { display: inline-block; width: 12px; height: 12px;
+  margin: 0 4px -1px 0; border-radius: 2px; }
+.legend .unpaired-swatch { background: #fee2e2; border: 1px dashed #dc2626; }
+.legend .rejected-swatch { background: #eef1f5; border: 1px solid #94a3b8; margin-left: 10px; }
 .unit-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0 2px; }
 .modal-dialog { max-width: min(1200px, 96vw); }
 .hidden-editor-fields { display: none; }
 .line-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 12px; margin: 10px 0; }
-.line-grid .cell { box-sizing: border-box; border-radius: 4px; border-left: 5px solid var(--line-bd, #94a3b8);
-  background: var(--line-bg, #fff); }
+.line-grid .cell { position: relative; box-sizing: border-box; border-radius: 4px;
+  border-left: 5px solid var(--line-bd, #94a3b8); background: var(--line-bg, #fff); }
 .line-grid .cell.pair-0 { --line-bd: #2563eb; --line-bg: #dbeafe; }
 .line-grid .cell.pair-1 { --line-bd: #16a34a; --line-bg: #dcfce7; }
 .line-grid .cell.unpaired { --line-bd: #dc2626; --line-bg: #fee2e2; border-left-style: dashed; }
+.line-grid .cell.rejected { --line-bd: #94a3b8; --line-bg: #eef1f5; }
 .line-grid .cell.empty-cell { border: 1px dashed #cbd5e1; background: transparent; }
+.line-grid .cell.rejected-partner { border: 1px dashed #cbd5e1; background: transparent; color: #94a3b8;
+  font-size: 0.8rem; font-style: italic; display: flex; align-items: center; justify-content: center; }
+.line-grid .reject-toggle { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; padding: 0;
+  border: 1px solid #cbd5e1; border-radius: 4px; background: #fff; color: #64748b; font-size: 0.8rem; line-height: 1; }
+.line-grid .reject-toggle:hover { color: #dc2626; border-color: #dc2626; }
 .line-grid .cell textarea { display: block; width: 100%; height: 100%; box-sizing: border-box;
   margin: 0; border: none; background: transparent; resize: none; overflow: hidden;
-  font: inherit; line-height: 1.5; padding: 6px 10px; white-space: pre-wrap; overflow-wrap: break-word; }
+  font: inherit; line-height: 1.5; padding: 6px 34px 6px 10px; white-space: pre-wrap; overflow-wrap: break-word; }
 .line-grid .cell textarea:focus { outline: 2px solid #2563eb66; outline-offset: -2px; }
 @media (max-width: 700px) { .parallel { grid-template-columns: 1fr; } .line-grid { grid-template-columns: 1fr; } }
 """
@@ -68,28 +78,51 @@ body { background: #f7f8fa; }
 EDITOR_JS = """
 (function () {
   // Two hidden Shiny textareas (#edit_fra, #edit_mos) hold the text Shiny reads from / writes to.
-  // This builds a visible grid on top of them: one row per line index, French and Moore
-  // side by side, so row N always lines up with row N even when a line wraps or the two
-  // sides have different lengths.
+  // This builds a visible grid on top of them: one row per pair, French and Mooré side by side.
+  // Each line is {t: text, r: rejected}; the flag lives on the line so Enter/Backspace carry it.
+  // A rejected line gets a row to itself, so the remaining lines line up with their real partner.
   const SIDES = { fra: [], mos: [] };
   const lastSynced = { fra: null, mos: null };
 
   function splitLines(text) { return text.split(/\\r?\\n/); }
   function hiddenArea(side) { return document.getElementById('edit_' + side); }
-  function cellClass(index, otherLen) { return index >= otherLen ? 'unpaired' : 'pair-' + (index % 2); }
+  function toItems(text, rejected) {
+    const skip = new Set(rejected || []);
+    return splitLines(text).map((t, i) => ({ t, r: skip.has(i) }));
+  }
 
   function syncHidden(side) {
     const area = hiddenArea(side);
     if (!area) return;
-    const text = SIDES[side].join('\\n');
+    const text = SIDES[side].map(item => item.t).join('\\n');
     if (area.value === text) return;
     area.value = text;
     lastSynced[side] = text;
     $(area).trigger('change');
   }
 
-  // A row's two textareas must end up the same height so line N+1 starts at the same y on both
-  // sides, even when one side's line wraps to two rows and the other's does not.
+  // Rejected indices point into the hidden textarea's lines (blank ones included).
+  function syncRejected() {
+    const indices = side => SIDES[side].flatMap((item, i) => (item.r ? [i] : []));
+    Shiny.setInputValue('edit_rejected', { fra: indices('fra'), mos: indices('mos') });
+  }
+
+  // Rows in export order: a rejected line alone, otherwise the next kept line of each side.
+  // `pair` numbers the pairs for colouring; 'unpaired' rows have a line on one side only.
+  function rows() {
+    const F = SIDES.fra, M = SIDES.mos, out = [];
+    let i = 0, j = 0, pair = 0;
+    while (i < F.length || j < M.length) {
+      if (i < F.length && F[i].r) out.push({ fra: i++, mos: null, kind: 'rejected' });
+      else if (j < M.length && M[j].r) out.push({ fra: null, mos: j++, kind: 'rejected' });
+      else if (i < F.length && j < M.length) out.push({ fra: i++, mos: j++, kind: 'pair', pair: pair++ });
+      else out.push({ fra: i < F.length ? i++ : null, mos: j < M.length ? j++ : null, kind: 'unpaired' });
+    }
+    return out;
+  }
+
+  // A row's two textareas must end up the same height so the next row starts at the same y
+  // on both sides, even when one side's line wraps to two rows and the other's does not.
   function syncRowHeights() {
     const grid = document.getElementById('line_grid');
     if (!grid) return;
@@ -103,37 +136,63 @@ EDITOR_JS = """
     }
   }
 
-  function cell(index, side, arr, otherLen) {
-    if (index > arr.length) {
-      const div = document.createElement('div');
-      div.className = 'cell empty-cell';
-      return div;
-    }
+  function lineCell(side, index, row) {
+    const arr = SIDES[side];
+    const item = arr[index];
     const wrap = document.createElement('div');
-    wrap.className = 'cell ' + cellClass(index, otherLen);
+    const rejected = item && item.r;
+    wrap.className = 'cell ' + (rejected ? 'rejected' : row.kind === 'pair' ? 'pair-' + (row.pair % 2) : 'unpaired');
     const area = document.createElement('textarea');
-    area.value = arr[index] ?? '';
+    area.value = item ? item.t : '';
     area.rows = 1;
     area.dataset.side = side;
     area.dataset.index = String(index);
     area.addEventListener('input', () => onInput(area));
     area.addEventListener('keydown', (e) => onKeydown(e, area));
     wrap.append(area);
+    if (item) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'reject-toggle';
+      btn.textContent = rejected ? '↺' : '✕';
+      btn.title = rejected ? 'Restore this line' : 'Reject this line (left out of the export)';
+      btn.setAttribute('aria-label', btn.title);
+      btn.addEventListener('click', () => {
+        item.r = !item.r;
+        syncRejected();
+        render({ side, index, button: true });
+      });
+      wrap.append(btn);
+    }
     return wrap;
+  }
+
+  function placeholder(text, className) {
+    const div = document.createElement('div');
+    div.className = 'cell ' + className;
+    div.textContent = text;
+    return div;
   }
 
   function render(focus) {
     const grid = document.getElementById('line_grid');
     if (!grid) return;
-    const fra = SIDES.fra, mos = SIDES.mos;
-    const maxLen = Math.max(fra.length, mos.length);
     grid.replaceChildren();
-    for (let i = 0; i < maxLen; i++) {
-      grid.append(cell(i, 'fra', fra, mos.length), cell(i, 'mos', mos, fra.length));
-    }
+    // One blank "add a line" cell past the end of a side, in the first row that lacks a partner.
+    const addShown = { fra: false, mos: false };
+    const sideCell = (side, index, row) => {
+      if (index !== null) return lineCell(side, index, row);
+      if (row.kind === 'rejected') return placeholder('no pair: the other line is rejected', 'rejected-partner');
+      if (!addShown[side]) { addShown[side] = true; return lineCell(side, SIDES[side].length, row); }
+      return placeholder('', 'empty-cell');
+    };
+    for (const row of rows()) grid.append(sideCell('fra', row.fra, row), sideCell('mos', row.mos, row));
     if (focus) {
       const el = grid.querySelector(`textarea[data-side="${focus.side}"][data-index="${focus.index}"]`);
-      if (el) {
+      if (el && focus.button) {
+        const btn = el.parentElement.querySelector('.reject-toggle');
+        if (btn) btn.focus();
+      } else if (el) {
         el.focus();
         const pos = Math.min(focus.pos, el.value.length);
         el.setSelectionRange(pos, pos);
@@ -147,10 +206,12 @@ EDITOR_JS = """
     const index = Number(area.dataset.index);
     const arr = SIDES[side];
     const isNew = index === arr.length;
-    arr[index] = area.value;
+    if (isNew) arr.push({ t: area.value, r: false });
+    else arr[index].t = area.value;
     syncHidden(side);
-    // Typing into the one blank "add a line" cell past the end: re-render to reveal the next one.
+    // Typing into the blank "add a line" cell past the end: re-render to reveal the next one.
     if (isNew) {
+      syncRejected();
       render({ side, index, pos: area.selectionStart });
     } else {
       syncRowHeights();
@@ -161,23 +222,30 @@ EDITOR_JS = """
     const side = area.dataset.side;
     const index = Number(area.dataset.index);
     const arr = SIDES[side];
+    const item = arr[index] || { t: area.value, r: false };
     if (e.key === 'Enter') {
       e.preventDefault();
       const pos = area.selectionStart;
-      arr.splice(index, 1, area.value.slice(0, pos), area.value.slice(pos));
+      // The first half keeps the flag; the new second half starts as a normal line.
+      arr.splice(index, 1, { t: item.t.slice(0, pos), r: item.r }, { t: item.t.slice(pos), r: false });
       syncHidden(side);
+      syncRejected();
       render({ side, index: index + 1, pos: 0 });
     } else if (e.key === 'Backspace' && area.selectionStart === 0 && area.selectionEnd === 0) {
       if (index > 0) {
         e.preventDefault();
-        const mergePos = arr[index - 1].length;
-        arr.splice(index - 1, 2, arr[index - 1] + arr[index]);
+        const upper = arr[index - 1];
+        const mergePos = upper.t.length;
+        // The merged line keeps the upper line's flag.
+        arr.splice(index - 1, 2, { t: upper.t + item.t, r: upper.r });
         syncHidden(side);
+        syncRejected();
         render({ side, index: index - 1, pos: mergePos });
       } else if (arr.length > 1 && area.value === '') {
         e.preventDefault();
         arr.splice(index, 1);
         syncHidden(side);
+        syncRejected();
         render({ side, index: 0, pos: 0 });
       }
     }
@@ -185,15 +253,18 @@ EDITOR_JS = """
 
   function attach() {
     const fraArea = hiddenArea('fra'), mosArea = hiddenArea('mos');
-    if (!fraArea || !mosArea || fraArea.dataset.init) return;
+    const grid = document.getElementById('line_grid');
+    if (!fraArea || !mosArea || !grid || fraArea.dataset.init) return;
     fraArea.dataset.init = '1';
-    SIDES.fra = splitLines(fraArea.value);
-    SIDES.mos = splitLines(mosArea.value);
+    const rejected = JSON.parse(grid.dataset.rejected || '{}');
+    SIDES.fra = toItems(fraArea.value, rejected.fra);
+    SIDES.mos = toItems(mosArea.value, rejected.mos);
     lastSynced.fra = fraArea.value;
     lastSynced.mos = mosArea.value;
+    // Always send the flags, even untouched: the input would otherwise keep the previous unit's.
+    syncRejected();
     render(null);
     // The modal is still zero-width while it animates in; re-measure once it has real width.
-    const grid = document.getElementById('line_grid');
     new ResizeObserver(entries => {
       if (entries.some(e => e.contentRect.width > 0)) syncRowHeights();
     }).observe(grid);
@@ -201,14 +272,15 @@ EDITOR_JS = """
 
   new MutationObserver(attach).observe(document.body, { childList: true, subtree: true });
 
-  // "Restore source" / "use latest as base" set the hidden textarea value directly from the
-  // server, which fires a jQuery-only change event (not a real user input) -- rebuild the grid
-  // from it. Skip our own echo: syncHidden() also triggers this same event after every edit.
+  // "Restore source" sets the hidden textarea value directly from the server, which fires a
+  // jQuery-only change event (not a real user input) -- rebuild that side from it, with no
+  // rejections. Skip our own echo: syncHidden() also triggers this same event after every edit.
   $(document).on('change', '#edit_fra, #edit_mos', function () {
     const side = this.id === 'edit_fra' ? 'fra' : 'mos';
     if (this.value === lastSynced[side]) return;
-    SIDES[side] = splitLines(this.value);
+    SIDES[side] = toItems(this.value, []);
     lastSynced[side] = this.value;
+    syncRejected();
     render(null);
   });
 
@@ -220,15 +292,27 @@ EDITOR_JS = """
 PAIR_COLORS = 2
 
 
-def _line_class(index: int, other_count: int) -> str:
-    """Same colour for line N on both sides; red when the other side has no line N."""
-    return "unpaired" if index >= other_count else f"pair-{index % PAIR_COLORS}"
+def _line_classes(count: int, rejected: list[int], other_kept: int) -> list[str]:
+    """Kept line K pairs with kept line K on the other side and shares its colour;
+    red when the other side has no kept line K, grey when rejected."""
+    skip, classes, kept = set(rejected), [], 0
+    for index in range(count):
+        if index in skip:
+            classes.append("rejected")
+            continue
+        classes.append("unpaired" if kept >= other_kept else f"pair-{kept % PAIR_COLORS}")
+        kept += 1
+    return classes
 
 
-def _side(title: str, sentences: list[str], class_name: str, other_count: int) -> Tag:
+def _kept_count(unit: dict, side: str) -> int:
+    return len(unit[side]) - len(unit[f"rejected_{side}"])
+
+
+def _side(title: str, sentences: list[str], class_name: str, classes: list[str]) -> Tag:
     return ui.div(
         ui.tags.h4(title),
-        ui.tags.ol(*(ui.tags.li(s, class_=_line_class(i, other_count)) for i, s in enumerate(sentences))),
+        ui.tags.ol(*(ui.tags.li(s, class_=c) for s, c in zip(sentences, classes, strict=True))),
         class_=f"side {class_name}",
     )
 
@@ -236,24 +320,38 @@ def _side(title: str, sentences: list[str], class_name: str, other_count: int) -
 def _parallel(unit: dict) -> Tag:
     return ui.div(
         ui.p(
-            "Line N has the same colour on both sides. ",
+            "Paired lines have the same colour on both sides. ",
             ui.span(class_="unpaired-swatch"),
             "Red dashed = no counterpart on the other side.",
+            ui.span(class_="rejected-swatch"),
+            "Struck through = rejected, left out of the export.",
             class_="legend",
         ),
         ui.div(
-            _side("French", unit["fra"], "fr", len(unit["mos"])),
-            _side("Mooré", unit["mos"], "mo", len(unit["fra"])),
+            _side(
+                "French",
+                unit["fra"],
+                "fr",
+                _line_classes(len(unit["fra"]), unit["rejected_fra"], _kept_count(unit, "mos")),
+            ),
+            _side(
+                "Mooré",
+                unit["mos"],
+                "mo",
+                _line_classes(len(unit["mos"]), unit["rejected_mos"], _kept_count(unit, "fra")),
+            ),
             class_="parallel",
         ),
     )
 
 
 def _unit_card(unit: dict) -> object:
-    counts = f"FR {len(unit['fra'])} / MO {len(unit['mos'])}"
+    n_fra, n_mos = _kept_count(unit, "fra"), _kept_count(unit, "mos")
+    n_rejected = len(unit["rejected_fra"]) + len(unit["rejected_mos"])
+    counts = f"FR {n_fra} / MO {n_mos}" + (f" · {n_rejected} rejected" if n_rejected else "")
     if unit["reviewed"]:
         status = ui.span("Reviewed", class_="badge bg-success")
-    elif len(unit["fra"]) != len(unit["mos"]):
+    elif n_fra != n_mos:
         status = ui.span("Count mismatch", class_="badge bg-warning text-dark")
     else:
         status = ui.span("Pending", class_="badge bg-secondary")
@@ -286,8 +384,14 @@ def _unit_card(unit: dict) -> object:
 
 
 def _editor_modal(unit: dict, draft: dict | None) -> object:
-    fra_text = draft["fra_text"] if draft else "\n".join(unit["fra"])
-    mos_text = draft["mos_text"] if draft else "\n".join(unit["mos"])
+    source = draft or {
+        "fra_text": "\n".join(unit["fra"]),
+        "mos_text": "\n".join(unit["mos"]),
+        "rejected_fra": unit["rejected_fra"],
+        "rejected_mos": unit["rejected_mos"],
+    }
+    fra_text, mos_text = source["fra_text"], source["mos_text"]
+    rejected = {"fra": source["rejected_fra"], "mos": source["rejected_mos"]}
     stale = draft is not None and draft["base_version"] != unit["version"]
     conflict_message = (
         ui.div(
@@ -303,17 +407,18 @@ def _editor_modal(unit: dict, draft: dict | None) -> object:
     return ui.modal(
         conflict_message,
         ui.p(
-            "Each row is one sentence pair, French and Mooré side by side, so line N always sits next to line N. "
+            "Each row is one sentence pair, French and Mooré side by side, as it will be exported. "
             "Press Enter to split a line, Backspace at the start of a line merges it into the line above, "
             "and cut/paste text between boxes to reorder. Red dashed cells have no counterpart yet — "
-            "type into one to add the missing line."
+            "type into one to add the missing line. Click ✕ to reject a line that has no counterpart "
+            "(a headline, an added sentence): it moves to a row of its own and is left out of the export."
         ),
         ui.div(
             ui.input_text_area("edit_fra", "French", value=fra_text, rows=18, width="100%"),
             ui.input_text_area("edit_mos", "Mooré", value=mos_text, rows=18, width="100%"),
             class_="hidden-editor-fields",
         ),
-        ui.div(id="line_grid", class_="line-grid"),
+        ui.div(id="line_grid", class_="line-grid", **{"data-rejected": json.dumps(rejected)}),
         ui.output_text("editor_counts"),
         ui.tags.details(
             ui.tags.summary("Current accepted text for comparison"),
@@ -482,11 +587,21 @@ def make_app(db_path: Path = DB_PATH, input_dir: Path = INPUT_DIR) -> App:
             base_version.set(draft["base_version"] if draft else unit["version"])
             ui.modal_show(_editor_modal(unit, draft))
 
+        def edit_rejected() -> tuple[list[int], list[int]]:
+            """Rejected line indices sent by the editor, pointing into the hidden textareas' lines."""
+            value = input.edit_rejected() if "edit_rejected" in input else None
+            value = value or {}
+            return list(value.get("fra") or []), list(value.get("mos") or [])
+
         @render.text
         def editor_counts() -> str:
-            fra = review_store.split_lines(input.edit_fra())
-            mos = review_store.split_lines(input.edit_mos())
-            return f"Current edit: FR {len(fra)} / MO {len(mos)}"
+            rejected_fra, rejected_mos = edit_rejected()
+            fra, fra_rej = review_store.clean_lines(input.edit_fra(), rejected_fra)
+            mos, mos_rej = review_store.clean_lines(input.edit_mos(), rejected_mos)
+            text = f"Current edit: FR {len(fra) - len(fra_rej)} / MO {len(mos) - len(mos_rej)} kept"
+            if fra_rej or mos_rej:
+                text += f" (rejected: FR {len(fra_rej)}, MO {len(mos_rej)})"
+            return text
 
         @reactive.effect
         @reactive.event(input.restore_source)
@@ -506,7 +621,13 @@ def make_app(db_path: Path = DB_PATH, input_dir: Path = INPUT_DIR) -> App:
             if current_id() is None:
                 return
             review_store.save_draft(
-                db_path, current_id(), current_reviewer(), input.edit_fra(), input.edit_mos(), base_version()
+                db_path,
+                current_id(),
+                current_reviewer(),
+                input.edit_fra(),
+                input.edit_mos(),
+                base_version(),
+                *edit_rejected(),
             )
             ui.notification_show("Draft saved.", type="message")
 
@@ -524,6 +645,7 @@ def make_app(db_path: Path = DB_PATH, input_dir: Path = INPUT_DIR) -> App:
                 input.edit_fra(),
                 input.edit_mos(),
                 latest["version"],
+                *edit_rejected(),
             )
             ui.notification_show(
                 "Draft now uses the latest version as its base. Review your changes before saving.",
@@ -536,12 +658,13 @@ def make_app(db_path: Path = DB_PATH, input_dir: Path = INPUT_DIR) -> App:
             if current_id() is None:
                 return
             fra_text, mos_text = input.edit_fra(), input.edit_mos()
+            rejected = edit_rejected()
             review_store.save_draft(
-                db_path, current_id(), current_reviewer(), fra_text, mos_text, base_version()
+                db_path, current_id(), current_reviewer(), fra_text, mos_text, base_version(), *rejected
             )
             try:
                 review_store.accept_review(
-                    db_path, current_id(), current_reviewer(), fra_text, mos_text, base_version()
+                    db_path, current_id(), current_reviewer(), fra_text, mos_text, base_version(), *rejected
                 )
             except (ValueError, review_store.ReviewConflict) as exc:
                 ui.notification_show(str(exc), type="error", duration=10)
