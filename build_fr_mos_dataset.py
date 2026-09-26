@@ -48,7 +48,7 @@ Usage
 
     # Also push to the Hub
     python build_fr_mos_dataset.py --output-dir fr_mos_combined \\
-        --push-to-hub madoss/fr-mos-combined
+        --push-to-hub madoss/moore-web-parallel
 
     # Skip the mafand download (local data only)
     python build_fr_mos_dataset.py --output-dir fr_mos_combined \\
@@ -76,6 +76,10 @@ else:
 # ---------------------------------------------------------------------------
 
 Filters = dict[str, tuple[str, float]]
+
+# Config (subset) name on the Hub: madoss/moore-web-parallel holds one config
+# per language pair.
+HUB_CONFIG = "mos-fra"
 
 
 def _parse_filters(table: dict[str, str]) -> Filters:
@@ -451,8 +455,9 @@ def build(
                 "test": Dataset.from_list(_strip(final_test)),
             }
         )
-        dataset_dict.push_to_hub(push_to_hub, private=hub_private)
-        print(f"Done. https://huggingface.co/datasets/{push_to_hub}")
+        # One config per language pair (mos-eng may follow), see docs/dataset-splits.md.
+        dataset_dict.push_to_hub(push_to_hub, config_name=HUB_CONFIG, private=hub_private)
+        print(f"Done. https://huggingface.co/datasets/{push_to_hub} (config {HUB_CONFIG!r})")
 
 
 # ---------------------------------------------------------------------------

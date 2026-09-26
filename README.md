@@ -330,7 +330,7 @@ python build_fr_mos_dataset.py --no-mafand --output-dir out/
 python build_fr_mos_dataset.py --dev-size 1000 --test-size 1000
 
 # Push to HuggingFace Hub
-python build_fr_mos_dataset.py --push-to-hub owner/fr-mos-combined
+python build_fr_mos_dataset.py --push-to-hub madoss/moore-web-parallel
 
 # Keep lexicon_entries in eval too
 python build_fr_mos_dataset.py --train-only-sources ""
