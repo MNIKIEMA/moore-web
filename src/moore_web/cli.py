@@ -1571,6 +1571,37 @@ def parse_expert_translation_batch(
     typer.echo(f"Wrote {len(records)} expert translation pairs → {output_jsonl}")
 
 
+@app.command("export-reviewed")
+def export_reviewed_units(
+    db: Annotated[
+        Path, typer.Option("--db", exists=True, dir_okay=False, help="Review-app SQLite DB.")
+    ] = Path("data/review/reviews.sqlite3"),
+    output_dir: Annotated[Path, typer.Option("--output-dir", "-o", help="Snapshot directory.")] = Path(
+        "data/reviewed"
+    ),
+    push: Annotated[bool, typer.Option("--push", help="Upload the snapshot to the HF dataset repo.")] = False,
+    repo: Annotated[
+        Optional[str], typer.Option("--repo", help="HF dataset repo (default: private reviewed repo).")
+    ] = None,
+    message: Annotated[
+        Optional[str], typer.Option("--message", "-m", help="Commit message for --push.")
+    ] = None,
+) -> None:
+    """Snapshot accepted review units to per-source JSONL, optionally pushing them to the Hub."""
+    from moore_web.reviewed_export import DEFAULT_REPO, export_reviewed, push_reviewed
+
+    summary = export_reviewed(db, output_dir)
+    for source, counts in summary["sources"].items():
+        skipped = f"  ({counts['skipped_units']} mismatched units skipped)" if counts["skipped_units"] else ""
+        typer.echo(f"  {source}: {counts['rows']} rows from {counts['units']} units{skipped}")
+    typer.echo(f"Wrote snapshot → {output_dir}  (latest review {summary['latest_review_at']})")
+    if push:
+        sha = push_reviewed(output_dir, repo or DEFAULT_REPO, message)
+        typer.echo(
+            f"Pushed {repo or DEFAULT_REPO}@{sha}; pin it as [reviewed].revision in fr_mos_sources.toml"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Mooré proverb app
 # ---------------------------------------------------------------------------

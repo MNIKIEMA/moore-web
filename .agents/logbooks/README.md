@@ -18,6 +18,7 @@ and fixes are driven by *document format*, not by language -- a fix in
 - [`moore-tales.md`](moore-tales.md) -- `moore_tales_parser.py` / `cli.py::e2e -s moore-tales` (mooreburkina.com Contes volume 5, 30 tales, Mooré page + French page).
 - [`raamde-news.md`](raamde-news.md) -- `segment_news_data.py` / `flatten.py::flatten_news_per_entry` / `scripts/compare_raamde_splitters.py` / `scripts/align_raamde_sat.py` (raamde-bf.net bilingual news, summary-style Mooré).
 - [`expert-translations.md`](expert-translations.md) -- `expert_translation_parser.py` / `moore-web parse-expert-translations` (expert-translated seed batch PDF, already paired).
+- [`dataset-build.md`](dataset-build.md) -- `build_fr_mos_dataset.py` / `fr_mos_sources.toml` / `reviewed_export.py` (`moore-web export-reviewed`) (assembling the training dataset: pinned reviewed exports, per-source filters).
 - [`hf-output-schema.md`](hf-output-schema.md) -- `flatten.py::AlignedCorpus`/`flat_rows_to_long`, `annotate.py`, `cli.py::_finalize_aligned` (the shared corpus-output layer: long-format row schema, `is_source_orig`/`ORIGINAL_LANGUAGE`, `doc_id`, per-language-pair file/config splitting).
 
 Add a new logbook when a new source or parser module is added, not a new language.
@@ -26,8 +27,8 @@ Add a new logbook when a new source or parser module is added, not a new languag
 
 | Language | ISO | Logbooks |
 | --- | --- | --- |
-| Mooré | `mos` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, hf-output-schema |
-| French | `fra` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, hf-output-schema |
+| Mooré | `mos` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, dataset-build, hf-output-schema |
+| French | `fra` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, dataset-build, hf-output-schema |
 
 ## Entry format
 

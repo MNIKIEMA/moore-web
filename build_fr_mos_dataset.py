@@ -2,18 +2,19 @@
 
 Sources
 -------
-Moore-web collection (local JSONL files under ``--data-dir``):
+Local sources are declared in ``fr_mos_sources.toml`` (``--sources``): one
+``[[sources]]`` entry per file with its dataset tag, per-source quality
+thresholds, ``skip`` rules and ``train_only`` flag. Entries read either
 
-  File                              Source tag      Rows   Eval-eligible
-  ────────────────────────────────  ──────────────  ─────  ─────────────
-  lexicon.jsonl                     lexicon         4 249  yes
-  lexicon_entries.jsonl             lexicon_entries 19793  no  (dict entries)
-  conseils_ministres_aligned.jsonl  conseils        7 596  yes
-  raamde_aligned.jsonl              news            3 915  yes
-  sida_aligned.jsonl                sida              216  yes
-  sida-facilitateur_aligned.jsonl   kade              674  yes
-  digital-terms.jsonl               digital-terms    ~300  no  (glossary terms)
-  digital-defs.jsonl                digital-defs     ~300  yes
+- ``file``: a JSONL under ``data_dir`` (``final_data_hf``) -- parsed and
+  automatically aligned outputs, expert translations;
+- ``reviewed``: a file from the reviewed-export HF dataset repo, pinned by
+  ``[reviewed].revision`` -- accepted review-app units, exported with
+  ``moore-web export-reviewed --push``. ``--reviewed-dir`` reads a local
+  export instead (e.g. before pushing it).
+
+The build never opens the review DB, so the same sources file + revision
+gives the same dataset.
 
 mafand-fr-mos (``--mafand-repo``, default: ``madoss/mafand-fr-mos``):
   The existing train / validation / test splits are used directly.
@@ -25,8 +26,8 @@ Output splits
   test   =  local test portion   +  mafand test
 
 The local dev/test are built by stratified sampling over eval-eligible
-sources (use ``--train-only-sources`` to customise which sources stay
-train-only).  Remaining local rows go to train.
+sources (``train_only`` entries, or ``--train-only-sources``, stay in
+train).  Remaining local rows go to train.
 
 Output schema:  french | moore | source | laser_score | comet_qe | len_ratio
 
@@ -38,6 +39,10 @@ Usage
     # Custom split sizes
     python build_fr_mos_dataset.py --output-dir fr_mos_combined \\
         --dev-size 600 --test-size 600
+
+    # Use a local reviewed export instead of the pinned Hub revision
+    moore-web export-reviewed -o data/reviewed
+    python build_fr_mos_dataset.py --reviewed-dir data/reviewed --no-mafand
 
     # Also push to the Hub
     python build_fr_mos_dataset.py --output-dir fr_mos_combined \\
@@ -53,29 +58,55 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 from collections import defaultdict
 from pathlib import Path
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
 
 # ---------------------------------------------------------------------------
-# Local file registry
+# Sources file
 # ---------------------------------------------------------------------------
 
-# (filename, source_tag)  — order matters for reproducibility
-_LOCAL_FILES: list[tuple[str, str]] = [
-    ("lexicon.jsonl", "lexicon"),
-    ("lexicon_entries.jsonl", "lexicon_entries"),
-    ("conseils_ministres_aligned.jsonl", "conseils"),
-    ("raamde_aligned.jsonl", "news"),
-    ("sida_aligned.jsonl", "sida"),
-    ("sida-facilitateur_aligned.jsonl", "kade"),
-    ("digital-terms.jsonl", "digital-terms"),
-    ("digital-defs.jsonl", "digital-defs"),
-]
+Filters = dict[str, tuple[str, float]]
 
-# Sources excluded from dev/test by default (raw dictionary entries or
-# short keyword pairs not representative of sentence-level translation).
-_DEFAULT_TRAIN_ONLY: tuple[str, ...] = ("lexicon_entries", "digital-terms")
+
+def _parse_filters(table: dict[str, str]) -> Filters:
+    """``{"laser_score": ">= 0.5"}`` → ``{"laser_score": (">=", 0.5)}``."""
+    filters: Filters = {}
+    for field, expr in table.items():
+        op, _, value = expr.strip().partition(" ")
+        if op not in (">=", ">"):
+            raise ValueError(f"Unsupported filter {field} = {expr!r}; use '>= x' or '> x'")
+        filters[field] = (op, float(value))
+    return filters
+
+
+def load_sources(path: Path) -> dict:
+    """Read the sources file; each entry gets its merged ``filters``."""
+    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    defaults = _parse_filters(config.get("filters", {}))
+    for entry in config["sources"]:
+        if ("file" in entry) == ("reviewed" in entry):
+            raise ValueError(f"Source {entry.get('tag')!r} needs exactly one of 'file' or 'reviewed'")
+        entry["filters"] = defaults | _parse_filters(entry.get("filters", {}))
+    return config
+
+
+def _reviewed_dir(config: dict, override: Path | None) -> Path | None:
+    """Local directory of the reviewed export: the override, or the pinned Hub revision."""
+    if override:
+        return override
+    reviewed = config.get("reviewed", {})
+    if not reviewed.get("revision"):
+        return None
+    from huggingface_hub import snapshot_download
+
+    return Path(snapshot_download(reviewed["repo"], repo_type="dataset", revision=reviewed["revision"]))
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +114,13 @@ _DEFAULT_TRAIN_ONLY: tuple[str, ...] = ("lexicon_entries", "digital-terms")
 # ---------------------------------------------------------------------------
 
 
-def _load_jsonl(path: Path, source_override: str | None = None) -> list[dict]:
-    """Read a JSONL file, keeping french/moore/source/laser_score/comet_qe/len_ratio."""
+def _load_jsonl(path: Path, source_override: str | None = None, skip: dict | None = None) -> list[dict]:
+    """Read a JSONL file, keeping french/moore/source/laser_score/comet_qe/len_ratio.
+
+    Also reads the long ``source_text``/``target_text`` (fra → mos) schema.
+    Rows where any ``skip`` field equals its value are dropped.
+    """
+    skip = skip or {}
     rows = []
     with path.open(encoding="utf-8") as fh:
         for line in fh:
@@ -92,8 +128,10 @@ def _load_jsonl(path: Path, source_override: str | None = None) -> list[dict]:
             if not line:
                 continue
             obj = json.loads(line)
-            fr = obj.get("french", "").strip()
-            mo = obj.get("moore", "").strip()
+            if any(obj.get(field) == value for field, value in skip.items()):
+                continue
+            fr = (obj.get("french") or obj.get("source_text") or "").strip()
+            mo = (obj.get("moore") or obj.get("target_text") or "").strip()
             if not fr or not mo:
                 continue
             src = source_override if source_override is not None else obj.get("source", "unknown")
@@ -130,19 +168,14 @@ def _print_source_breakdown(rows: list[dict], label: str) -> None:
 # Quality filter
 # ---------------------------------------------------------------------------
 
-_FILTERS: dict[str, tuple[str, float]] = {
-    "len_ratio": (">", 0.1),
-    "comet_qe": (">=", 0.35),
-    "laser_score": (">=", 0.5),
-}
 
-
-def _passes_filter(row: dict) -> bool:
+def _passes_filter(row: dict, filters: Filters) -> bool:
     """Return True if the row passes all quality thresholds.
 
-    A threshold is skipped when the value is None (field absent for that source).
+    A threshold is skipped when the value is None (field absent for that source),
+    so human-reviewed rows, which carry no scores, always pass.
     """
-    for field, (op, threshold) in _FILTERS.items():
+    for field, (op, threshold) in filters.items():
         val = row.get(field)
         if val is None:
             continue
@@ -153,17 +186,43 @@ def _passes_filter(row: dict) -> bool:
     return True
 
 
-def _apply_quality_filter(rows: list[dict]) -> list[dict]:
-    kept = [r for r in rows if _passes_filter(r)]
-    dropped = len(rows) - len(kept)
-    if dropped:
-        by_source: dict[str, int] = defaultdict(int)
-        for r in rows:
-            if not _passes_filter(r):
-                by_source[r["source"]] += 1
-        parts = "  ".join(f"{s}={n:,}" for s, n in sorted(by_source.items()))
-        print(f"  quality filter: dropped {dropped:,} rows  [{parts}]")
-    return kept
+def load_local(config: dict, data_dir: Path, reviewed_dir: Path | None) -> list[dict]:
+    """Load, filter and deduplicate every source entry, in sources-file order.
+
+    Filters apply per entry, since entries sharing a tag (reviewed vs
+    automatic ``news``) need different thresholds. Dedup keeps the first
+    copy of a (french, moore) pair, so earlier entries win.
+    """
+    rows: list[dict] = []
+    for entry in config["sources"]:
+        if "reviewed" in entry:
+            if reviewed_dir is None:
+                print(f"  [skip] {entry['reviewed']}: no reviewed export pinned ([reviewed].revision)")
+                continue
+            path = reviewed_dir / entry["reviewed"]
+        else:
+            path = data_dir / entry["file"]
+        if not path.exists():
+            print(f"  [skip] {path} not found")
+            continue
+        loaded = _load_jsonl(path, source_override=entry["tag"], skip=entry.get("skip"))
+        kept = [r for r in loaded if _passes_filter(r, entry["filters"])]
+        dropped = f"  (quality filter dropped {len(loaded) - len(kept):,})" if len(kept) < len(loaded) else ""
+        print(f"  {path.name} → {entry['tag']}: {len(kept):,} rows{dropped}")
+        rows.extend(kept)
+
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict] = []
+    for r in rows:
+        key = (r["french"], r["moore"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+    if len(deduped) < len(rows):
+        print(
+            f"\n  dedup: dropped {len(rows) - len(deduped):,} duplicate (fr, mos) pairs → {len(deduped):,} unique rows"
+        )
+    return deduped
 
 
 # ---------------------------------------------------------------------------
@@ -223,44 +282,26 @@ def _stratified_split(
 
 
 def build(
-    data_dir: Path,
+    sources: Path,
+    reviewed_dir: Path | None,
     mafand_repo: str | None,
     output_dir: Path,
     dev_size: int,
     test_size: int,
-    train_only_sources: tuple[str, ...],
+    train_only_sources: tuple[str, ...] | None,
     push_to_hub: str | None,
     hub_private: bool,
     seed: int,
 ) -> None:
-    # ---- 1. Load local files ------------------------------------------------
-    print("Loading local moore-web files …")
-    local_all: list[dict] = []
-    for filename, source_tag in _LOCAL_FILES:
-        path = data_dir / filename
-        if not path.exists():
-            print(f"  [skip] {filename} not found")
-            continue
-        rows = _load_jsonl(path, source_override=source_tag)
-        print(f"  {filename}: {len(rows):,} rows")
-        local_all.extend(rows)
+    # ---- 1. Load, filter and deduplicate local sources ----------------------
+    config = load_sources(sources)
+    data_dir = sources.parent / config.get("data_dir", ".")
+    reviewed_dir = _reviewed_dir(config, reviewed_dir)
+    print(f"Loading sources from {sources} (reviewed export: {reviewed_dir}) …")
+    local_all = load_local(config, data_dir, reviewed_dir)
 
-    # ---- 2. Deduplicate on (french, moore) across all local files -----------
-    seen: set[tuple[str, str]] = set()
-    deduped: list[dict] = []
-    for r in local_all:
-        key = (r["french"], r["moore"])
-        if key not in seen:
-            seen.add(key)
-            deduped.append(r)
-    n_dropped = len(local_all) - len(deduped)
-    if n_dropped:
-        print(f"\n  dedup: dropped {n_dropped:,} duplicate (fr, mos) pairs → {len(deduped):,} unique rows")
-    local_all = deduped
-
-    # ---- Quality filter -----------------------------------------------------
-    print("\nApplying quality filters …")
-    local_all = _apply_quality_filter(local_all)
+    if train_only_sources is None:
+        train_only_sources = tuple(sorted({e["tag"] for e in config["sources"] if e.get("train_only")}))
 
     # Separate train-only rows (dictionary entries etc.)
     train_only = [r for r in local_all if r["source"] in train_only_sources]
@@ -367,10 +408,16 @@ def _parse_args() -> argparse.Namespace:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--data-dir",
-        default="final_data_hf",
+        "--sources",
+        default=str(Path(__file__).resolve().parent / "fr_mos_sources.toml"),
+        metavar="TOML",
+        help="Sources file; its data_dir is relative to it (default: fr_mos_sources.toml).",
+    )
+    parser.add_argument(
+        "--reviewed-dir",
+        default=None,
         metavar="DIR",
-        help="Directory containing local moore-web JSONL files (default: %(default)s).",
+        help="Local reviewed export to use instead of the pinned Hub revision.",
     )
     parser.add_argument(
         "--mafand-repo",
@@ -417,9 +464,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--train-only-sources",
         nargs="+",
-        default=list(_DEFAULT_TRAIN_ONLY),
+        default=None,
         metavar="SOURCE",
-        help="Source tags that must stay in train only (default: %(default)s).",
+        help="Source tags that must stay in train only (default: train_only entries in the sources file).",
     )
     parser.add_argument(
         "--seed",
@@ -433,12 +480,13 @@ def _parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = _parse_args()
     build(
-        data_dir=Path(args.data_dir),
+        sources=Path(args.sources),
+        reviewed_dir=Path(args.reviewed_dir) if args.reviewed_dir else None,
         mafand_repo=None if args.no_mafand else args.mafand_repo,
         output_dir=Path(args.output_dir) if args.output_dir else None,
         dev_size=args.dev_size,
         test_size=args.test_size,
-        train_only_sources=tuple(args.train_only_sources),
+        train_only_sources=tuple(args.train_only_sources) if args.train_only_sources else None,
         push_to_hub=args.push_to_hub,
         hub_private=args.hub_private,
         seed=args.seed,

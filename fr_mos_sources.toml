@@ -1,0 +1,98 @@
+# Sources for build_fr_mos_dataset.py.
+#
+# Each [[sources]] entry reads either `file` (relative to `data_dir`) or
+# `reviewed` (a file in the pinned reviewed-export repo). Order matters:
+# deduplication keeps the first copy of a (french, moore) pair, so reviewed
+# sources come first.
+#
+#   tag         dataset `source` value (several entries may share one)
+#   train_only  keep out of dev/test (dictionary entries, short terms)
+#   filters     per-source thresholds, merged over [filters]
+#   skip        drop rows whose field equals the value
+
+data_dir = "final_data_hf"
+
+# Snapshot of accepted review-app units (`moore-web export-reviewed --push`).
+# Bump `revision` to the sha printed by the push to use a newer export.
+[reviewed]
+repo = "madoss/moore-web-reviewed"
+revision = "a5e716aadfd5e5369c3b582495433d2ca7276fc6"
+
+# Default thresholds. A threshold is skipped for rows without that field,
+# so human-reviewed rows (no scores) are never filtered.
+[filters]
+len_ratio = "> 0.1"
+comet_qe = ">= 0.35"
+laser_score = ">= 0.5"
+
+# ---- Human-reviewed (review app) ------------------------------------------
+
+[[sources]]
+tag = "du-moore"
+reviewed = "du-moore.jsonl"
+
+[[sources]]
+tag = "kade"
+reviewed = "kade.jsonl"
+
+[[sources]]
+tag = "sida"
+reviewed = "sida.jsonl"
+
+[[sources]]
+tag = "udhr"
+reviewed = "udhr.jsonl"
+
+[[sources]]
+tag = "mos-contes-volume-5"
+reviewed = "mos-contes-volume-5.jsonl"
+
+[[sources]]
+tag = "abcburkina-contes"
+reviewed = "abcburkina-contes.jsonl"
+
+[[sources]]
+tag = "messages-nouvel-an"
+reviewed = "messages-nouvel-an.jsonl"
+
+[[sources]]
+tag = "news"
+reviewed = "raamde.jsonl"
+
+# ---- Expert translations -------------------------------------------------------
+
+[[sources]]
+tag = "expert"
+file = "expert_translations.jsonl"
+skip = { qa_check = "flag" }
+
+# ---- Automatically aligned / parsed ------------------------------------------
+
+[[sources]]
+tag = "lexicon"
+file = "lexicon.jsonl"
+
+[[sources]]
+tag = "lexicon_entries"
+file = "lexicon_entries.jsonl"
+train_only = true
+
+[[sources]]
+tag = "conseils"
+file = "conseils_ministres_aligned.jsonl"
+
+# Summary-style translation: below 0.7 LASER pairs are mostly same-topic,
+# not translations (see .agents/logbooks/raamde-news.md).
+[[sources]]
+tag = "news"
+file = "raamde_aligned.jsonl"
+filters = { laser_score = ">= 0.7" }
+
+[[sources]]
+tag = "digital-terms"
+file = "digital-terms.jsonl"
+train_only = true
+
+[[sources]]
+tag = "digital-defs"
+file = "digital-defs.jsonl"
