@@ -888,6 +888,11 @@ def flatten_simple_parser(
     return result
 
 
+# conseil-ministres corpus language codes: two-letter until its ISO 639-3
+# rename (``fr``), three-letter after (``fra``).
+_CONSEILS_LANG = {"fr": "fra", "fra": "fra", "mos": "mos"}
+
+
 def flatten_conseils(
     corpus: list[dict],
     segment: bool = True,
@@ -896,7 +901,8 @@ def flatten_conseils(
 
     Each entry in *corpus* represents one council session.  Only entries that
     have non-empty ``src_sections`` **and** ``tgt_sections`` are included.
-    ``src_lang`` / ``tgt_lang`` identify which side is French vs Mooré.
+    ``src_lang`` / ``tgt_lang`` identify which side is French vs Mooré
+    (``fr``/``fra`` and ``mos``); any other pair raises ``ValueError``.
 
     Each section has a ``title`` string and a ``sentences`` list (already
     sentence-split by the parser).  Titles are optionally re-segmented;
@@ -916,7 +922,8 @@ def flatten_conseils(
 
     for entry in corpus:
         date = entry.get("date", "")
-        src_lang = entry.get("src_lang", "fr")
+        src_lang = _CONSEILS_LANG.get(entry.get("src_lang", "fra"))
+        tgt_lang = _CONSEILS_LANG.get(entry.get("tgt_lang", "mos"))
         src_sections = entry.get("src_sections") or []
         tgt_sections = entry.get("tgt_sections") or []
 
@@ -924,10 +931,15 @@ def flatten_conseils(
             continue
 
         # Map src/tgt to french/moore based on declared language codes
-        if src_lang == "fr":
+        if (src_lang, tgt_lang) == ("fra", "mos"):
             fr_sections, mo_sections = src_sections, tgt_sections
-        else:
+        elif (src_lang, tgt_lang) == ("mos", "fra"):
             mo_sections, fr_sections = src_sections, tgt_sections
+        else:
+            raise ValueError(
+                f"conseils session {date}: expected a French–Mooré pair, "
+                f"got src_lang={entry.get('src_lang')!r}, tgt_lang={entry.get('tgt_lang')!r}"
+            )
 
         parallel = ParallelText(source=f"conseils/{date}")
 

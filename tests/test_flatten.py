@@ -2,7 +2,15 @@
 
 import pytest
 
-from moore_web.flatten import AlignedCorpus, _join_lines, flat_rows_to_long, normalize_fr, normalize_mo, segment_fr
+from moore_web.flatten import (
+    AlignedCorpus,
+    _join_lines,
+    flat_rows_to_long,
+    flatten_conseils,
+    normalize_fr,
+    normalize_mo,
+    segment_fr,
+)
 
 
 class TestJoinLines:
@@ -339,3 +347,27 @@ class TestAlignedCorpusWriteJsonl:
         eng_lines = (tmp_path / "simple_aligned.mos-eng.jsonl").read_text(encoding="utf-8").splitlines()
         assert len(fra_lines) == 2
         assert len(eng_lines) == 1
+
+
+class TestFlattenConseils:
+    FR = [{"number": "I.", "title": "", "sentences": ["Le Conseil a adopté un décret."], "subsections": []}]
+    MO = [{"number": "I.", "title": "", "sentences": ["Minisr-dãmbã gãnega dekre."], "subsections": []}]
+
+    def _session(self, src_lang, tgt_lang, src, tgt):
+        return {"date": "2026-05-21", "src_lang": src_lang, "tgt_lang": tgt_lang, "src_sections": src, "tgt_sections": tgt}
+
+    @pytest.mark.parametrize("fr_code", ["fr", "fra"])
+    def test_french_source_with_two_or_three_letter_code(self, fr_code):
+        ((date, parallel),) = flatten_conseils([self._session(fr_code, "mos", self.FR, self.MO)], segment=False)
+        assert date == "2026-05-21"
+        assert parallel.french == ["Le Conseil a adopté un décret."]
+        assert parallel.moore == ["Minisr-dãmbã gãnega dekre."]
+
+    def test_moore_source(self):
+        ((_, parallel),) = flatten_conseils([self._session("mos", "fra", self.MO, self.FR)], segment=False)
+        assert parallel.french == ["Le Conseil a adopté un décret."]
+        assert parallel.moore == ["Minisr-dãmbã gãnega dekre."]
+
+    def test_other_language_pair_raises(self):
+        with pytest.raises(ValueError, match="French–Mooré"):
+            flatten_conseils([self._session("fra", "fuh", self.FR, self.MO)], segment=False)

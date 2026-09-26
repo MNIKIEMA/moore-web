@@ -27,3 +27,27 @@ The paired PDFs are sequential, mostly single-column government communiqués: do
 - Preserve numbered section headings and ministry names as segmentation anchors; a section can contain several paragraphs and sentences.
 
 The input is a collection of PDFs plus manifests, not one JSON document; the final flattened corpus groups text by date before alignment.
+
+## Parsed corpus (alignment input)
+
+moore-web does not parse the PDFs. The
+[`conseil-ministres`](https://github.com/MNIKIEMA/conseil-ministres) repo does,
+and `just publish` there uploads its output to the private HF dataset repo
+`madoss/conseil-ministres-parsed`, one commit per publish:
+
+- `fra-mos.json`: French–Mooré sessions (`date`, `src_lang`, `tgt_lang`,
+  `src_sections`, `tgt_sections`), the input of `moore-web e2e -s conseils`.
+- `corpus.json`: all five languages per session.
+- `manifest.json`: the parser commit and a sha256 over the archive's PDFs.
+
+Pinned revision: `841e61738c1afb82a96355dc4d0dc17978dd4904` (parser
+`f88c870`, 471 PDFs, 92 French–Mooré sessions). Fetch exactly that parse:
+
+```bash
+hf download madoss/conseil-ministres-parsed --type dataset \
+  --revision 841e61738c1afb82a96355dc4d0dc17978dd4904 --local-dir data/conseils
+```
+
+To update: publish from `conseil-ministres`, then change the revision here.
+Language codes are `fra`/`mos` since the parser's ISO 639-3 rename; older
+copies used `fr`, and `flatten_conseils` accepts both.
