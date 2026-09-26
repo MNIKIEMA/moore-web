@@ -145,6 +145,7 @@ def _finalize_aligned(
     add_len_ratio: bool,
     add_laser_score: bool,
     add_comet_qe: bool,
+    comet_batch_size: int = 8,
     postprocess: Callable[[list[dict]], list[dict]] | None = None,
 ) -> None:
     """Write aligned corpus, optionally annotating and/or pushing to HF Hub."""
@@ -197,6 +198,7 @@ def _finalize_aligned(
                 len_ratio=add_len_ratio,
                 laser=add_laser_score,
                 comet_qe=add_comet_qe,
+                comet_batch_size=comet_batch_size,
             )
             if not add_quality_warn and "quality_warnings" in dataset.column_names:
                 dataset = dataset.remove_columns(["quality_warnings"])
@@ -208,7 +210,7 @@ def _finalize_aligned(
         _write_aligned(aligned, Path(out_str), jsonl)
 
 
-def _dedup_aligned(aligned):
+def _dedup_aligned(aligned, comet_batch_size: int = 8):
     """Deduplicate an AlignedCorpus using COMET-QE and return a new one."""
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
     from moore_web.flatten import AlignedCorpus
@@ -221,7 +223,7 @@ def _dedup_aligned(aligned):
         for p, doc_id in zip(pairs, aligned.doc_ids):
             p["doc_id"] = doc_id
     typer.echo("      Running COMET-QE deduplication…")
-    pairs = deduplicate_by_comet(pairs)
+    pairs = deduplicate_by_comet(pairs, batch_size=comet_batch_size)
     return AlignedCorpus(
         french=[p["fr"] for p in pairs],
         moore=[p["mo"] for p in pairs],
@@ -1048,6 +1050,14 @@ def e2e(
         bool,
         typer.Option("--add-comet-qe", is_flag=True, help="Annotate aligned output with COMET-QE score."),
     ] = False,
+    comet_batch_size: Annotated[
+        int,
+        typer.Option(
+            "--comet-batch-size",
+            min=1,
+            help="COMET-QE batch size for --drop-duplicate and --add-comet-qe; lower it on out-of-memory.",
+        ),
+    ] = 8,
     do_annotate: Annotated[
         bool,
         typer.Option("--annotate", is_flag=True, help="Shorthand: enable all --add-* annotation flags."),
@@ -1129,6 +1139,7 @@ def e2e(
         add_len_ratio=add_len_ratio,
         add_laser_score=add_laser_score,
         add_comet_qe=add_comet_qe,
+        comet_batch_size=comet_batch_size,
         hf_private=hf_private,
     )
 
@@ -1191,7 +1202,7 @@ def e2e(
             source="sida-bilingual-book",
         )
         if drop_duplicate:
-            aligned = _dedup_aligned(aligned)
+            aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
@@ -1263,7 +1274,7 @@ def e2e(
             source="raamde-news",
         )
         if drop_duplicate:
-            aligned = _dedup_aligned(aligned)
+            aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
@@ -1359,7 +1370,7 @@ def e2e(
             source="conseils",
         )
         if drop_duplicate:
-            aligned = _dedup_aligned(aligned)
+            aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
@@ -1376,7 +1387,7 @@ def e2e(
         for reason in skipped:
             typer.echo(f"      skipped {reason}")
         if drop_duplicate:
-            aligned = _dedup_aligned(aligned)
+            aligned = _dedup_aligned(aligned, comet_batch_size)
         out = output or fr_input.with_name(f"udhr_aligned{_ext}")
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
@@ -1415,7 +1426,7 @@ def e2e(
                 source=_TALE_SOURCE,
             )
         if drop_duplicate:
-            aligned = _dedup_aligned(aligned)
+            aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
@@ -1453,7 +1464,7 @@ def e2e(
                 source=_TALES_SOURCE,
             )
         if drop_duplicate:
-            aligned = _dedup_aligned(aligned)
+            aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
 
@@ -1543,7 +1554,7 @@ def e2e(
     aligned = _align(parallel, min_score=min_score)
 
     if drop_duplicate:
-        aligned = _dedup_aligned(aligned)
+        aligned = _dedup_aligned(aligned, comet_batch_size)
 
     _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
 

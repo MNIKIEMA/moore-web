@@ -13,6 +13,7 @@ Typical usage
 
 from __future__ import annotations
 
+import gc
 from collections import defaultdict
 
 
@@ -77,6 +78,10 @@ def deduplicate_by_comet(
     output = model.predict(comet_data, batch_size=batch_size, gpus=gpus)
     for rank, idx in enumerate(dup_indices_list):
         pairs[idx]["comet_qe"] = float(output.scores[rank])
+    # Free the model before the caller loads another copy (e.g. e2e's
+    # --add-comet-qe step): two resident copies ran a laptop out of RAM.
+    del model, output
+    gc.collect()
 
     parent = list(range(len(pairs)))
 
