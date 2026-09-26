@@ -6,6 +6,24 @@ French run; see `docs/raamde-news.md` for the record shape and language
 boundary. Covers `mos` ↔ `fra`. The Mooré is a summary-style rewrite of the
 French, not a sentence-by-sentence translation.
 
+## 2026-09-26 (replacement)
+
+- **Replaced raamde with the SaT + DTW output** via
+  `scripts/export_raamde_sat.py`: 1 406 accepted pairs →
+  `final_data_hf/raamde_aligned.jsonl` (1-1 ≥ 0.7, 2-blocks ≥ 0.75);
+  2 300 pairs ≥ 0.6 not accepted (0.6–0.7 band, 3+ blocks, 2-blocks < 0.75)
+  → `data/review/raamde_units.jsonl`, 401 per-article units with pre-aligned
+  lines (line *i* = one pair; equal counts on both sides); 1 498 pairs < 0.6
+  dropped.
+- **Review DB swapped**: old 409 syntok units, their reviews and 48 drafts
+  (none accepted) deleted, new units imported. `import_units` is
+  insert-or-ignore, so a re-export never updates existing units -- delete
+  the source's rows first. Backups: `reviews.sqlite3.bak-2026-09-26-raamde-sat`,
+  `raamde_units.jsonl.bak-2026-09-26-sat`,
+  `final_data_hf/raamde_aligned.jsonl.bak-2026-09-26-syntok`.
+- **Build filter was too loose for this source**: `build_fr_mos_dataset.py`
+  keeps `laser_score >= 0.5`, which let ~3 600 of the old 3 915 rows through.
+
 ## 2026-09-26
 
 - **`final_data_hf/raamde_aligned.jsonl` is mostly noise.** 3 915 pairs from
