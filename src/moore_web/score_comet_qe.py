@@ -65,7 +65,7 @@ def score_dataset(
         src_field:    Source column name (default: ``"french"``).
         tgt_field:    Target column name (default: ``"moore"``).
         output_field: Name of the new score column. Defaults to
-                      ``"comet_qe_{src_field}_{tgt_field}"`` when ``None``.
+                      ``"comet_qe"`` (one bitext pair per row).
         batch_size:   Rows per inference batch.
         gpus:         Number of GPUs to use (0 = CPU).
         model:        Pre-loaded COMET model; loaded automatically if ``None``.
@@ -74,7 +74,7 @@ def score_dataset(
         Annotated ``datasets.Dataset`` with an added score column.
     """
     if output_field is None:
-        output_field = f"comet_qe_{src_field}_{tgt_field}"
+        output_field = "comet_qe"
     if model is None:
         model = load_model()
 
@@ -110,7 +110,7 @@ def score_file(
         return
 
     if output_field is None:
-        output_field = f"comet_qe_{src_field}_{mt_field}"
+        output_field = "comet_qe"
 
     data = [{"src": r[src_field], "mt": r[mt_field]} for r in rows]
 

@@ -316,9 +316,7 @@ def run_laser(
 ):
     """Add LASER cosine-similarity scores between source and target sentences.
 
-    Adds one column named ``output_field`` (default: ``"laser_{src_lang}_{tgt_lang}"``
-    for a single fixed pair, or ``"laser_score"`` when scoring per-row language
-    pairs -- see ``score_dataset``'s docstring).
+    Adds one column named ``output_field`` (default: ``"laser_score"``).
 
     Unlike :func:`~moore_web.score_mt_datasets.score_aligned_pairs`, this function
     does **not** drop rows — it annotates every row unconditionally.
@@ -333,7 +331,7 @@ def run_laser(
         tgt_lang:     LASER language code for the target encoder. Same fallback as
                       ``src_lang``.
         output_field: Name for the new score column. Defaults to
-                      ``"laser_{src_lang}_{tgt_lang}"`` when ``None``.
+                      ``"laser_score"`` when ``None``.
         encoder_src:  Pre-loaded source encoder; loaded automatically if ``None``.
         encoder_tgt:  Pre-loaded target encoder; loaded automatically if ``None``.
 
@@ -370,7 +368,7 @@ def run_comet_qe(
 ):
     """Add COMET-QE reference-free translation quality scores.
 
-    Adds one column named ``output_field`` (default: ``"comet_qe_{src_field}_{tgt_field}"``).
+    Adds one column named ``output_field`` (default: ``"comet_qe"``).
 
     Uses ``McGill-NLP/ssa-comet-qe`` (~1.5 GB download on first run).
 
@@ -379,7 +377,7 @@ def run_comet_qe(
         src_field:    Source column name (default: ``"french"``).
         tgt_field:    Target column name (default: ``"moore"``).
         output_field: Name for the new score column. Defaults to
-                      ``"comet_qe_{src_field}_{tgt_field}"`` when ``None``.
+                      ``"comet_qe"`` when ``None``.
         batch_size:   Rows per inference batch.
         gpus:         Number of GPUs to use (0 = CPU).
         model:        Pre-loaded COMET model; loaded automatically if ``None``.

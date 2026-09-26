@@ -107,9 +107,9 @@ def score_dataset(
         tgt_lang:     LASER language code for the target encoder. Inferred from
                       ``tgt_field`` when ``None``.
         output_field: Name of the new score column. Defaults to
-                      ``"laser_{src_lang}_{tgt_lang}"`` when ``None`` (single-pair
-                      path), or ``"laser_score"`` in the per-row-language path,
-                      since the pair itself already varies by row.
+                      ``"laser_score"``: every row is one bitext pair, whose
+                      languages are in the row (or implied by the fields), so
+                      the column name doesn't repeat them.
         encoder_src:  Pre-loaded source ``LaserEncoderPipeline``; loaded
                       automatically if ``None``. Ignored in the per-row-language
                       path when more than one distinct language pair is present.
@@ -136,7 +136,7 @@ def score_dataset(
         raise ValueError(f"Cannot infer LASER lang for tgt_field={tgt_field!r}. Pass tgt_lang explicitly.")
 
     if output_field is None:
-        output_field = f"laser_{src_lang}_{tgt_lang}"
+        output_field = "laser_score"
 
     if encoder_src is None or encoder_tgt is None:
         encoder_src, encoder_tgt = load_encoders(src_lang, tgt_lang)

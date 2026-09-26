@@ -371,7 +371,7 @@ class TestRunLaser:
     def test_default_column_name(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
-        assert "laser_fra_mos" in result.column_names
+        assert "laser_score" in result.column_names
 
     def test_custom_output_field(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
@@ -381,18 +381,18 @@ class TestRunLaser:
     def test_laser_score_count_matches_rows(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
-        assert len(result["laser_fra_mos"]) == len(small_dataset)
+        assert len(result["laser_score"]) == len(small_dataset)
 
     def test_laser_score_range(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
-        for score in result["laser_fra_mos"]:
+        for score in result["laser_score"]:
             assert -1.0 <= score <= 1.0
 
     def test_unit_vectors_give_score_one(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
-        for score in result["laser_fra_mos"]:
+        for score in result["laser_score"]:
             assert score == pytest.approx(1.0, abs=1e-3)
 
     def test_preserves_original_columns(self, small_dataset: Dataset, monkeypatch):
@@ -457,7 +457,7 @@ class TestRunCometQe:
     def test_default_column_name(self, small_dataset: Dataset):
         model = self._make_mock_model([0.85, 0.73])
         result = run_comet_qe(small_dataset, model=model)
-        assert "comet_qe_french_moore" in result.column_names
+        assert "comet_qe" in result.column_names
 
     def test_custom_output_field(self, small_dataset: Dataset):
         model = self._make_mock_model([0.85, 0.73])
@@ -467,14 +467,14 @@ class TestRunCometQe:
     def test_comet_qe_values(self, small_dataset: Dataset):
         model = self._make_mock_model([0.85, 0.73])
         result = run_comet_qe(small_dataset, model=model)
-        col = "comet_qe_french_moore"
+        col = "comet_qe"
         assert result[col][0] == pytest.approx(0.85)
         assert result[col][1] == pytest.approx(0.73)
 
     def test_comet_qe_row_count(self, small_dataset: Dataset):
         model = self._make_mock_model([0.85, 0.73])
         result = run_comet_qe(small_dataset, model=model)
-        assert len(result["comet_qe_french_moore"]) == len(small_dataset)
+        assert len(result["comet_qe"]) == len(small_dataset)
 
     def test_passes_correct_fields_to_model(self, small_dataset: Dataset):
         model = self._make_mock_model([0.0, 0.0])
@@ -525,24 +525,24 @@ class TestAnnotate:
     def test_laser_flag(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr(
             "moore_web.annotate.run_laser",
-            lambda ds, **kw: ds.add_column("laser_fra_mos", [0.9] * len(ds)),
+            lambda ds, **kw: ds.add_column("laser_score", [0.9] * len(ds)),
         )
         result = annotate(small_dataset, laser=True)
-        assert "laser_fra_mos" in result.column_names
+        assert "laser_score" in result.column_names
 
     def test_comet_qe_flag(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr(
             "moore_web.annotate.run_comet_qe",
-            lambda ds, **kw: ds.add_column("comet_qe_french_moore", [0.8] * len(ds)),
+            lambda ds, **kw: ds.add_column("comet_qe", [0.8] * len(ds)),
         )
         result = annotate(small_dataset, comet_qe=True)
-        assert "comet_qe_french_moore" in result.column_names
+        assert "comet_qe" in result.column_names
 
     def test_multiple_flags_stack(self, small_dataset: Dataset, monkeypatch):
         monkeypatch.setattr(
             "moore_web.annotate.run_laser",
-            lambda ds, **kw: ds.add_column("laser_fra_mos", [0.9] * len(ds)),
+            lambda ds, **kw: ds.add_column("laser_score", [0.9] * len(ds)),
         )
         result = annotate(small_dataset, quality_warn=True, laser=True, load_wordlists=False)
         assert "quality_warnings" in result.column_names
-        assert "laser_fra_mos" in result.column_names
+        assert "laser_score" in result.column_names
