@@ -9,6 +9,12 @@
 #   train_only  keep out of dev/test (dictionary entries, short terms)
 #   filters     per-source thresholds, merged over [filters]
 #   skip        drop rows whose field equals the value
+#   original_lang  language the pair was translated from (fra/mos), for rows
+#               that don't record it; omitted when unknown (udhr, du-moore,
+#               abcburkina-contes). See ORIGINAL_LANGUAGE in flatten.py and
+#               .agents/logbooks/hf-output-schema.md.
+#   human       rows are human translations (sets the `reviewed` column;
+#               entries read from the reviewed export always set it)
 
 data_dir = "final_data_hf"
 
@@ -33,10 +39,12 @@ reviewed = "du-moore.jsonl"
 
 [[sources]]
 tag = "kade"
+original_lang = "fra"
 reviewed = "kade.jsonl"
 
 [[sources]]
 tag = "sida"
+original_lang = "fra"
 reviewed = "sida.jsonl"
 
 [[sources]]
@@ -45,6 +53,7 @@ reviewed = "udhr.jsonl"
 
 [[sources]]
 tag = "mos-contes-volume-5"
+original_lang = "mos"
 reviewed = "mos-contes-volume-5.jsonl"
 
 [[sources]]
@@ -53,10 +62,12 @@ reviewed = "abcburkina-contes.jsonl"
 
 [[sources]]
 tag = "messages-nouvel-an"
+original_lang = "fra"
 reviewed = "messages-nouvel-an.jsonl"
 
 [[sources]]
 tag = "news"
+original_lang = "fra"
 reviewed = "raamde.jsonl"
 
 # ---- Expert translations -------------------------------------------------------
@@ -64,35 +75,43 @@ reviewed = "raamde.jsonl"
 [[sources]]
 tag = "expert"
 file = "expert_translations.jsonl"
+original_lang = "fra"
+human = true
 skip = { qa_check = "flag" }
 
 # ---- Automatically aligned / parsed ------------------------------------------
 
 [[sources]]
 tag = "lexicon"
+original_lang = "mos"
 file = "lexicon.jsonl"
 
 [[sources]]
 tag = "lexicon_entries"
+original_lang = "mos"
 file = "lexicon_entries.jsonl"
 train_only = true
 
 [[sources]]
 tag = "conseils"
+original_lang = "fra"
 file = "conseils_ministres_aligned.jsonl"
 
 # Summary-style translation: below 0.7 LASER pairs are mostly same-topic,
 # not translations (see .agents/logbooks/raamde-news.md).
 [[sources]]
 tag = "news"
+original_lang = "fra"
 file = "raamde_aligned.jsonl"
 filters = { laser_score = ">= 0.7" }
 
 [[sources]]
 tag = "digital-terms"
+original_lang = "mos"
 file = "digital-terms.jsonl"
 train_only = true
 
 [[sources]]
 tag = "digital-defs"
+original_lang = "mos"
 file = "digital-defs.jsonl"

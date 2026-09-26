@@ -84,3 +84,53 @@ def test_load_local_orders_filters_skips_and_dedups(tmp_path):
         "Trois.",
         "Quatre.",
     ]
+
+
+def test_text_pair_follows_language_codes():
+    assert build._text_pair({"french": " Un. ", "moore": "A."}) == ("Un.", "A.")
+    fra_first = {"source_text": "Un.", "target_text": "A.", "src_lang": "fra", "tgt_lang": "mos"}
+    assert build._text_pair(fra_first) == ("Un.", "A.")
+    mos_first = {"source_text": "A.", "target_text": "Un.", "src_lang": "mos", "tgt_lang": "fra"}
+    assert build._text_pair(mos_first) == ("Un.", "A.")
+    mos_eng = {"source_text": "bagre", "target_text": "cat", "src_lang": "mos", "tgt_lang": "eng"}
+    assert build._text_pair(mos_eng) == ("", "")
+
+
+def test_row_metadata(tmp_path):
+    path = tmp_path / "rows.jsonl"
+    _write_jsonl(
+        path,
+        [
+            # long e2e row: upstream id, doc_id and a recorded direction
+            {"id": "conseils-000001-000", "source_text": "Un.", "target_text": "A.", "src_lang": "fra",
+             "tgt_lang": "mos", "is_source_orig": True, "doc_id": "2024-02-21"},
+            # review export row: id from unit + line, doc_id from unit
+            {"french": "Deux.", "moore": "B.", "source": "sida", "unit": "page-3", "line": 4},
+            # flat row with nothing: hashed id, no document, direction from the argument
+            {"french": "Trois.", "moore": "C."},
+        ],
+    )  # fmt: skip
+    rows = build._load_jsonl(path, source_override="x", original_lang="mos", reviewed=True)
+    assert [(r["id"], r["doc_id"], r["original_lang"], r["reviewed"]) for r in rows] == [
+        ("conseils-000001-000", "2024-02-21", "fra", True),
+        ("sida-page-3-4", "page-3", "mos", True),
+        (rows[2]["id"], None, "mos", True),
+    ]
+    assert rows[2]["id"].startswith("x-")
+    # Stable across loads.
+    assert build._load_jsonl(path, source_override="x")[2]["id"] == rows[2]["id"]
+
+
+def test_reviewed_flag_from_entry(tmp_path):
+    reviewed_dir = tmp_path / "reviewed"
+    _write_jsonl(reviewed_dir / "sida.jsonl", [{"french": "Un.", "moore": "A.", "unit": "u", "line": 0}])
+    _write_jsonl(tmp_path / "data" / "expert.jsonl", [{"source_text": "Deux.", "target_text": "B."}])
+    _write_jsonl(tmp_path / "data" / "auto.jsonl", [{"french": "Trois.", "moore": "C."}])
+    config = _sources(
+        tmp_path,
+        '[[sources]]\ntag = "sida"\nreviewed = "sida.jsonl"\n'
+        '[[sources]]\ntag = "expert"\nfile = "expert.jsonl"\nhuman = true\n'
+        '[[sources]]\ntag = "auto"\nfile = "auto.jsonl"\n',
+    )
+    rows = build.load_local(config, tmp_path / "data", reviewed_dir)
+    assert [(r["source"], r["reviewed"]) for r in rows] == [("sida", True), ("expert", True), ("auto", False)]

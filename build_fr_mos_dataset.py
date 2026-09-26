@@ -29,7 +29,9 @@ The local dev/test are built by stratified sampling over eval-eligible
 sources (``train_only`` entries, or ``--train-only-sources``, stay in
 train).  Remaining local rows go to train.
 
-Output schema:  french | moore | source | laser_score | comet_qe | len_ratio
+Output schema:  id | french | moore | source | original_lang | doc_id | reviewed
+                | laser_score | comet_qe | len_ratio
+(see docs/dataset-splits.md for what the metadata columns mean)
 
 Usage
 -----
@@ -38,7 +40,7 @@ Usage
 
     # Custom split sizes
     python build_fr_mos_dataset.py --output-dir fr_mos_combined \\
-        --dev-size 600 --test-size 600
+        --dev-size 1500 --test-size 1500
 
     # Use a local reviewed export instead of the pinned Hub revision
     moore-web export-reviewed -o data/reviewed
@@ -56,10 +58,11 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 if sys.version_info >= (3, 11):
@@ -114,11 +117,46 @@ def _reviewed_dir(config: dict, override: Path | None) -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def _load_jsonl(path: Path, source_override: str | None = None, skip: dict | None = None) -> list[dict]:
-    """Read a JSONL file, keeping french/moore/source/laser_score/comet_qe/len_ratio.
+def _text_pair(obj: dict) -> tuple[str, str]:
+    """(french, moore) of a flat or long-format row; ``("", "")`` for other pairs.
 
-    Also reads the long ``source_text``/``target_text`` (fra → mos) schema.
-    Rows where any ``skip`` field equals its value are dropped.
+    Long rows put the original language first, so a Mooré-original row has
+    Mooré in ``source_text``.
+    """
+    if "source_text" not in obj:
+        return (obj.get("french") or "").strip(), (obj.get("moore") or "").strip()
+    src, tgt = (obj.get("source_text") or "").strip(), (obj.get("target_text") or "").strip()
+    langs = (obj.get("src_lang", "fra"), obj.get("tgt_lang", "mos"))
+    if langs == ("fra", "mos"):
+        return src, tgt
+    if langs == ("mos", "fra"):
+        return tgt, src
+    return "", ""  # e.g. the mos-eng rows of a trilingual source
+
+
+def _row_id(obj: dict, tag: str, fr: str, mo: str) -> str:
+    """Upstream id, else ``{source}-{unit}-{line}`` (review export), else a text hash."""
+    if obj.get("id"):
+        return str(obj["id"])
+    if obj.get("unit") is not None and obj.get("line") is not None:
+        return f"{obj.get('source', tag)}-{obj['unit']}-{obj['line']}"
+    text = fr + "\t" + mo
+    return f"{tag}-{hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _load_jsonl(
+    path: Path,
+    source_override: str | None = None,
+    skip: dict | None = None,
+    original_lang: str | None = None,
+    reviewed: bool = False,
+) -> list[dict]:
+    """Read a JSONL file into dataset rows (see the output schema above).
+
+    Reads the flat ``french``/``moore`` and the long ``source_text``/
+    ``target_text`` schemas. ``original_lang`` is taken from the row when it
+    records one (``is_source_orig``), else from the argument. Rows where any
+    ``skip`` field equals its value are dropped.
     """
     skip = skip or {}
     rows = []
@@ -130,16 +168,19 @@ def _load_jsonl(path: Path, source_override: str | None = None, skip: dict | Non
             obj = json.loads(line)
             if any(obj.get(field) == value for field, value in skip.items()):
                 continue
-            fr = (obj.get("french") or obj.get("source_text") or "").strip()
-            mo = (obj.get("moore") or obj.get("target_text") or "").strip()
+            fr, mo = _text_pair(obj)
             if not fr or not mo:
                 continue
             src = source_override if source_override is not None else obj.get("source", "unknown")
             rows.append(
                 {
+                    "id": _row_id(obj, src, fr, mo),
                     "french": fr,
                     "moore": mo,
                     "source": src,
+                    "original_lang": obj["src_lang"] if obj.get("is_source_orig") is True else original_lang,
+                    "doc_id": obj.get("doc_id") or obj.get("unit"),
+                    "reviewed": reviewed,
                     "laser_score": obj.get("laser_score"),
                     "comet_qe": obj.get("comet_qe"),
                     "len_ratio": obj.get("len_ratio"),
@@ -205,7 +246,14 @@ def load_local(config: dict, data_dir: Path, reviewed_dir: Path | None) -> list[
         if not path.exists():
             print(f"  [skip] {path} not found")
             continue
-        loaded = _load_jsonl(path, source_override=entry["tag"], skip=entry.get("skip"))
+        loaded = _load_jsonl(
+            path,
+            source_override=entry["tag"],
+            skip=entry.get("skip"),
+            original_lang=entry.get("original_lang"),
+            # Review-app exports are human-checked; `human` marks other human data.
+            reviewed="reviewed" in entry or bool(entry.get("human")),
+        )
         kept = [r for r in loaded if _passes_filter(r, entry["filters"])]
         dropped = f"  (quality filter dropped {len(loaded) - len(kept):,})" if len(kept) < len(loaded) else ""
         print(f"  {path.name} → {entry['tag']}: {len(kept):,} rows{dropped}")
@@ -344,9 +392,15 @@ def build(
                 if fr and mo:
                     target.append(
                         {
+                            "id": _row_id(row, src, fr, mo),
                             "french": fr,
                             "moore": mo,
                             "source": src,
+                            # Professionally translated French news: no media
+                            # publish original articles in Mooré.
+                            "original_lang": "fra",
+                            "doc_id": None,
+                            "reviewed": True,
                             "laser_score": row.get("laser_score"),
                             "comet_qe": row.get("comet_qe"),
                             "len_ratio": row.get("len_ratio"),
@@ -360,6 +414,11 @@ def build(
     final_test = local_test + mafand_test
 
     random.Random(seed).shuffle(final_train)
+
+    id_counts = Counter(r["id"] for r in final_train + final_dev + final_test)
+    dupes = sorted(i for i, n in id_counts.items() if n > 1)
+    if dupes:
+        raise ValueError(f"{len(dupes)} row ids are not unique, e.g. {dupes[:5]}")
 
     print("\nFinal dataset:")
     _print_source_breakdown(final_train, "train")
@@ -452,13 +511,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dev-size",
         type=int,
-        default=500,
+        default=1000,
         help="Target number of local rows allocated to dev (default: %(default)s).",
     )
     parser.add_argument(
         "--test-size",
         type=int,
-        default=500,
+        default=1000,
         help="Target number of local rows allocated to test (default: %(default)s).",
     )
     parser.add_argument(

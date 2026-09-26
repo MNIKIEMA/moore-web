@@ -4,6 +4,24 @@ Assembles the French–Mooré training dataset from every source: automatic
 outputs in `final_data_hf/`, expert translations, and accepted review-app
 units. Cross-source plumbing, so it has no single parser/source.
 
+## 2026-09-26 (row metadata)
+
+- **Rows now carry `id`, `original_lang`, `doc_id`, `reviewed`** (meaning in
+  `docs/dataset-splits.md`, which also holds the not-yet-implemented split
+  proposal). `id` must stay stable across rebuilds -- it will pin a frozen
+  dev/test -- so it is the upstream id, `{source}-{unit}-{line}` for review
+  rows, or a hash of the text, never a position; the build fails on a
+  duplicate id. `original_lang` comes from the row's `is_source_orig`, else
+  the entry's `original_lang` in `fr_mos_sources.toml`; left out where the
+  direction is undocumented (udhr, du-moore, abcburkina-contes).
+- **The loader assumed long rows were French-first.** `source_text` was always
+  read as French, so a Mooré-original long file would have swapped the sides.
+  It now follows `src_lang`/`tgt_lang` and skips non fra–mos rows. No current
+  input was affected (conseils and expert are French-first).
+- **raamde lost its article URL** in `export_raamde_sat.py`; it now keeps
+  `doc_id` (file regenerated, same 1 406 pairs; backup
+  `raamde_aligned.jsonl.bak-2026-09-26-sat-no-docid`).
+
 ## 2026-09-26
 
 - **The build never reads the review DB.** The DB is a live workspace

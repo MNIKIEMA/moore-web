@@ -6,6 +6,8 @@ Historical fixes and their PDF evidence: [resolved issues](resolved-issues.md).
 
 How to review aligned units in the annotation app: [review guidelines](review-guidelines.md).
 
+How the training dataset should be split, and its row metadata: [dataset split strategy](dataset-splits.md).
+
 | Format | Parser/source | Notes |
 | --- | --- | --- |
 | [One-column dictionary](one-column-dictionary.md) | `simple` | Block-ordered dictionary entries |

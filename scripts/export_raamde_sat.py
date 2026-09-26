@@ -51,7 +51,15 @@ def main() -> None:
     final, units = [], {}
     for r in rows:
         if accepted(r):
-            final.append({"french": r["french"], "moore": r["moore"], "source": "news", "laser_score": r["laser_score"]})
+            final.append(
+                {
+                    "french": r["french"],
+                    "moore": r["moore"],
+                    "source": "news",
+                    "doc_id": r["doc_id"],
+                    "laser_score": r["laser_score"],
+                }
+            )
         elif r["laser_score"] >= REVIEW_MIN:
             unit = units.setdefault(r["doc_id"], {"fra": [], "mos": []})
             unit["fra"].append(r["french"])
