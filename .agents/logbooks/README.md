@@ -16,6 +16,8 @@ and fixes are driven by *document format*, not by language -- a fix in
 - [`udhr.md`](udhr.md) -- `udhr.py` / `cli.py::e2e -s udhr` (Universal Declaration of Human Rights, paired by article).
 - [`messages-nouvel-an.md`](messages-nouvel-an.md) -- `new_year_message.py` (presidential New Year address, curated text files).
 - [`moore-tales.md`](moore-tales.md) -- `moore_tales_parser.py` / `cli.py::e2e -s moore-tales` (mooreburkina.com Contes volume 5, 30 tales, Mooré page + French page).
+- [`raamde-news.md`](raamde-news.md) -- `segment_news_data.py` / `flatten.py::flatten_news_per_entry` / `scripts/compare_raamde_splitters.py` / `scripts/align_raamde_sat.py` (raamde-bf.net bilingual news, summary-style Mooré).
+- [`expert-translations.md`](expert-translations.md) -- `expert_translation_parser.py` / `moore-web parse-expert-translations` (expert-translated seed batch PDF, already paired).
 - [`hf-output-schema.md`](hf-output-schema.md) -- `flatten.py::AlignedCorpus`/`flat_rows_to_long`, `annotate.py`, `cli.py::_finalize_aligned` (the shared corpus-output layer: long-format row schema, `is_source_orig`/`ORIGINAL_LANGUAGE`, `doc_id`, per-language-pair file/config splitting).
 
 Add a new logbook when a new source or parser module is added, not a new language.
@@ -24,8 +26,8 @@ Add a new logbook when a new source or parser module is added, not a new languag
 
 | Language | ISO | Logbooks |
 | --- | --- | --- |
-| Mooré | `mos` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, hf-output-schema |
-| French | `fra` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, hf-output-schema |
+| Mooré | `mos` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, hf-output-schema |
+| French | `fra` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, hf-output-schema |
 
 ## Entry format
 
