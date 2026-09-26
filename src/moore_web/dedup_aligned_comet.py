@@ -13,7 +13,6 @@ Typical usage
 
 from __future__ import annotations
 
-import gc
 from collections import defaultdict
 
 
@@ -22,7 +21,7 @@ def deduplicate_by_comet(
     src_key: str = "fr",
     mt_key: str = "mo",
     batch_size: int = 8,
-    gpus: int = 0,
+    gpus: int | None = None,
 ) -> list[dict]:
     """Remove duplicate aligned pairs, keeping the highest COMET-QE score.
 
@@ -38,7 +37,8 @@ def deduplicate_by_comet(
         src_key:    Key for the source text (default ``"fr"``).
         mt_key:     Key for the MT/target text (default ``"mo"``).
         batch_size: COMET inference batch size.
-        gpus:       Number of GPUs to use (0 = CPU).
+        gpus:       Number of GPUs to use (0 = CPU); ``None`` uses the GPU when
+                    CUDA is available.
 
     Returns:
         Deduplicated list of pair dicts.  Scored pairs gain a ``"comet_qe"``
@@ -46,7 +46,7 @@ def deduplicate_by_comet(
     """
     # TODO: Can we vectorize this to be faster?
     # is this better than google/metricx-24-hybrid-xl-v2p6 mentionned in Omnilingual MT?
-    from comet import download_model, load_from_checkpoint
+    from moore_web.score_comet_qe import load_model
 
     src_to_indices: dict[str, list[int]] = defaultdict(list)
     mt_to_indices: dict[str, list[int]] = defaultdict(list)
@@ -69,19 +69,19 @@ def deduplicate_by_comet(
 
     print(f"Found {len(duplicate_indices)} pairs involved in duplications. Loading COMET-QE model...")
 
-    model_path = download_model("McGill-NLP/ssa-comet-qe")
-    model = load_from_checkpoint(model_path)
+    # Shared with --add-comet-qe (load_model is cached): keep it loaded.
+    model = load_model()
+    if gpus is None:
+        import torch
+
+        gpus = 1 if torch.cuda.is_available() else 0
 
     dup_indices_list = sorted(duplicate_indices)
     comet_data = [{"src": pairs[i][src_key], "mt": pairs[i][mt_key]} for i in dup_indices_list]
 
-    output = model.predict(comet_data, batch_size=batch_size, gpus=gpus)
+    output = model.predict(comet_data, batch_size=batch_size, gpus=gpus, num_workers=0)
     for rank, idx in enumerate(dup_indices_list):
         pairs[idx]["comet_qe"] = float(output.scores[rank])
-    # Free the model before the caller loads another copy (e.g. e2e's
-    # --add-comet-qe step): two resident copies ran a laptop out of RAM.
-    del model, output
-    gc.collect()
 
     parent = list(range(len(pairs)))
 

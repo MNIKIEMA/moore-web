@@ -1231,7 +1231,7 @@ def e2e(
             typer.echo("      Running language ID…")
             corpus = annotate_text_units(corpus)
 
-        from moore_web.flatten import AlignedCorpus, flatten_news_per_entry
+        from moore_web.flatten import flatten_news_per_entry
         from moore_web.segment_news_data import segment_entries
 
         corpus = segment_entries(corpus)
@@ -1241,38 +1241,8 @@ def e2e(
         typer.echo(f"      {len(article_parallels)} bilingual articles found.")
 
         typer.echo("[3/3] Aligning per article with LASER + FastDTW…")
-        from laser_encoders import LaserEncoderPipeline
-
-        from moore_web.align_corpus import align_from_embeddings as _align_from_embs
-
-        laser_fr = LaserEncoderPipeline(lang="fra")
-        laser_mo = LaserEncoderPipeline(lang="mos")
-
-        all_fr_sents = [s for _, dp in article_parallels for s in dp.french]
-        all_mo_sents = [s for _, dp in article_parallels for s in dp.moore]
-        all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
-        all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
-
-        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
-        fr_offset = mo_offset = 0
-        for url, dp in article_parallels:
-            fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
-            aligned_dp = _align_from_embs(
-                dp, all_fr_embs[fr_offset:fr_end], all_mo_embs[mo_offset:mo_end], min_score=min_score
-            )
-            fr_offset, mo_offset = fr_end, mo_end
-            all_fr.extend(aligned_dp.french)
-            all_mo.extend(aligned_dp.moore)
-            all_scores.extend(aligned_dp.scores)
-            all_doc_ids.extend([url] * len(aligned_dp.french))
-
-        aligned = AlignedCorpus(
-            french=all_fr,
-            moore=all_mo,
-            scores=all_scores,
-            doc_ids=all_doc_ids,
-            source="raamde-news",
-        )
+        # LASER lives only inside _align_per_unit, so it is freed before COMET loads.
+        aligned = _align_per_unit(article_parallels, min_score=min_score, source="raamde-news")
         if drop_duplicate:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
@@ -1326,7 +1296,7 @@ def e2e(
         if input is None:
             _err("--input is required for source 'conseils'.")
             raise typer.Exit(1)
-        from moore_web.flatten import AlignedCorpus, flatten_conseils
+        from moore_web.flatten import flatten_conseils
 
         typer.echo(f"[1/2] Flattening conseil-des-ministres corpus: {input}")
         corpus = json.loads(input.read_text(encoding="utf-8"))
@@ -1336,39 +1306,10 @@ def e2e(
 
         # Align each date independently, then concatenate.
         typer.echo("[2/2] Aligning per date with LASER + FastDTW…")
-        from laser_encoders import LaserEncoderPipeline
-
-        from moore_web.align_corpus import align_from_embeddings as _align_from_embs
-
-        laser_fr = LaserEncoderPipeline(lang="fra")
-        laser_mo = LaserEncoderPipeline(lang="mos")
-
-        all_fr_sents = [s for _, dp in date_parallels for s in dp.french]
-        all_mo_sents = [s for _, dp in date_parallels for s in dp.moore]
-        all_fr_embs = laser_fr.encode_sentences(all_fr_sents, normalize_embeddings=True)
-        all_mo_embs = laser_mo.encode_sentences(all_mo_sents, normalize_embeddings=True)
-
-        all_fr, all_mo, all_scores, all_doc_ids = [], [], [], []
-        fr_offset = mo_offset = 0
         for date, dp in date_parallels:
             typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
-            fr_end, mo_end = fr_offset + len(dp.french), mo_offset + len(dp.moore)
-            aligned_dp = _align_from_embs(
-                dp, all_fr_embs[fr_offset:fr_end], all_mo_embs[mo_offset:mo_end], min_score=min_score
-            )
-            fr_offset, mo_offset = fr_end, mo_end
-            all_fr.extend(aligned_dp.french)
-            all_mo.extend(aligned_dp.moore)
-            all_scores.extend(aligned_dp.scores)
-            all_doc_ids.extend([date] * len(aligned_dp.french))
-
-        aligned = AlignedCorpus(
-            french=all_fr,
-            moore=all_mo,
-            scores=all_scores,
-            doc_ids=all_doc_ids,
-            source="conseils",
-        )
+        # LASER lives only inside _align_per_unit, so it is freed before COMET loads.
+        aligned = _align_per_unit(date_parallels, min_score=min_score, source="conseils")
         if drop_duplicate:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)

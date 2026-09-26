@@ -32,6 +32,7 @@ Notes
 
 from __future__ import annotations
 
+import functools
 import json
 import statistics
 from pathlib import Path
@@ -42,7 +43,16 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 
+@functools.lru_cache(maxsize=1)
 def load_model():
+    """Load McGill-NLP/ssa-comet-qe once per process.
+
+    Cached so e2e's --drop-duplicate and --add-comet-qe share one copy: a
+    second load (≈2.2 GB) on top of a freed first one ran a 7.5 GB laptop out
+    of RAM, since freed model memory is only partly returned to the OS.
+    Callers pass ``num_workers=0`` to ``predict``: COMET's default forks
+    ``2 * gpus`` DataLoader workers, each copying the multi-GB process.
+    """
     from comet import download_model, load_from_checkpoint
 
     print("Loading McGill-NLP/ssa-comet-qe …")
@@ -80,7 +90,7 @@ def score_dataset(
 
     def _score_batch(batch: dict) -> dict:
         data = [{"src": s, "mt": t} for s, t in zip(batch[src_field], batch[tgt_field])]
-        output = model.predict(data, batch_size=batch_size, gpus=gpus)
+        output = model.predict(data, batch_size=batch_size, gpus=gpus, num_workers=0)
         batch[output_field] = [round(float(s), 4) for s in output.scores]
         return batch
 
@@ -115,7 +125,7 @@ def score_file(
     data = [{"src": r[src_field], "mt": r[mt_field]} for r in rows]
 
     print(f"Scoring {len(data)} pairs from {path.name} …")
-    output = model.predict(data, batch_size=batch_size, gpus=gpus)
+    output = model.predict(data, batch_size=batch_size, gpus=gpus, num_workers=0)
 
     for row, qe_score in zip(rows, output.scores):
         row[output_field] = round(float(qe_score), 4)
