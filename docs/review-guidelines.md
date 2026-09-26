@@ -68,6 +68,61 @@ Favour **the smallest link whose two sides mean the same thing**.
 - It needs a neighbouring sentence: merge.
 - It needs content that exists nowhere on the other side: reject that part.
 
+### Where a unit can be split
+
+Split at **every** boundary where both sides have said the same thing before
+the cut, and therefore the same thing after it. Punctuation only shows where a
+cut *might* go; the meaning decides whether it can.
+
+To test a cut, list the sentence boundaries on each side, then check that
+everything before the cut on one side is translated by everything before the
+cut on the other.
+
+Example (facilitator manual):
+
+> **fra:** (Discutez cette question en petits groupes, notez les réponses sur
+> une feuille. Partagez-les en grand groupe; si l'un des points ci-dessous
+> n'est pas mentionné, ajoutez-le.)
+>
+> **mos:** (Pʋɩ taab sul bõones n sõs ne taab ne sokr kãngã. Gʋls-y yãmb
+> leokdsa sebr zugu. Wa-y n naag taab n pʋɩ; Goam niis sẽn pʋgda sãn n ka
+> zind neba leokdsẽ, bɩ y paas-a.)
+
+| Meaning | French | Mooré |
+| --- | --- | --- |
+| discuss, in small groups | Discutez… en petits groupes | sõs ne taab… sul bõones |
+| write the answers on a sheet | notez les réponses sur une feuille | Gʋls-y yãmb leokdsa sebr zugu |
+| share with the whole group | Partagez-les en grand groupe | Wa-y n naag taab n pʋɩ |
+| add missing points | si l'un des points… ajoutez-le | Goam niis… bɩ y paas-a |
+
+- After *kãngã.*: the Mooré has only said "discuss"; the French is still
+  mid-sentence (*…groupes, notez…*). No matching boundary, so no cut.
+- After *zugu.* / *feuille.*: both sides have said "discuss + write the
+  answers". Valid cut.
+
+Result: **two links**, a 2:1 (*Discutez… feuille.* ↔ *Pʋɩ… kãngã. Gʋls-y…
+zugu.*) and a 1:1 (*Partagez-les… ajoutez-le.)* ↔ *Wa-y… paas-a.)*). Never
+three: *notez les réponses sur une feuille* has no French sentence of its own
+to pair with *Gʋls-y yãmb leokdsa sebr zugu.*
+
+**Split by default.** Parallel corpora are built from the smallest units that
+translate each other (alignment "beads": 1:1, 2:1, 1:2…). Smaller links keep
+errors local, match sentence-level test sets (Bouquet, FLORES+) and stay under
+training length limits. Nothing is lost: the unit and line order let
+paragraphs be rebuilt for document-level training, while a merged link can't
+be split again later.
+
+**Keep together when:**
+
+- there is no clean shared boundary (the translation is restructured or
+  summarised);
+- a piece would be a fragment that only makes sense attached, such as a list
+  header (*Les objectifs sont :*) or a one- or two-word leftover;
+- you are unsure the two halves match exactly: one correct larger link is
+  better than two slightly wrong small ones.
+
+Don't split just to reach 1:1; a 2:1 link is a correct result.
+
 ## Reported speech
 
 A quote is a natural unit: one speaker, one turn, one pair of guillemets.
@@ -221,8 +276,12 @@ it by hand, and check whether `segmentation` tags point to a splitter bug.
   errors.
 - Post & Junczys-Dowmunt (2023), *Escaping the sentence-level paradigm in
   machine translation*: keep document boundaries and order in training data.
+- Gale & Church (1993), *A program for aligning sentences in bilingual
+  corpora*: alignment as a sequence of minimal "beads" (1:1, 1:2, 2:1, …).
 - Thompson & Koehn (2019), *Vecalign*: real translations need n:m alignment,
   not forced 1:1.
+- Liu & Zhu (2022), *Bertalign*: embedding-based sentence alignment that
+  also outputs many-to-many beads.
 - Kreutzer et al. (2022), *Quality at a Glance*: misalignment is one of the main
   faults in low-resource web corpora.
 - Thai et al. (2022), *Exploring Document-Level Literary Machine Translation
