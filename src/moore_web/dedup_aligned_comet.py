@@ -9,11 +9,81 @@ Typical usage
 -------------
 >>> from moore_web.dedup_aligned_comet import deduplicate_by_comet
 >>> clean = deduplicate_by_comet(aligned_pairs)
+
+When every pair already has a score (e.g. e2e with both ``--drop-duplicate``
+and ``--add-comet-qe`` scores everything first), use
+:func:`deduplicate_by_score`, which loads no model.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Callable, Hashable
+
+
+def duplicate_groups(
+    pairs: list[dict],
+    src_key: str = "fr",
+    mt_key: str = "mo",
+    group_key: Callable[[dict], Hashable] | None = None,
+) -> list[list[int]]:
+    """Return the indices of each duplicate group (components of 2+ pairs).
+
+    Two pairs are in the same group when they share the same ``src_key`` text
+    **or** the same ``mt_key`` text. Connected components are built with
+    union-find so that transitive duplicates (A shares src with B, B shares mt
+    with C) end up together. ``group_key`` restricts matching to pairs with the
+    same key, e.g. the language pair when rows mix mos-fra and mos-eng.
+    """
+    group_key = group_key or (lambda pair: None)
+    by_text: dict[tuple, list[int]] = defaultdict(list)
+    for idx, pair in enumerate(pairs):
+        by_text[(group_key(pair), "src", pair[src_key])].append(idx)
+        by_text[(group_key(pair), "mt", pair[mt_key])].append(idx)
+
+    parent = list(range(len(pairs)))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for indices in by_text.values():
+        for i in indices[1:]:
+            parent[_find(i)] = _find(indices[0])
+
+    components: dict[int, list[int]] = defaultdict(list)
+    for idx in range(len(pairs)):
+        components[_find(idx)].append(idx)
+    return [members for members in components.values() if len(members) > 1]
+
+
+def deduplicate_by_score(
+    pairs: list[dict],
+    src_key: str = "fr",
+    mt_key: str = "mo",
+    score_key: str = "comet_qe",
+    group_key: Callable[[dict], Hashable] | None = None,
+) -> list[dict]:
+    """Keep the highest ``score_key`` pair of each duplicate group; loads no model.
+
+    Every pair in a duplicate group must already have ``score_key``. See
+    :func:`duplicate_groups` for what counts as a duplicate.
+    """
+    indices_to_drop: set[int] = set()
+    for members in duplicate_groups(pairs, src_key, mt_key, group_key):
+        best = max(members, key=lambda i: pairs[i][score_key])
+        indices_to_drop.update(i for i in members if i != best)
+
+    result = [p for i, p in enumerate(pairs) if i not in indices_to_drop]
+    print(f"Removed {len(indices_to_drop)} duplicate pairs. {len(result)} pairs remaining.")
+    # TODO: Save dropped duplicate groups to a JSONL file for manual inspection.
+    #       Each line should contain the full group (all members with their scores)
+    #       so it's easy to audit whether the right pair was kept and to
+    #       understand the origin of the duplicates (e.g. boilerplate, scraper
+    #       re-fetches, segmentation boundary errors).
+    return result
 
 
 def deduplicate_by_comet(
@@ -25,11 +95,8 @@ def deduplicate_by_comet(
 ) -> list[dict]:
     """Remove duplicate aligned pairs, keeping the highest COMET-QE score.
 
-    Two pairs are considered part of the same duplicate *group* when they share
-    the same ``src_key`` text **or** the same ``mt_key`` text (checked on both
-    sides).  Connected components are built with union-find so that transitive
-    duplicates (A shares src with B, B shares mt with C) are handled correctly.
-    Within each component only the pair with the highest COMET-QE score is kept.
+    Only pairs that belong to a duplicate group are scored (see
+    :func:`duplicate_groups`); the rest are returned untouched.
 
     Args:
         pairs:      List of dicts, each with at least ``src_key`` and
@@ -48,26 +115,13 @@ def deduplicate_by_comet(
     # is this better than google/metricx-24-hybrid-xl-v2p6 mentionned in Omnilingual MT?
     from moore_web.score_comet_qe import load_model
 
-    src_to_indices: dict[str, list[int]] = defaultdict(list)
-    mt_to_indices: dict[str, list[int]] = defaultdict(list)
-
-    for idx, pair in enumerate(pairs):
-        src_to_indices[pair[src_key]].append(idx)
-        mt_to_indices[pair[mt_key]].append(idx)
-
-    duplicate_indices: set[int] = set()
-    for indices in src_to_indices.values():
-        if len(indices) > 1:
-            duplicate_indices.update(indices)
-    for indices in mt_to_indices.values():
-        if len(indices) > 1:
-            duplicate_indices.update(indices)
-
-    if not duplicate_indices:
+    groups = duplicate_groups(pairs, src_key, mt_key)
+    if not groups:
         print("No duplicates found — returning original list unchanged.")
         return pairs
 
-    print(f"Found {len(duplicate_indices)} pairs involved in duplications. Loading COMET-QE model...")
+    dup_indices_list = sorted(i for members in groups for i in members)
+    print(f"Found {len(dup_indices_list)} pairs involved in duplications. Loading COMET-QE model...")
 
     # Shared with --add-comet-qe (load_model is cached): keep it loaded.
     model = load_model()
@@ -76,48 +130,9 @@ def deduplicate_by_comet(
 
         gpus = 1 if torch.cuda.is_available() else 0
 
-    dup_indices_list = sorted(duplicate_indices)
     comet_data = [{"src": pairs[i][src_key], "mt": pairs[i][mt_key]} for i in dup_indices_list]
-
     output = model.predict(comet_data, batch_size=batch_size, gpus=gpus, num_workers=0)
     for rank, idx in enumerate(dup_indices_list):
         pairs[idx]["comet_qe"] = float(output.scores[rank])
 
-    parent = list(range(len(pairs)))
-
-    def _find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def _union(a: int, b: int) -> None:
-        parent[_find(a)] = _find(b)
-
-    for indices in src_to_indices.values():
-        for i in range(1, len(indices)):
-            _union(indices[0], indices[i])
-
-    for indices in mt_to_indices.values():
-        for i in range(1, len(indices)):
-            _union(indices[0], indices[i])
-
-    component: dict[int, list[int]] = defaultdict(list)
-    for idx in duplicate_indices:
-        component[_find(idx)].append(idx)
-
-    indices_to_drop: set[int] = set()
-    for members in component.values():
-        if len(members) < 2:
-            continue
-        best = max(members, key=lambda i: pairs[i].get("comet_qe", -1.0))
-        indices_to_drop.update(i for i in members if i != best)
-
-    result = [p for i, p in enumerate(pairs) if i not in indices_to_drop]
-    print(f"Removed {len(indices_to_drop)} duplicate pairs. {len(result)} pairs remaining.")
-    # TODO: Save dropped duplicate groups to a JSONL file for manual inspection.
-    #       Each line should contain the full group (all members with their comet_qe
-    #       scores) so it's easy to audit whether the right pair was kept and to
-    #       understand the origin of the duplicates (e.g. boilerplate, scraper
-    #       re-fetches, segmentation boundary errors).
-    return result
+    return deduplicate_by_score(pairs, src_key, mt_key, score_key="comet_qe")

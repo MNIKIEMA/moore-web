@@ -146,9 +146,16 @@ def _finalize_aligned(
     add_laser_score: bool,
     add_comet_qe: bool,
     comet_batch_size: int = 8,
+    drop_duplicate_by_comet_qe: bool = False,
     postprocess: Callable[[list[dict]], list[dict]] | None = None,
 ) -> None:
-    """Write aligned corpus, optionally annotating and/or pushing to HF Hub."""
+    """Write aligned corpus, optionally annotating and/or pushing to HF Hub.
+
+    ``drop_duplicate_by_comet_qe`` deduplicates after annotation using the
+    ``comet_qe`` scores it added, so COMET runs once (needs ``add_comet_qe``).
+    """
+    if drop_duplicate_by_comet_qe and not add_comet_qe:
+        raise ValueError("drop_duplicate_by_comet_qe needs add_comet_qe")
     out_str = str(out)
     needs_annotation = any(
         [add_lang_id, add_consistency, add_quality_warn, add_len_ratio, add_laser_score, add_comet_qe]
@@ -205,13 +212,30 @@ def _finalize_aligned(
             if not add_consistency and "identification_consistency" in dataset.column_names:
                 dataset = dataset.remove_columns(["identification_consistency"])
 
+        if drop_duplicate_by_comet_qe:
+            from moore_web.dedup_aligned_comet import deduplicate_by_score
+
+            typer.echo("      Dropping duplicates by comet_qe…")
+            rows = deduplicate_by_score(
+                dataset.to_list(),
+                src_key="source_text",
+                mt_key="target_text",
+                score_key="comet_qe",
+                group_key=lambda row: (row["src_lang"], row["tgt_lang"]),
+            )
+            dataset = Dataset.from_list(rows)
+
         _ann.save_data(dataset, out_str, private=hf_private)
     else:
         _write_aligned(aligned, Path(out_str), jsonl)
 
 
 def _dedup_aligned(aligned, comet_batch_size: int = 8):
-    """Deduplicate an AlignedCorpus using COMET-QE and return a new one."""
+    """Deduplicate an AlignedCorpus using COMET-QE and return a new one.
+
+    Only for --drop-duplicate without --add-comet-qe; with both,
+    _finalize_aligned deduplicates on the annotation scores instead.
+    """
     from moore_web.dedup_aligned_comet import deduplicate_by_comet
     from moore_web.flatten import AlignedCorpus
 
@@ -1140,6 +1164,9 @@ def e2e(
         add_laser_score=add_laser_score,
         add_comet_qe=add_comet_qe,
         comet_batch_size=comet_batch_size,
+        # With --add-comet-qe every pair gets scored anyway, so dedup reuses
+        # those scores after annotation instead of scoring duplicates first.
+        drop_duplicate_by_comet_qe=drop_duplicate and add_comet_qe,
         hf_private=hf_private,
     )
 
@@ -1201,7 +1228,7 @@ def e2e(
             doc_ids=all_doc_ids,
             source="sida-bilingual-book",
         )
-        if drop_duplicate:
+        if drop_duplicate and not add_comet_qe:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
@@ -1243,7 +1270,7 @@ def e2e(
         typer.echo("[3/3] Aligning per article with LASER + FastDTW…")
         # LASER lives only inside _align_per_unit, so it is freed before COMET loads.
         aligned = _align_per_unit(article_parallels, min_score=min_score, source="raamde-news")
-        if drop_duplicate:
+        if drop_duplicate and not add_comet_qe:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
@@ -1310,7 +1337,7 @@ def e2e(
             typer.echo(f"      {date}: FR={len(dp.french)}  MO={len(dp.moore)}")
         # LASER lives only inside _align_per_unit, so it is freed before COMET loads.
         aligned = _align_per_unit(date_parallels, min_score=min_score, source="conseils")
-        if drop_duplicate:
+        if drop_duplicate and not add_comet_qe:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
@@ -1327,7 +1354,7 @@ def e2e(
         aligned, skipped = pair_udhr_files(fr_input, mo_input, segment=segment)
         for reason in skipped:
             typer.echo(f"      skipped {reason}")
-        if drop_duplicate:
+        if drop_duplicate and not add_comet_qe:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         out = output or fr_input.with_name(f"udhr_aligned{_ext}")
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
@@ -1366,7 +1393,7 @@ def e2e(
                 doc_ids=[u.id for u in units],
                 source=_TALE_SOURCE,
             )
-        if drop_duplicate:
+        if drop_duplicate and not add_comet_qe:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
@@ -1404,7 +1431,7 @@ def e2e(
                 doc_ids=[t.id for t in tales],
                 source=_TALES_SOURCE,
             )
-        if drop_duplicate:
+        if drop_duplicate and not add_comet_qe:
             aligned = _dedup_aligned(aligned, comet_batch_size)
         _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
         return
@@ -1494,7 +1521,7 @@ def e2e(
     typer.echo("[3/3] Aligning with LASER + FastDTW…")
     aligned = _align(parallel, min_score=min_score)
 
-    if drop_duplicate:
+    if drop_duplicate and not add_comet_qe:
         aligned = _dedup_aligned(aligned, comet_batch_size)
 
     _finalize_aligned(aligned, out, jsonl, **_ann_kwargs)
