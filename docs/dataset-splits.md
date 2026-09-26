@@ -47,22 +47,82 @@ and test. Two problems follow:
    written in the source language, since translated source text
    ("translationese") gives optimistic scores.
 
-Sizes: dev and test target 1 000 local rows each (the build default since
-2026-09-26, was 500), spread over many documents; external sets add about
-1 000 more (FLORES+ devtest has 1 012).
+Sizes: the current random split defaults to 1 000 dev and 1 000 test rows,
+but that doesn't carry over: human-quality data is only about 3 100 rows (see
+below), so the local sets will be smaller and the external benchmarks carry
+most of the evaluation. Once dev/test are frozen, their size is fixed when the
+id list is made, not by `--dev-size`/`--test-size` on every build.
+
+## Decisions (2026-09-26)
+
+- **Small local test, Bouquet as the main external benchmark.** Local dev
+  roughly 300–500 and test roughly 500–800 rows, for an in-domain view;
+  Bouquet `fra-mos` (1 358 sentences: dev 504, test 854; human-translated,
+  independent of our data) carries the main comparison, with FLORES+ as a
+  second external set. External sets are never used for training.
+- **Unreviewed sources stay in train, not in dev/test.** conseils, raamde,
+  the lexicon and the digital glossary make up about 35 000 of 38 400 rows
+  and train fine with their per-source filters, but an automatic reference
+  can be a wrong translation (64 % of the old raamde pairs were), which makes
+  scores meaningless.
+- **Cover their domains by reviewing whole documents.** To get
+  administration and news into dev/test, review a few whole documents in the
+  review app: 3–5 conseils sessions from different periods (high-score ones
+  review fastest) and 10–20 raamde articles (already imported; expect to
+  reject lines, the Mooré is summary-style). Once accepted they are reviewed
+  data and can enter dev/test by document. Dictionaries and glossaries stay
+  train-only.
+
+| Source | Train | Local dev/test |
+| --- | --- | --- |
+| Reviewed (du-moore, kade, tales, sida, udhr, …) | yes | yes |
+| Expert translations | yes | yes (one PDF: goes to a single side) |
+| conseils, raamde (not reviewed) | yes, filtered | only documents reviewed in the app |
+| Lexicon, digital glossary | yes | no |
+| Bouquet, FLORES+ | never | external test |
+
+Human-quality rows available today (reviewed export + expert): du-moore 936,
+kade 797, tales 748, expert 347, sida 140, udhr 66, messages-nouvel-an 51,
+abcburkina-contes 47, about 3 130 in total.
+
+## Dev and test stay fixed across releases
+
+Both are frozen by `id` and change only deliberately, as a major version:
+
+- **A seed doesn't freeze a split.** The build shuffles each source's rows and
+  cuts; adding data changes the shuffled list, so the same seed (42) picks
+  different rows. Re-seeding per release means a new dev every release.
+- **Comparability.** Dev picks checkpoints and settings; if it changes
+  between releases, a score change can't be told apart from a data change.
+- **Leakage.** Rows in one release's train could land in the next release's
+  dev, so older models would be scored on sentences they trained on.
+
+| Event | dev/test | Version |
+| --- | --- | --- |
+| New data (sessions, reviewed units) | unchanged; new data goes to train | minor |
+| A dev/test pair found wrong, removed or fixed | edited in place, noted in the changelog | patch |
+| Enlarging or redesigning dev/test (e.g. adding newly reviewed conseils and raamde documents) | new frozen id list | major |
+
+Newly reviewed documents can be set aside as candidates for the next major
+dev/test instead of going straight into train, so the next version has
+material no earlier model trained on. Dev gets used often during development
+and slowly overfits, which is another reason to renew it at major versions;
+test is only read for final results, and Bouquet and FLORES+ never change.
 
 ## Applied to this dataset
 
 1. Row metadata: `id`, `original_lang`, `doc_id`, `reviewed` (done, see
    below).
-2. Build dev/test once from reviewed and expert data, by document, with a
+2. Review a few conseils sessions and raamde articles so those domains have
+   human-checked documents.
+3. Build dev/test once from reviewed and expert data, by document, with a
    per-source cap; store the ids in a pinned file.
-3. Train on everything else, minus any sentence that occurs in dev/test.
-4. Evaluate on the frozen test, FLORES+ fra–mos and Bouquet fra–mos,
+4. Train on everything else, minus any sentence that occurs in dev/test.
+5. Evaluate on the frozen local test, Bouquet fra–mos and FLORES+ fra–mos,
    reported per domain.
 
-Open questions: which sources may enter dev/test; the per-source cap; whether
-high-score conseils sessions qualify; how the frozen id file is versioned.
+Open questions: exact local sizes; the per-source cap; which conseils sessions
+and raamde articles to review; how the frozen id file is versioned.
 
 ## Row metadata
 
