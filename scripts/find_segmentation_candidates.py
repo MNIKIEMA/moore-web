@@ -2,6 +2,12 @@
 
 Run from the repository root:
     uv run python scripts/find_segmentation_candidates.py mos-contes-volume-5
+
+With --draft REVIEWER, EASY and QUOTE lines (plus DIALOGUE with --all) are split at
+their sentence ends and saved as that reviewer's draft for the unit. The accepted
+review is not touched: the split only replaces it once the draft is marked reviewed
+in the app. CHECK lines are left as they are, and units that already have a draft
+from that reviewer are skipped.
 """
 
 import argparse
@@ -9,6 +15,8 @@ import json
 import re
 import sqlite3
 from pathlib import Path
+
+from moore_web import review_store
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "data/review/reviews.sqlite3"
@@ -19,6 +27,26 @@ SENTENCE_END = re.compile(r'[.!?…]+[»"\s]*(?=\s+[«"\-–—]?\s*[A-ZÀ-ÖØ-
 
 def count_sentences(text: str) -> int:
     return len(SENTENCE_END.findall(text)) + 1
+
+
+def split_sentences(text: str) -> list[str]:
+    pieces, start = [], 0
+    for match in SENTENCE_END.finditer(text):
+        pieces.append(text[start : match.end()].strip())
+        start = match.end()
+    pieces.append(text[start:].strip())
+    return [piece for piece in pieces if piece]
+
+
+def split_side(lines: list[str], rejected: set[int], to_split: set[int]) -> tuple[list[str], list[int]]:
+    """Split the lines at `to_split` (0-based), re-pointing rejected indices at the new list."""
+    new_lines: list[str] = []
+    new_rejected: list[int] = []
+    for index, line in enumerate(lines):
+        if index in rejected:
+            new_rejected.append(len(new_lines))
+        new_lines.extend(split_sentences(line) if index in to_split else [line])
+    return new_lines, new_rejected
 
 
 def has_quote(text: str) -> bool:
@@ -58,11 +86,14 @@ def main() -> None:
     parser.add_argument("--max-chars", type=int, default=350)
     parser.add_argument("--all", action="store_true", help="also list short two-sentence dialogue lines")
     parser.add_argument("--width", type=int, default=160, help="truncate texts (0 = full)")
+    parser.add_argument(
+        "--draft", metavar="REVIEWER", help="save the proposed splits as this reviewer's drafts"
+    )
     args = parser.parse_args()
 
     db = sqlite3.connect(args.db)
     rows = db.execute(
-        """SELECT u.id, u.unit_uid, r.fra, r.mos, r.rejected_fra, r.rejected_mos
+        """SELECT u.id, u.unit_uid, r.fra, r.mos, r.rejected_fra, r.rejected_mos, r.version
         FROM units u JOIN reviews r ON r.unit_id = u.id
         WHERE u.source = ? ORDER BY u.position, u.id""",
         (args.source,),
@@ -75,7 +106,8 @@ def main() -> None:
 
     totals = {kind: 0 for kind in LABELS}
     n_pairs = 0
-    for unit_id, unit_uid, fra_json, mos_json, rej_fra, rej_mos in rows:
+    drafted, skipped = [], []
+    for unit_id, unit_uid, fra_json, mos_json, rej_fra, rej_mos, version in rows:
         fra, mos = json.loads(fra_json), json.loads(mos_json)
         skip_fra, skip_mos = set(json.loads(rej_fra)), set(json.loads(rej_mos))
         # Keep editor line numbers (1-based, rejected lines included) so they match the app.
@@ -102,10 +134,38 @@ def main() -> None:
             print(f"    FR : {clip(fra_text)}")
             print(f"    MOS: {clip(mos_text)}")
 
+        if args.draft:
+            splits = [(f - 1, m - 1) for kind, f, m, *_ in hits if kind != "check"]
+            if not splits:
+                continue
+            if review_store.get_draft(args.db, unit_id, args.draft):
+                skipped.append(unit_uid)
+                continue
+            new_fra, new_rej_fra = split_side(fra, skip_fra, {f for f, _ in splits})
+            new_mos, new_rej_mos = split_side(mos, skip_mos, {m for _, m in splits})
+            assert len(new_fra) - len(new_rej_fra) == len(new_mos) - len(new_rej_mos), unit_uid
+            review_store.save_draft(
+                args.db,
+                unit_id,
+                args.draft,
+                "\n".join(new_fra),
+                "\n".join(new_mos),
+                version,
+                new_rej_fra,
+                new_rej_mos,
+            )
+            drafted.append(f"{unit_uid} ({len(splits)} line(s) split)")
+
     print(f"\n{args.source}: {len(rows)} units, {n_pairs} kept pairs")
     for kind, label in LABELS.items():
         if kind != "short-dialogue" or args.all:
             print(f"  {label}: {totals[kind]}")
+    if args.draft:
+        print(f"\nDrafts saved for {args.draft}: {len(drafted)}")
+        for name in drafted:
+            print(f"  {name}")
+        if skipped:
+            print(f"Skipped (draft already exists): {', '.join(skipped)}")
 
 
 if __name__ == "__main__":
