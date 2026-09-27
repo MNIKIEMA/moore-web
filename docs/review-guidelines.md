@@ -46,7 +46,7 @@ Favour **the smallest link whose two sides mean the same thing**.
 1. **Fix segmentation before merging.** Many apparent n:m cases are splitter
    errors: abbreviations, dialogue quotes, ellipses. If a sentence was cut in
    the wrong place, re-split or re-join it on that side first, then align.
-   Tag the link `segmentation`.
+   Tag the link `segmentation` (planned).
 2. **Keep links minimal.** Merge only as many adjacent sentences as needed.
    2:1 is better than 3:2, and 3:2 is better than a paragraph. If a merged link
    can be split back into two clean links, split it.
@@ -131,6 +131,22 @@ be split again later.
 
 Don't split just to reach 1:1; a 2:1 link is a correct result.
 
+**Finding links left to split.** After a source is reviewed, list the links
+that still hold several sentences or are over 350 characters (about 140 NLLB
+tokens in Mooré):
+
+```sh
+uv run python scripts/find_segmentation_candidates.py mos-contes-volume-5
+```
+
+It groups hits by the unit name shown in the app header and prints editor line
+numbers (rejected lines included). Tags: `EASY` (narrative, same sentence
+count: split), `QUOTE` (long quoted speech: apply
+[Reported speech](#reported-speech)), `CHECK` (sentence counts differ: usually
+a translator merge, keep unless a shared boundary exists). `--all` also lists
+two-sentence quotes. Sentence counts are a regex guess; the meaning test above
+still decides.
+
 ## Reported speech
 
 A quote is a natural unit: one speaker, one turn, one pair of guillemets.
@@ -140,8 +156,8 @@ reported speech. Inside it:
 
 - **Split the quote into 1:1 links only if every sentence of the quote matches
   one to one** (see the two examples below).
-- **Otherwise, keep the whole quote as one link**, tagged `translator_merge`,
-  rather than a mix of 1:1 and n:m links inside the quote.
+- **Otherwise, keep the whole quote as one link** (tag `translator_merge`,
+  planned), rather than a mix of 1:1 and n:m links inside the quote.
 - **The introduction goes with the quote.** "Le caméléon dit à l'homme :" is
   attached to the first link of the quote, or to the whole quote if it stays
   one link. It is never a link of its own.
@@ -226,7 +242,7 @@ Points to note:
   not during review.
 - **Watch for splitter traps.** French puts a space before ? and ! ("vu ?"),
   and some splitters miss that boundary. If links 2–4 arrive glued together,
-  re-split them (`segmentation`); don't align them as 3:3. The comma in
+  re-split them (tag `segmentation`, planned); don't align them as 3:3. The comma in
   "M na n tɩ, maana bõe …" is inside the sentence and must not be split.
 
 ## Reason tags
