@@ -5,6 +5,14 @@ tale, a lesson section, an article or a paragraph: a stretch of text whose two
 sides are known to match as a whole. Inside the unit, the text is split into
 sentences and pre-aligned automatically. Your job is to fix that alignment.
 
+> **App status (2026-09-27):** the review app records the edited French and
+> Mooré lines (line *i* pairs with line *i*), rejected lines and a reviewed
+> flag per unit. Reason tags (`segmentation`, `translator_merge`, …), the
+> `free_translation` flag and per-link metadata are **planned, not yet
+> recordable**: apply the alignment rules below, but there is nowhere to
+> enter the tags yet. See [Reason tags](#reason-tags) and
+> [Data model](#data-model).
+
 ## Principle: sentences first, paragraph as a fallback
 
 Work at sentence level by default. Always read the whole unit, not just the
@@ -223,7 +231,9 @@ Points to note:
 
 ## Reason tags
 
-Give every link that is not a plain 1:1 a reason:
+**Planned.** The app has no field or control for these yet, so they can't be
+recorded; a reason can't be recovered after review either. Once added, give
+every link that is not a plain 1:1 a reason:
 
 | Tag | Meaning |
 | --- | --- |
@@ -234,8 +244,17 @@ Give every link that is not a plain 1:1 a reason:
 
 ## Data model
 
-A paragraph fallback is just a link that covers every sentence of the
-paragraph on both sides, so the same schema covers every case:
+**Planned.** Today the app stores, per unit, the original sentence lists
+(`units.original_fra`/`original_mos`), the edited line lists, rejected line
+indices, and `reviewed`/`reviewed_by`/`version`/`updated_at`
+(`src/moore_web/review_store.py`); the export adds `unit` and `line`. Sentence
+ids, `shape`, `reason` and a per-link `status` are not recorded: a merge just
+puts two sentences on one line. `shape` could be derived by matching edited
+lines back to the original sentences (approximate, and only for unedited
+text); `reason` can't be.
+
+Target schema. A paragraph fallback is just a link that covers every sentence
+of the paragraph on both sides, so the same schema covers every case:
 
 ```json
 {
@@ -251,7 +270,7 @@ paragraph on both sides, so the same schema covers every case:
 ```
 
 `doc_id`, `unit_id` and `position` keep the order, so exports can be built
-from the same data:
+from the same data (the `shape` filters below need the planned fields):
 
 - **Sentence pairs** (MT fine-tuning, evaluation): filter on `shape`, e.g.
   1:1 only, or links up to 2:2.
@@ -264,10 +283,12 @@ link boundary where both sides agree, never at an arbitrary point on one side.
 
 ## Monitoring
 
-Track the share of non-1:1 links and `free_translation` units per source. If a
-source falls back more than about 30% of the time, automatic alignment is not
-working for it: pre-segment that source at paragraph level instead of fixing
-it by hand, and check whether `segmentation` tags point to a splitter bug.
+**Planned** (needs `shape` and reason tags; until then only a line count
+against the original sentences approximates it). Track the share of non-1:1
+links and `free_translation` units per source. If a source falls back more
+than about 30% of the time, automatic alignment is not working for it:
+pre-segment that source at paragraph level instead of fixing it by hand, and
+check whether `segmentation` tags point to a splitter bug.
 
 ## Background
 
