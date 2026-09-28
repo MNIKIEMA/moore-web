@@ -386,6 +386,7 @@ def build(
     mafand_train: list[dict] = []
     mafand_dev: list[dict] = []
     mafand_test: list[dict] = []
+    mafand_seen: set[tuple[str, str]] = set()
 
     if mafand_repo:
         print(f"\nLoading {mafand_repo} …")
@@ -404,7 +405,10 @@ def build(
                 fr = (row.get("french") or "").strip()
                 mo = (row.get("moore") or "").strip()
                 src = row.get("source") or "mafand"
-                if fr and mo:
+                # Ids are text hashes, so a pair repeated in mafand would repeat its id:
+                # keep the first copy, as load_local does for local sources.
+                if fr and mo and (fr, mo) not in mafand_seen:
+                    mafand_seen.add((fr, mo))
                     target.append(
                         {
                             "id": _row_id(row, src, fr, mo),
