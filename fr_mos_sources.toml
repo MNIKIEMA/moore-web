@@ -26,7 +26,7 @@ data_dir = "final_data_hf"
 # Bump `revision` to the sha printed by the push to use a newer export.
 [reviewed]
 repo = "madoss/moore-web-reviewed"
-revision = "a5e716aadfd5e5369c3b582495433d2ca7276fc6"
+revision = "a95d16a4f20f631a397ba675cf118696903a4a89"
 
 # Default thresholds. A threshold is skipped for rows without that field,
 # so human-reviewed rows (no scores) are never filtered.
