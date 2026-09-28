@@ -134,3 +134,27 @@ def test_reviewed_flag_from_entry(tmp_path):
     )
     rows = build.load_local(config, tmp_path / "data", reviewed_dir)
     assert [(r["source"], r["reviewed"]) for r in rows] == [("sida", True), ("expert", True), ("auto", False)]
+
+
+def test_normalize_punctuation_is_opt_in_per_source(tmp_path):
+    reviewed_dir = tmp_path / "reviewed"
+    rows = [
+        {"french": "Le coq et le cabri", "moore": "No-raoogo ne bʋʋga.", "unit": "u", "line": 0},
+        {"french": "Il dit : « Viens »!", "moore": "A yeelame : « Wa »!", "unit": "u", "line": 1},
+    ]
+    _write_jsonl(reviewed_dir / "contes.jsonl", rows)
+    _write_jsonl(reviewed_dir / "other.jsonl", rows)
+    config = _sources(
+        tmp_path,
+        '[[sources]]\ntag = "contes"\nreviewed = "contes.jsonl"\n'
+        "normalize_punctuation = true\nfirst_line_title = true\n"
+        '[[sources]]\ntag = "other"\nreviewed = "other.jsonl"\n',
+    )
+    loaded = build.load_local(config, tmp_path / "data", reviewed_dir)
+    pairs = [(r["source"], r["id"], r["french"], r["moore"]) for r in loaded]
+    assert pairs == [
+        ("contes", "contes-u-0", "Le coq et le cabri", "No-raoogo ne bʋʋga"),
+        ("contes", "contes-u-1", "Il dit : « Viens ! »", "A yeelame : « Wa ! »"),
+        ("other", "other-u-0", "Le coq et le cabri", "No-raoogo ne bʋʋga."),
+        ("other", "other-u-1", "Il dit : « Viens »!", "A yeelame : « Wa »!"),
+    ]

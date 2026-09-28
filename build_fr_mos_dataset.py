@@ -65,6 +65,8 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from moore_web.punctuation import normalize
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -154,13 +156,17 @@ def _load_jsonl(
     skip: dict | None = None,
     original_lang: str | None = None,
     reviewed: bool = False,
+    normalize_punctuation: bool = False,
+    first_line_title: bool = False,
 ) -> list[dict]:
     """Read a JSONL file into dataset rows (see the output schema above).
 
     Reads the flat ``french``/``moore`` and the long ``source_text``/
     ``target_text`` schemas. ``original_lang`` is taken from the row when it
     records one (``is_source_orig``), else from the argument. Rows where any
-    ``skip`` field equals its value are dropped.
+    ``skip`` field equals its value are dropped. ``normalize_punctuation``
+    applies ``moore_web.punctuation`` to both sides; with ``first_line_title``
+    the first line of each unit (``line == 0``) is normalized as a title.
     """
     skip = skip or {}
     rows = []
@@ -175,6 +181,9 @@ def _load_jsonl(
             fr, mo = _text_pair(obj)
             if not fr or not mo:
                 continue
+            if normalize_punctuation:
+                is_title = first_line_title and obj.get("line") == 0
+                fr, mo = normalize(fr, is_title), normalize(mo, is_title)
             src = source_override if source_override is not None else obj.get("source", "unknown")
             rows.append(
                 {
@@ -257,6 +266,8 @@ def load_local(config: dict, data_dir: Path, reviewed_dir: Path | None) -> list[
             original_lang=entry.get("original_lang"),
             # Review-app exports are human-checked; `human` marks other human data.
             reviewed="reviewed" in entry or bool(entry.get("human")),
+            normalize_punctuation=bool(entry.get("normalize_punctuation")),
+            first_line_title=bool(entry.get("first_line_title")),
         )
         kept = [r for r in loaded if _passes_filter(r, entry["filters"])]
         dropped = f"  (quality filter dropped {len(loaded) - len(kept):,})" if len(kept) < len(loaded) else ""

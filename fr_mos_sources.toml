@@ -15,6 +15,10 @@
 #               .agents/logbooks/hf-output-schema.md.
 #   human       rows are human translations (sets the `reviewed` column;
 #               entries read from the reviewed export always set it)
+#   normalize_punctuation  apply moore_web.punctuation to both sides (spacing,
+#               lone guillemets, punctuation after », link endings); see
+#               docs/punctuation-logbook.md for the rules and each source's log
+#   first_line_title  the first line of each unit is a title: no final "."
 
 data_dir = "final_data_hf"
 
@@ -55,6 +59,8 @@ reviewed = "udhr.jsonl"
 tag = "mos-contes-volume-5"
 original_lang = "mos"
 reviewed = "mos-contes-volume-5.jsonl"
+normalize_punctuation = true
+first_line_title = true
 
 [[sources]]
 tag = "abcburkina-contes"
