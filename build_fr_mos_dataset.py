@@ -65,6 +65,8 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from moore_web.corrections import apply_corrections, load_corrections
+from moore_web.orthography import lookalikes_in, normalize_french, normalize_moore
 from moore_web.punctuation import normalize
 
 if sys.version_info >= (3, 11):
@@ -164,7 +166,9 @@ def _load_jsonl(
     Reads the flat ``french``/``moore`` and the long ``source_text``/
     ``target_text`` schemas. ``original_lang`` is taken from the row when it
     records one (``is_source_orig``), else from the argument. Rows where any
-    ``skip`` field equals its value are dropped. ``normalize_punctuation``
+    ``skip`` field equals its value are dropped. Every row gets the Unicode
+    fixes of ``moore_web.orthography`` (Mooré look-alikes, NFC); the id is
+    computed from the raw text first. ``normalize_punctuation``
     applies ``moore_web.punctuation`` to both sides; with ``first_line_title``
     the first line of each unit (``line == 0``) is normalized as a title.
     """
@@ -181,13 +185,16 @@ def _load_jsonl(
             fr, mo = _text_pair(obj)
             if not fr or not mo:
                 continue
+            src = source_override if source_override is not None else obj.get("source", "unknown")
+            # Ids come from the raw text, so text fixes never change them.
+            row_id = _row_id(obj, src, fr, mo)
+            fr, mo = normalize_french(fr), normalize_moore(mo)
             if normalize_punctuation:
                 is_title = first_line_title and obj.get("line") == 0
                 fr, mo = normalize(fr, is_title), normalize(mo, is_title)
-            src = source_override if source_override is not None else obj.get("source", "unknown")
             rows.append(
                 {
-                    "id": _row_id(obj, src, fr, mo),
+                    "id": row_id,
                     "french": fr,
                     "moore": mo,
                     "source": src,
@@ -344,6 +351,27 @@ def _stratified_split(
 # ---------------------------------------------------------------------------
 
 
+def _frozen_splits(repo: str, revision: str) -> dict[str, str]:
+    """id -> "train" / "dev" / "test" of a published release (its validation is dev)."""
+    from datasets import load_dataset
+
+    ds = load_dataset(repo, HUB_CONFIG, revision=revision)
+    names = {"train": "train", "validation": "dev", "test": "test"}
+    return {row_id: names[split] for split in ds for row_id in ds[split]["id"]}
+
+
+def assign_frozen_splits(
+    rows: list[dict], frozen: dict[str, str]
+) -> tuple[list[dict], list[dict], list[dict], dict[str, int]]:
+    """Keep each known id in its frozen split; unknown ids (new data) go to train."""
+    out: dict[str, list[dict]] = {"train": [], "dev": [], "test": []}
+    for r in rows:
+        out[frozen.get(r["id"], "train")].append(r)
+    known = sum(r["id"] in frozen for r in rows)
+    stats = {"kept": known, "new_to_train": len(rows) - known}
+    return out["train"], out["dev"], out["test"], stats
+
+
 def build(
     sources: Path,
     reviewed_dir: Path | None,
@@ -372,10 +400,19 @@ def build(
 
     print(f"\nEval-eligible rows: {len(splittable):,}  (train-only: {len(train_only):,})")
 
-    # ---- 2. Stratified split of splittable rows ----------------------------
-    print(f"\nBuilding stratified split  dev={dev_size}  test={test_size}  seed={seed} …")
-    local_train, local_dev, local_test = _stratified_split(splittable, dev_size, test_size, seed)
-    local_train = train_only + local_train  # re-attach train-only rows
+    # ---- 2. Split: frozen by id from a release, or a seeded stratified draw ---
+    splits = config.get("splits", {})
+    frozen: dict[str, str] = {}
+    if splits.get("frozen_from"):
+        repo, revision = splits["frozen_from"], splits["frozen_revision"]
+        print(f"\nKeeping the splits of {repo} @ {revision} (new rows go to train) …")
+        frozen = _frozen_splits(repo, revision)
+        local_train, local_dev, local_test, fstats = assign_frozen_splits(splittable + train_only, frozen)
+        print(f"  {fstats['kept']:,} rows keep their split, {fstats['new_to_train']:,} new rows go to train")
+    else:
+        print(f"\nBuilding stratified split  dev={dev_size}  test={test_size}  seed={seed} …")
+        local_train, local_dev, local_test = _stratified_split(splittable, dev_size, test_size, seed)
+        local_train = train_only + local_train  # re-attach train-only rows
 
     print("  Local split:")
     _print_source_breakdown(local_train, "train")
@@ -409,9 +446,11 @@ def build(
                 # keep the first copy, as load_local does for local sources.
                 if fr and mo and (fr, mo) not in mafand_seen:
                     mafand_seen.add((fr, mo))
+                    row_id = _row_id(row, src, fr, mo)  # from the raw text, as for local rows
+                    fr, mo = normalize_french(fr), normalize_moore(mo)
                     target.append(
                         {
-                            "id": _row_id(row, src, fr, mo),
+                            "id": row_id,
                             "french": fr,
                             "moore": mo,
                             "source": src,
@@ -433,6 +472,20 @@ def build(
     final_test = local_test + mafand_test
 
     random.Random(seed).shuffle(final_train)
+
+    if config.get("corrections"):
+        path = sources.parent / config["corrections"]
+        n = apply_corrections(final_train + final_dev + final_test, load_corrections(path))
+        print(f"\nApplied {n} row corrections from {path}")
+
+    left = sorted({c for r in final_train + final_dev + final_test for c in lookalikes_in(r["moore"])})
+    if left:
+        raise ValueError(f"Look-alike characters left on the Mooré side after normalization: {left}")
+
+    if frozen:
+        present = {r["id"] for r in final_train + final_dev + final_test}
+        missing = Counter(split for row_id, split in frozen.items() if row_id not in present)
+        print(f"  frozen ids no longer present (removed or merged): {dict(missing) or 'none'}")
 
     id_counts = Counter(r["id"] for r in final_train + final_dev + final_test)
     dupes = sorted(i for i, n in id_counts.items() if n > 1)

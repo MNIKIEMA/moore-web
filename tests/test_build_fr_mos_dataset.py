@@ -158,3 +158,23 @@ def test_normalize_punctuation_is_opt_in_per_source(tmp_path):
         ("other", "other-u-0", "Le coq et le cabri", "No-raoogo ne bʋʋga."),
         ("other", "other-u-1", "Il dit : « Viens »!", "A yeelame : « Wa »!"),
     ]
+
+
+def test_orthography_fixes_keep_text_based_ids(tmp_path):
+    reviewed_dir = tmp_path / "reviewed"
+    _write_jsonl(reviewed_dir / "src.jsonl", [{"french": "Vitamine A.", "moore": "vιtamin A sẽn."}])
+    config = _sources(tmp_path, '[[sources]]\ntag = "src"\nreviewed = "src.jsonl"\n')
+    (row,) = build.load_local(config, tmp_path / "data", reviewed_dir)
+    assert row["moore"] == "vɩtamin A sẽn."
+    # the id is the hash of the raw text, so it matches the id the row had before the fix
+    assert row["id"] == build._row_id({}, "src", "Vitamine A.", "vιtamin A sẽn.")
+
+
+def test_frozen_splits_keep_known_ids_and_send_new_rows_to_train():
+    rows = [{"id": i} for i in ("a", "b", "c", "new")]
+    train, dev, test, stats = build.assign_frozen_splits(
+        rows, {"a": "train", "b": "dev", "c": "test", "gone": "test"}
+    )
+    assert [r["id"] for r in train] == ["a", "new"]
+    assert [r["id"] for r in dev] == ["b"] and [r["id"] for r in test] == ["c"]
+    assert stats == {"kept": 3, "new_to_train": 1}

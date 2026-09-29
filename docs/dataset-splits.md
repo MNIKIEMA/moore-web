@@ -1,9 +1,10 @@
 # Dataset split strategy (proposal)
 
-Status: **proposal, not implemented.** `build_fr_mos_dataset.py` still draws
-dev/test at random per source (`_stratified_split`). This note records the
-intended practice for the French–Mooré dataset; the split itself is still to
-be decided.
+Status: **freezing by id is implemented** (2026-09-29): with `[splits]` in
+`fr_mos_sources.toml`, rows of the pinned release (`v1.0.0`) keep their split
+and new rows go to train. The v1.0.0 dev/test themselves are still the seeded
+random draw; redesigning them (steps 2–3 below) remains to do, as a major
+version. This note records the intended practice for the French–Mooré dataset.
 
 ## Why the current split misleads
 

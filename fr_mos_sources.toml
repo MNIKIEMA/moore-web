@@ -22,11 +22,22 @@
 
 data_dir = "final_data_hf"
 
+# One-off text fixes for specific rows (moore_web.corrections), applied after
+# the Unicode normalization; the build fails if one does not apply.
+corrections = "corrections/moore.tsv"
+
 # Snapshot of accepted review-app units (`moore-web export-reviewed --push`).
 # Bump `revision` to the sha printed by the push to use a newer export.
 [reviewed]
 repo = "madoss/moore-web-reviewed"
 revision = "a95d16a4f20f631a397ba675cf118696903a4a89"
+
+# Splits are frozen by row id (docs/dataset-splits.md): rows of the release below
+# keep their split, new rows go to train. Changing dev/test is a major version;
+# remove this table to draw a new stratified split.
+[splits]
+frozen_from = "madoss/moore-web-parallel"
+frozen_revision = "v1.0.0"
 
 # Default thresholds. A threshold is skipped for rows without that field,
 # so human-reviewed rows (no scores) are never filtered.

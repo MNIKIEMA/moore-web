@@ -317,6 +317,23 @@ Duplicate `(french, moore)` pairs are removed globally across all files.
 
 Output schema: `french | moore | source`
 
+Every row gets Unicode fixes at build time (`moore_web.orthography`: Mooré
+look-alike letters such as Greek ι for ɩ, and NFC); ids are computed from the
+raw text first. Check a release or any JSONL for decomposed accents and
+look-alikes:
+
+```bash
+uv run python scripts/check_orthography.py --revision v1.0.0
+uv run python scripts/check_orthography.py --jsonl out/*.jsonl --strict
+```
+
+Typos that need judgement are fixed row by row in `corrections/moore.tsv`
+(`id`, `column`, `wrong`, `right`, `note`); the build fails if one no longer
+applies.
+
+Splits are frozen by id (`[splits]` in `fr_mos_sources.toml`): rows of the
+pinned release keep their split, new rows go to train.
+
 ### Dataset builder usage
 
 ```bash
