@@ -1698,7 +1698,9 @@ def hplt_mono(
         exclude_texts=exclude,
     )
     write_jsonl(rows, output_jsonl)
-    typer.echo(f"Documents kept: {stats.documents}")
+    typer.echo(
+        f"Documents kept: {stats.documents} (dropped {stats.mt_tagged_documents} with leaked NLLB tags)"
+    )
     for step, count in stats.steps.items():
         typer.echo(f"  {step:32} {count:>7,}")
     typer.echo(f"Wrote {len(rows):,} sentences → {output_jsonl}")

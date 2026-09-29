@@ -153,16 +153,21 @@ use.
 
 ## How it was built
 
-1. Only whole sources with clear reuse terms are taken. From the HPLT crawl,
-   only Wikipedia pages are kept: most of the crawl is jw.org, whose terms of
-   use forbid this reuse.
-2. Wikipedia citation markers (`[1]`) are removed, then each paragraph is split
+1. Only sources with clear reuse terms are taken. From the HPLT crawl, only
+   Wikipedia pages are kept: most of the crawl is jw.org, whose terms of use
+   forbid this reuse.
+2. Pages carrying leaked NLLB language tags ("… mos_Latnmos_Latn be be be")
+   are dropped whole: they were machine-translated with NLLB.
+3. Wikipedia citation markers (`[1]`) are removed, then each paragraph is split
    into sentences.
-3. Sentences are kept when GlotLID tags them `mos_Latn` with probability ≥ 0.8
-   and they have at least 4 words and at most 500 characters.
-4. Exact duplicates are removed after normalization (Unicode NFKC, lowercase,
+4. Sentences are kept when GlotLID tags them `mos_Latn` with probability ≥ 0.8,
+   contain no letters of another script or phonetic transcriptions, no wiki
+   markup, fewer than two lowercase words with tone accents (another spelling
+   system or language), at least 4 words and at most 500 characters, and are
+   not generation loops (8+ word sentences need at least 55% distinct words).
+5. Exact duplicates are removed after normalization (Unicode NFKC, lowercase,
    punctuation removed, spaces collapsed).
-5. Sentences that appear in the Mooré references of FLORES+ (dev, devtest) or
+6. Sentences that appear in the Mooré references of FLORES+ (dev, devtest) or
    Bouquet (fra–mos, all splits), or on the Mooré side of
    `moore-web-parallel` v1.0.0, are removed, so the data can be used to train
    models evaluated on those benchmarks.
@@ -172,7 +177,9 @@ use.
 - **Small and single-domain for now**: encyclopedic text only.
 - **Quality varies**: Wikipedia and Incubator articles are written by
   volunteers; spelling conventions (ɩ, ʋ, nasal vowels, word breaks) are not
-  uniform, and some articles may be machine-translated.
+  uniform. Some Incubator articles were machine-translated: pages with leaked
+  tags and looping sentences are removed, but machine-translated pages without
+  those traces cannot be detected.
 - **Language ID errors**: short sentences with names or numbers can be
   misclassified in either direction.
 """

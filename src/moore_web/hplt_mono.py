@@ -4,7 +4,9 @@ The crawl holds whole web documents already tagged ``mos_Latn`` by HPLT, but
 most of them are jw.org publications (terms of use forbid this reuse) and the
 rest mix Mooré with English/French page furniture. This keeps only the
 documents from the chosen hosts (Wikipedia by default: general-domain text,
-CC BY-SA 4.0), then works sentence by sentence:
+CC BY-SA 4.0), drops whole documents with leaked NLLB language tags
+("mos_Latnmos_Latn": machine-translated with NLLB), then works sentence by
+sentence:
 
 1. strip Wikipedia citation markers (``[1]``, ``[a]``) from each line, then
    split it with ``segment_mo`` (the syntok-based Mooré splitter);
@@ -48,6 +50,11 @@ MOORE = "mos_Latn"
 
 # "[1]", "[ 3]", "[a]", "[note 2]", "[DM 1]"
 _CITATION = re.compile(r"\s*\[\s*(?:\d+|[a-z]|note \d+|[A-Z]{1,4} \d+)\s*\]")
+# Leaked NLLB language tags ("… mos_Latnmos_Latn be be be"): the page was
+# machine-translated with NLLB, so none of its Mooré is kept.
+_MT_TAG = re.compile(r"[a-z]{3}_(?:Latn|Arab|Cyrl|Deva|Ethi|Hans|Hant|Grek|Hang)")
+# Raw wiki markup left in the extracted text ("[[File:…|thumb|…]]").
+_WIKI_MARKUP = re.compile(r"\[\[|\]\]|\{\{|\}\}|\|thumb|\b(?:File|Fichier|Image):")
 # The crawl sometimes lost the "[": "daarã. 3] Burkĩna …".
 _ORPHAN_CITATION = re.compile(r"(?:(?<=\s)|^)\d{1,3}\]\s*")
 # Tone accents that neither standard Mooré spelling (ã ẽ ĩ õ ũ, ɛ ɩ ʋ) nor French uses.
@@ -127,6 +134,7 @@ def split_document(doc: dict) -> list[dict]:
 @dataclass
 class Stats:
     documents: int = 0
+    mt_tagged_documents: int = 0
     steps: dict[str, int] = field(default_factory=dict)
 
     def record(self, step: str, rows: list[dict]) -> list[dict]:
@@ -149,6 +157,9 @@ def clean_sentences(
 ) -> tuple[list[dict], Stats]:
     stats = Stats()
     docs = [d for d in documents if host_matches(d["u"], hosts)]
+    tagged = [d for d in docs if _MT_TAG.search(d["text"])]
+    stats.mt_tagged_documents = len(tagged)
+    docs = [d for d in docs if not _MT_TAG.search(d["text"])]
     stats.documents = len(docs)
     rows = stats.record("sentences", [r for d in docs for r in split_document(d)])
 
@@ -158,6 +169,7 @@ def clean_sentences(
     rows = stats.record(f"GlotLID {MOORE}", [r for r in rows if r["lang"] == MOORE])
     rows = stats.record(f"prob >= {min_prob}", [r for r in rows if r["lang_prob"] >= min_prob])
     rows = stats.record("no foreign script or IPA", [r for r in rows if not has_foreign_script(r["text"])])
+    rows = stats.record("no wiki markup", [r for r in rows if not _WIKI_MARKUP.search(r["text"])])
     rows = stats.record(
         "< 2 tone-marked lowercase words", [r for r in rows if tone_marked_words(r["text"]) < 2]
     )

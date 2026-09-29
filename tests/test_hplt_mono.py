@@ -48,14 +48,19 @@ def test_clean_sentences_filters_dedups_and_excludes():
             ),
         },
         {"id": "j", "u": "https://www.jw.org/mos/x", "text": "Wẽnnaam naana tẽngã bõe yĩnga, a Zeova?"},
+        {
+            "id": "m",
+            "u": "https://incubator.wikimedia.org/wiki/Wp/mos/B",
+            "text": ("Karen-biisã zãmsda b karen-saamb yɩɩlã wakat fãa. mos_Latnmos_Latn be be be."),
+        },
     ]
     rows, stats = clean_sentences(docs, _lang, exclude_texts=["Sõng-kãnga sẽn be sõng-kãrã pʋgẽ wã"])
     assert [r["text"] for r in rows] == [
         "Turkmen haly yaa buud a ye sẽn yaa ne nug tʋʋma.",
         "Wẽnnaam naana tẽngã ne saasã fãa.",
     ]
-    assert stats.documents == 1
-    assert list(stats.steps.values()) == [6, 5, 5, 5, 5, 4, 4, 3, 2]
+    assert (stats.documents, stats.mt_tagged_documents) == (1, 1)
+    assert list(stats.steps.values()) == [6, 5, 5, 5, 5, 5, 4, 4, 3, 2]
     assert rows[0]["doc_id"] == "w" and rows[0]["words"] == 11 and "lang" not in rows[0]
     assert list(rows[0])[:4] == ["id", "text", "source", "license"]
     assert rows[0]["id"] == sentence_id(rows[0]["text"])

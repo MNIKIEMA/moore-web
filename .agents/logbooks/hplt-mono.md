@@ -20,10 +20,12 @@ uv run moore-web publish-mono data/mono/*.jsonl --push -m "…"   # private by d
 | # | Step | Default | Why |
 | --- | --- | --- | --- |
 | 1 | Keep documents by host | `wikipedia.org`, `incubator.wikimedia.org`, `incubator.m.wikimedia.org` | Only source with clear reuse terms (CC BY-SA 4.0) and general domain; jw.org (68% of the crawl) forbids reuse |
+| 1b | Drop documents with leaked NLLB language tags | `xxx_Latn`, `xxx_Arab`, … anywhere in the page | "… mos_Latnmos_Latn be be be": the page was machine-translated with NLLB; training NLLB on its own Mooré teaches it nothing (H2 in mt-training) |
 | 2 | Strip citation markers per line, then split with `segment_mo` | `[1]`, `[ 3]`, `[a]`, `[note 2]`, `[DM 1]`, and `3]` with a lost `[` | Stripping first: syntok does not split `ye.[1] A…` after the full stop |
 | 3 | GlotLID says `mos_Latn` | – | Drops reference lists, English captions, citations |
 | 4 | GlotLID probability | ≥ 0.8 | Conservative: kept Mooré scores 1.0 at the 10th percentile, so this only drops uncertain lines |
 | 5 | No other script, no IPA | any non-Latin letter, or IPA/modifier letters except ɛ ɔ ɩ ʋ ə | Glosses like "(Korean: 연등회)", "[kəsˈteʎ]"; dropped whole, stripping leaves broken parentheses |
+| 5b | No wiki markup | `[[`, `]]`, `{{`, `}}`, `\|thumb`, `File:` | Raw markup and English image captions left by the extraction |
 | 6 | Fewer than 2 lowercase tone-accented words | ó ò ú ù í ì á ǎ ě ǐ ǒ ǔ ā ē ī ō ū û | Other spelling systems or languages; lowercase only, so foreign names (Martínez) don't count |
 | 7 | Length | 4+ words, ≤ 500 chars | Drops fragments and run-ons; 500 Mooré chars ≈ 165–200 NLLB tokens (0.33 tokens/char on these sentences, 0.40 on the parallel data), under the 256-token training limit |
 | 8 | Not a generation loop | 8+ word sentences need ≥ 55% distinct words (`--min-distinct-ratio`) | Machine-translation loops ("b sẽn yaa b sẽn yaa …") |
@@ -44,11 +46,31 @@ every row so terms travel after mixing. To add a source: produce its JSONL
 with the same core fields, add it to `mono_publish.SOURCES` (card text,
 license), and run `publish-mono` with all JSONL files; unknown sources,
 license mismatches and duplicate ids are rejected. Tag each release
-(`v1.0.0` = Wikipedia, 9,614 sentences) and pin the tag downstream.
+(`v1.0.0` = Wikipedia, 9,614 sentences; `v1.1.0` = NLLB-translated pages and
+wiki markup removed, 8,817) and pin the tag downstream.
 
-**Known limits:** exact-match decontamination only; whole machine-translated
-articles are not detected (only their loop sentences); spelling conventions
-vary across volunteer-written articles.
+**Known limits:** exact-match decontamination only; machine-translated
+articles are only caught when they leaked NLLB tags or produce loop
+sentences; spelling conventions vary across volunteer-written articles.
+
+## 2026-09-29 (NLLB-translated pages, v1.1.0)
+
+- **Found while testing backtranslation in mt-training**: 25 sentences on 10
+  incubator pages ended with leaked NLLB language tags ("Karen-biisã …
+  wakat fãa. mos_Latnmos_Latnmos_Latn be be be"). Those articles were
+  machine-translated with NLLB. Decided with the user: drop tagged pages
+  whole (not only the tagged sentences), since the whole page is MT output.
+  At page level, **12 pages** carry tags (the 10 were those whose tagged
+  sentences survived the other filters). Loop-heavy pages without tags are
+  kept (option not chosen).
+- **Wiki markup filter** added: one sentence carried
+  `[[File:…|thumb|right|<English caption>]]`; cheap rule, useful for future
+  sources.
+- **Counts**: 186 documents (12 dropped) → 13,214 sentences → … → 9,648 no
+  markup → 9,079 loops → **8,817** after dedup and exclusion.
+- **`madoss/moore-web-mono` v1.1.0** (private), commit `a5d76ea`: 8,817
+  sentences. v1.0.0 (9,614) stays available; backtranslation should use
+  v1.1.0.
 
 ## 2026-09-29 (quality check, v1.0.0)
 
