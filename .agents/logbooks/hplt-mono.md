@@ -37,15 +37,31 @@ sentences for backtranslation (Mooré → French) in `mt-training`.
   | deduplicated | 10,404 |
   | not in eval refs / parallel Mooré | 10,404 |
 
-  Output: `data/mono/hplt_mos_wikipedia.jsonl` (`doc_id`, `url`, `line`,
-  `text`, `lang_prob`, `words`): 10,404 sentences, 197 pages, 1.17 M chars,
-  median 21 words.
+  Output: `data/mono/hplt_mos_wikipedia.jsonl` (`id`, `doc_id`, `url`,
+  `line`, `text`, `lang_prob`, `words`): 10,404 sentences, 197 pages,
+  1.17 M chars, median 21 words.
+- **`id` is content-based**: `hplt-` + the first 16 hex chars of the SHA-1 of
+  the normalized text. It survives re-runs, re-splitting of other lines and
+  re-translation with another model (a position-based id would shift: the
+  citation-marker fix alone moved ~270 sentences), and it is unique because
+  dedup uses the same normalization. Backtranslated pairs should keep it, so
+  French from different models can be compared on the same sentences.
 - **Strip citation markers before splitting**: 12% of sentences had `[n]`
   markers, and `ye.[1] A…` is not split after the full stop by syntok.
   Stripping per line first raised the count from 10,136 to 10,404.
 - **What gets dropped** by GlotLID is mostly reference lists, English
   captions and citations ("Retrieved March 28, 2017"); GlotLID is confident
   on the kept Mooré (prob quantiles 1.0).
+- **Published as `madoss/moore-web-mono` (private)**, commit `34aebba`, with
+  `moore-web publish-mono <jsonl…> --push` (`mono_publish.py`). Layout: one
+  parquet folder per source (`data/<source>/train.parquet`); card configs
+  `default` (every source) and one per source (`wikipedia`), because sources
+  will carry different licenses. Every row has `source` and `license`
+  (`wikipedia`, `CC-BY-SA-4.0`), so terms travel with rows after mixing.
+  Adding a source: its JSONL (same core fields), an entry in
+  `mono_publish.SOURCES` (card text, license), then `publish-mono` with all
+  the JSONL files; `group_by_source` rejects unknown sources, license
+  mismatches and duplicate ids. Not tagged yet.
 - **Not checked yet:** quality of the incubator Mooré (written by
   volunteers; some articles may be machine-translated), and near-duplicates.
   Sample some sentences before scaling up.

@@ -16,11 +16,15 @@ CC BY-SA 4.0), then works sentence by sentence:
    dev/devtest, Bouquet fra-mos targets) or in ``exclude_texts`` (e.g. the
    Mooré side of the parallel data).
 
+Each row gets a content-based ``id`` (``hplt-`` + 16 hex chars of the SHA-1 of
+the normalized text), unique because dedup uses the same normalization.
+
 The output feeds backtranslation (Mooré → French) in ``mt-training``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -32,6 +36,8 @@ from urllib.parse import urlparse
 from moore_web.flatten import segment_mo
 
 HPLT_REPO = "madoss/mos-latn-hplt"
+SOURCE = "wikipedia"
+LICENSE = "CC-BY-SA-4.0"
 DEFAULT_HOSTS = ("wikipedia.org", "incubator.wikimedia.org", "incubator.m.wikimedia.org")
 MOORE = "mos_Latn"
 
@@ -45,6 +51,11 @@ LangFn = Callable[[list[str]], tuple[list[str], list[float]]]
 def normalize(text: str) -> str:
     text = unicodedata.normalize("NFKC", text).lower()
     return _SPACES.sub(" ", _PUNCT.sub(" ", text)).strip()
+
+
+def sentence_id(text: str) -> str:
+    """Content-based id: stable across re-runs, re-splits and re-translations."""
+    return "hplt-" + hashlib.sha1(normalize(text).encode("utf-8")).hexdigest()[:16]
 
 
 def host_matches(url: str, hosts: Iterable[str]) -> bool:
@@ -86,6 +97,8 @@ def clean_sentences(
     min_words: int = 4,
     max_chars: int = 500,
     exclude_texts: Iterable[str] = (),
+    source: str = SOURCE,
+    license: str = LICENSE,
 ) -> tuple[list[dict], Stats]:
     stats = Stats()
     docs = [d for d in documents if host_matches(d["u"], hosts)]
@@ -113,9 +126,13 @@ def clean_sentences(
 
     excluded = {normalize(t) for t in exclude_texts}
     rows = stats.record("not in excluded texts", [r for r in rows if normalize(r["text"]) not in excluded])
-    for r in rows:
-        r["words"] = len(r["text"].split())
-        del r["lang"]
+    # Dedup ran on the same normalized text, so ids are unique.
+    rows = [
+        {"id": sentence_id(r["text"]), "text": r["text"], "source": source, "license": license}
+        | {k: v for k, v in r.items() if k not in ("lang", "text")}
+        | {"words": len(r["text"].split())}
+        for r in rows
+    ]
     return rows, stats
 
 

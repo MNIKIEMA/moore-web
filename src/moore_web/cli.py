@@ -1697,3 +1697,31 @@ def hplt_mono(
     for step, count in stats.steps.items():
         typer.echo(f"  {step:32} {count:>7,}")
     typer.echo(f"Wrote {len(rows):,} sentences → {output_jsonl}")
+
+
+@app.command("publish-mono")
+def publish_mono(
+    inputs: Annotated[
+        list[Path], typer.Argument(help="JSONL files of clean Mooré sentences (e.g. hplt-mono output).")
+    ],
+    out_dir: Annotated[Path, typer.Option("--out-dir", help="Local folder to build the dataset in.")] = Path(
+        "data/moore-web-mono"
+    ),
+    push: Annotated[bool, typer.Option(help="Upload the folder to the Hub.")] = False,
+    repo: Annotated[str, typer.Option(help="Hub dataset repo.")] = "madoss/moore-web-mono",
+    public: Annotated[bool, typer.Option(help="Create the repo as public (default: private).")] = False,
+    message: Annotated[
+        Optional[str], typer.Option("--message", "-m", help="Commit message for --push.")
+    ] = None,
+) -> None:
+    """Build (and optionally push) madoss/moore-web-mono: one parquet folder and config per source."""
+    from moore_web.mono_publish import group_by_source, push_folder, read_jsonl, write_folder
+
+    by_source = group_by_source(read_jsonl(inputs))
+    write_folder(by_source, out_dir)
+    for source, rows in by_source.items():
+        typer.echo(f"  {source:12} {len(rows):>7,} sentences")
+    typer.echo(f"Built {out_dir}")
+    if push:
+        sha = push_folder(out_dir, repo, private=not public, message=message)
+        typer.echo(f"Pushed {repo} @ {sha}")

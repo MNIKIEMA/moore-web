@@ -1,4 +1,4 @@
-from moore_web.hplt_mono import clean_sentences, host_matches, normalize, split_document
+from moore_web.hplt_mono import clean_sentences, host_matches, normalize, sentence_id, split_document
 
 
 def _lang(texts):
@@ -48,6 +48,16 @@ def test_clean_sentences_filters_dedups_and_excludes():
     assert stats.documents == 1
     assert list(stats.steps.values()) == [6, 5, 5, 4, 3, 2]
     assert rows[0]["doc_id"] == "w" and rows[0]["words"] == 11 and "lang" not in rows[0]
+    assert list(rows[0])[:4] == ["id", "text", "source", "license"]
+    assert rows[0]["id"] == sentence_id(rows[0]["text"])
+    assert (rows[0]["source"], rows[0]["license"]) == ("wikipedia", "CC-BY-SA-4.0")
+
+
+def test_sentence_id_depends_only_on_normalized_content():
+    a = sentence_id("Turkmen haly yaa buud a ye.")
+    assert a == sentence_id("  turkmen HALY, yaa buud a ye! ")
+    assert a != sentence_id("Turkmen haly yaa buud a yiibu.")
+    assert a.startswith("hplt-") and len(a) == len("hplt-") + 16
 
 
 def test_normalize():
