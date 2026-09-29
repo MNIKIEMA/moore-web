@@ -56,8 +56,20 @@ units. Cross-source plumbing, so it has no single parser/source.
   v1.0.0 pinned: 0 rows change split, dev 2,491 and test 2,573 unchanged,
   train 39,038 -> 39,023. Rebuilt output passes `check_orthography.py
   --strict`.
-- **Release**: this is a patch-level content fix of v1.0.0 (same dev/test,
-  corrected text), to publish as v1.1.0 together with any other fixes.
+- **Released `madoss/moore-web-parallel` v1.1.0** (2026-09-29): built by
+  commit `0d0a095`, pushed with `build_fr_mos_dataset.py --push-to-hub`, card
+  updated (counts, "How it was built" steps in build order, frozen splits in
+  Limitations, a Versions section), tag `v1.1.0` -> Hub commit `2e76298`.
+  44,087 rows (train 39,023 / validation 2,491 / test 2,573; v1.0.0: 39,038 /
+  2,491 / 2,573); 8,832 human-checked (2 merged duplicates were du-moore).
+  Checked from the Hub: validation and test have exactly the v1.0.0 ids.
+  Released as a minor version rather than a patch because text changed in
+  ~4,250 rows (models trained on v1.0.0 are not reproducible on v1.1.0).
+- **The repo is private** on the Hub at release time; it was public on
+  2026-09-28. Pushing data does not change visibility, so it was changed on
+  the Hub; left as is.
+- **Next models should pin `v1.1.0`** (mt-training `train.sh` still pins
+  v1.0.0, used by the running v2 retrains so they isolate the NLLB <unk> fix).
 
 ## 2026-09-26 (row metadata)
 
