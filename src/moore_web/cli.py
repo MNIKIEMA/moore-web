@@ -770,7 +770,7 @@ def annotate(
         typer.Option(
             "--config",
             help="Config to load (hf:// input only) -- required when the repo has more than "
-            "one, e.g. a language pair from a repo save_data split by pair (\"mos-fra\").",
+            'one, e.g. a language pair from a repo save_data split by pair ("mos-fra").',
         ),
     ] = None,
     src: Annotated[str, typer.Option("--src", help="Source field name in the dataset.")] = "french",
@@ -1126,7 +1126,9 @@ def e2e(
         )
 
     if (split_synonyms or strip_proverb_notes) and source not in (Source.simple, Source.one_column_dict):
-        _err("--split-synonyms / --strip-proverb-notes are only supported for --source simple or one-column-dict.")
+        _err(
+            "--split-synonyms / --strip-proverb-notes are only supported for --source simple or one-column-dict."
+        )
         raise typer.Exit(1)
 
     if (split_synonyms or strip_proverb_notes) and output and str(output).startswith("hf://"):
@@ -1589,7 +1591,8 @@ def export_reviewed_units(
 @app.command("parse-moore-proverbs")
 def parse_moore_proverb_app(
     input_dir: Annotated[
-        Path, typer.Option("--input-dir", exists=True, file_okay=False, help="Archived proverb app directory.")
+        Path,
+        typer.Option("--input-dir", exists=True, file_okay=False, help="Archived proverb app directory."),
     ],
     output_jsonl: Annotated[Path, typer.Option("--output", "-o", help="Proverb pairs as JSONL.")],
 ) -> None:
