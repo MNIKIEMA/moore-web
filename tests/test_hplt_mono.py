@@ -1,4 +1,13 @@
-from moore_web.hplt_mono import clean_sentences, host_matches, normalize, sentence_id, split_document
+from moore_web.hplt_mono import (
+    clean_sentences,
+    has_foreign_script,
+    host_matches,
+    normalize,
+    sentence_id,
+    split_document,
+    distinct_word_ratio,
+    tone_marked_words,
+)
 
 
 def _lang(texts):
@@ -18,7 +27,7 @@ def test_split_document_keeps_line_index():
     doc = {
         "id": "d1",
         "u": "https://mos.wikipedia.org/wiki/A",
-        "text": "A ye.[1] A yiibu. [a]\n\nA tãabo[12].",
+        "text": "A ye.[1] A yiibu. 3] [a]\n\n8] A tãabo[ 12].[DM 1]",
     }
     rows = split_document(doc)
     assert [(r["line"], r["text"]) for r in rows] == [(0, "A ye."), (0, "A yiibu."), (2, "A tãabo.")]
@@ -46,7 +55,7 @@ def test_clean_sentences_filters_dedups_and_excludes():
         "Wẽnnaam naana tẽngã ne saasã fãa.",
     ]
     assert stats.documents == 1
-    assert list(stats.steps.values()) == [6, 5, 5, 4, 3, 2]
+    assert list(stats.steps.values()) == [6, 5, 5, 5, 5, 4, 4, 3, 2]
     assert rows[0]["doc_id"] == "w" and rows[0]["words"] == 11 and "lang" not in rows[0]
     assert list(rows[0])[:4] == ["id", "text", "source", "license"]
     assert rows[0]["id"] == sentence_id(rows[0]["text"])
@@ -62,3 +71,24 @@ def test_sentence_id_depends_only_on_normalized_content():
 
 def test_normalize():
     assert normalize("  Turkmen HALY, yaa! ") == normalize("turkmen haly yaa")
+
+
+def test_foreign_script_and_ipa_but_not_moore_letters():
+    assert not has_foreign_script("Sõng-kãnga sẽn be sõng-kãrã pʋgẽ wã, yɛl wʋsg, bɩ ɔ.")
+    assert not has_foreign_script("A Rövşən ne a Kérékou.")
+    assert has_foreign_script("Yeondeunghoe (Korean: 연등회) yaa kibay.")
+    assert has_foreign_script("Castel (Catalan: [kəsˈteʎ]) yaa bur.")
+    assert has_foreign_script("Kaлyшapи bɩ Pycaлии.")
+
+
+def test_tone_marked_words_count_lowercase_words_only():
+    assert tone_marked_words("A Pedro Martínez ne a Román Díaz sẽn yiis album.") == 0
+    assert tone_marked_words("À galóùnting (vil) kãsngã lã Wùgdgù") == 1
+    assert tone_marked_words("A goùnbga noûg goabgã windg sì lœtin nē Burkina Faso.") == 4
+
+
+def test_distinct_word_ratio_flags_loops_only_in_longer_sentences():
+    loop = "B sẽn yaa b sẽn yaa b to wã yaa b sẽn tar b sẽn yaa b to."
+    assert distinct_word_ratio(loop) < 0.55
+    assert distinct_word_ratio("Turkmen haly yaa buud a ye sẽn yaa ne nug tʋʋma.") >= 0.55
+    assert distinct_word_ratio("B yãk n yãk b.") == 1.0  # under 8 words: not judged

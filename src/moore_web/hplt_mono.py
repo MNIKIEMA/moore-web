@@ -8,8 +8,13 @@ CC BY-SA 4.0), then works sentence by sentence:
 
 1. strip Wikipedia citation markers (``[1]``, ``[a]``) from each line, then
    split it with ``segment_mo`` (the syntok-based Mooré splitter);
-2. keep sentences GlotLID tags ``mos_Latn`` with probability >= ``min_prob``;
-3. drop fragments (< ``min_words`` words) and run-ons (> ``max_chars``);
+2. keep sentences GlotLID tags ``mos_Latn`` with probability >= ``min_prob``,
+   without letters of another script or IPA (glosses like "(Korean: 연등회)"),
+   and with fewer than 2 lowercase words carrying tone accents (ó ù ī …: another
+   spelling system or language; capitalized foreign names are allowed);
+3. drop fragments (< ``min_words`` words), run-ons (> ``max_chars``), and
+   generation loops typical of machine translation: sentences of 8+ words where
+   fewer than ``min_distinct_ratio`` of the words are distinct;
 4. drop exact duplicates after normalization (NFKC, lowercase, punctuation
    removed, spaces collapsed);
 5. drop sentences found in the evaluation references (FLORES+ ``mos_Latn``
@@ -41,7 +46,15 @@ LICENSE = "CC-BY-SA-4.0"
 DEFAULT_HOSTS = ("wikipedia.org", "incubator.wikimedia.org", "incubator.m.wikimedia.org")
 MOORE = "mos_Latn"
 
-_CITATION = re.compile(r"\s*\[(?:\d+|[a-z]|note \d+)\]")
+# "[1]", "[ 3]", "[a]", "[note 2]", "[DM 1]"
+_CITATION = re.compile(r"\s*\[\s*(?:\d+|[a-z]|note \d+|[A-Z]{1,4} \d+)\s*\]")
+# The crawl sometimes lost the "[": "daarã. 3] Burkĩna …".
+_ORPHAN_CITATION = re.compile(r"(?:(?<=\s)|^)\d{1,3}\]\s*")
+# Tone accents that neither standard Mooré spelling (ã ẽ ĩ õ ũ, ɛ ɩ ʋ) nor French uses.
+_TONE_MARKED = set("óòúùíìáǎěǐǒǔāēīōūû")
+# IPA letters and modifier letters (ˈ ː) mark phonetic transcriptions, except the
+# Mooré letters ɛ ɔ ɩ ʋ and ə (a normal letter in names such as Azerbaijani Rövşən).
+_ALLOWED_IPA_BLOCK = set("ɛɔɩʋə")
 _PUNCT = re.compile(r"[^\w\s]")
 _SPACES = re.compile(r"\s+")
 
@@ -51,6 +64,39 @@ LangFn = Callable[[list[str]], tuple[list[str], list[float]]]
 def normalize(text: str) -> str:
     text = unicodedata.normalize("NFKC", text).lower()
     return _SPACES.sub(" ", _PUNCT.sub(" ", text)).strip()
+
+
+def has_foreign_script(text: str) -> bool:
+    """True if the text has a non-Latin letter (CJK, Greek, Cyrillic, …) or IPA."""
+    for char in text:
+        code = ord(char)
+        if 0x0250 <= code <= 0x02FF and char not in _ALLOWED_IPA_BLOCK:
+            return True
+        if char.isalpha() and not unicodedata.name(char, "").startswith("LATIN"):
+            return True
+    return False
+
+
+def tone_marked_words(text: str) -> int:
+    """Lowercase words with tone accents: another spelling system or language.
+
+    Capitalized words are left out: foreign names (Martínez, Bartók) are common in
+    good Mooré sentences.
+    """
+    return sum(1 for w in text.split() if w[:1].islower() and any(c in _TONE_MARKED for c in w))
+
+
+_WORD = re.compile(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*")
+
+
+def distinct_word_ratio(text: str) -> float:
+    """Distinct words / words, for sentences of 8+ words (1.0 for shorter ones).
+
+    Low values flag generation loops typical of machine translation
+    ("b sẽn yaa b sẽn yaa b to wã …").
+    """
+    words = [w.lower() for w in _WORD.findall(text)]
+    return len(set(words)) / len(words) if len(words) >= 8 else 1.0
 
 
 def sentence_id(text: str) -> str:
@@ -68,7 +114,7 @@ def split_document(doc: dict) -> list[dict]:
     rows = []
     for line_index, line in enumerate(doc["text"].split("\n")):
         # Before splitting: "ye.[1] A" would not be split after "ye.".
-        line = _CITATION.sub("", line).strip()
+        line = _ORPHAN_CITATION.sub("", _CITATION.sub("", line)).strip()
         if not line:
             continue
         for sentence in segment_mo(line):
@@ -96,6 +142,7 @@ def clean_sentences(
     min_prob: float = 0.8,
     min_words: int = 4,
     max_chars: int = 500,
+    min_distinct_ratio: float = 0.55,
     exclude_texts: Iterable[str] = (),
     source: str = SOURCE,
     license: str = LICENSE,
@@ -110,9 +157,18 @@ def clean_sentences(
         r["lang"], r["lang_prob"] = lang, round(float(prob), 4)
     rows = stats.record(f"GlotLID {MOORE}", [r for r in rows if r["lang"] == MOORE])
     rows = stats.record(f"prob >= {min_prob}", [r for r in rows if r["lang_prob"] >= min_prob])
+    rows = stats.record("no foreign script or IPA", [r for r in rows if not has_foreign_script(r["text"])])
+    rows = stats.record(
+        "< 2 tone-marked lowercase words", [r for r in rows if tone_marked_words(r["text"]) < 2]
+    )
     rows = stats.record(
         f"{min_words}+ words, <= {max_chars} chars",
         [r for r in rows if len(r["text"].split()) >= min_words and len(r["text"]) <= max_chars],
+    )
+
+    rows = stats.record(
+        f"distinct words >= {min_distinct_ratio:.0%}",
+        [r for r in rows if distinct_word_ratio(r["text"]) >= min_distinct_ratio],
     )
 
     seen: set[str] = set()
