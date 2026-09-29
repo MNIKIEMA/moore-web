@@ -1644,3 +1644,56 @@ def segment_abc_coepouses_tale(
 
 if __name__ == "__main__":
     app()
+
+
+# ---------------------------------------------------------------------------
+# HPLT Mooré monolingual text
+# ---------------------------------------------------------------------------
+
+
+@app.command("hplt-mono")
+def hplt_mono(
+    output_jsonl: Annotated[
+        Path, typer.Option("--output", "-o", help="One clean Mooré sentence per line.")
+    ] = Path("data/mono/hplt_mos_wikipedia.jsonl"),
+    host: Annotated[
+        Optional[list[str]],
+        typer.Option("--host", help="Keep documents from this host (repeatable). Default: Wikipedia."),
+    ] = None,
+    min_prob: Annotated[float, typer.Option(help="Minimum GlotLID mos_Latn probability.")] = 0.8,
+    min_words: Annotated[int, typer.Option(help="Drop sentences with fewer words.")] = 4,
+    max_chars: Annotated[int, typer.Option(help="Drop sentences longer than this.")] = 500,
+    exclude_parallel: Annotated[
+        bool, typer.Option(help="Also drop sentences already on the Mooré side of moore-web-parallel v1.0.0.")
+    ] = True,
+) -> None:
+    """Clean Mooré sentences from the HPLT crawl for backtranslation (Wikipedia pages by default)."""
+    from moore_web.hplt_mono import (
+        DEFAULT_HOSTS,
+        clean_sentences,
+        evaluation_references,
+        glotlid_lang_fn,
+        load_hplt_documents,
+        write_jsonl,
+    )
+
+    exclude = evaluation_references()
+    if exclude_parallel:
+        from datasets import load_dataset
+
+        parallel = load_dataset("madoss/moore-web-parallel", "mos-fra", revision="v1.0.0")
+        exclude += [t for split in parallel.values() for t in split["moore"]]
+    rows, stats = clean_sentences(
+        load_hplt_documents(),
+        glotlid_lang_fn(),
+        hosts=tuple(host) if host else DEFAULT_HOSTS,
+        min_prob=min_prob,
+        min_words=min_words,
+        max_chars=max_chars,
+        exclude_texts=exclude,
+    )
+    write_jsonl(rows, output_jsonl)
+    typer.echo(f"Documents kept: {stats.documents}")
+    for step, count in stats.steps.items():
+        typer.echo(f"  {step:32} {count:>7,}")
+    typer.echo(f"Wrote {len(rows):,} sentences → {output_jsonl}")

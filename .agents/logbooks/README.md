@@ -20,6 +20,7 @@ and fixes are driven by *document format*, not by language -- a fix in
 - [`expert-translations.md`](expert-translations.md) -- `expert_translation_parser.py` / `moore-web parse-expert-translations` (expert-translated seed batch PDF, already paired).
 - [`conseils-ministres.md`](conseils-ministres.md) -- `flatten.py::flatten_conseils` / `cli.py::e2e -s conseils` (Council of Ministers reports, parsed by the `conseil-ministres` repo and pinned from `madoss/conseil-ministres-parsed`).
 - [`dataset-build.md`](dataset-build.md) -- `build_fr_mos_dataset.py` / `fr_mos_sources.toml` / `reviewed_export.py` (`moore-web export-reviewed`) (assembling the training dataset: pinned reviewed exports, per-source filters).
+- [`hplt-mono.md`](hplt-mono.md) -- `hplt_mono.py` / `moore-web hplt-mono` (Mooré monolingual sentences from the HPLT crawl, Wikipedia pages only, for backtranslation).
 - [`hf-output-schema.md`](hf-output-schema.md) -- `flatten.py::AlignedCorpus`/`flat_rows_to_long`, `annotate.py`, `cli.py::_finalize_aligned` (the shared corpus-output layer: long-format row schema, `is_source_orig`/`ORIGINAL_LANGUAGE`, `doc_id`, per-language-pair file/config splitting).
 
 Add a new logbook when a new source or parser module is added, not a new language.
@@ -28,7 +29,7 @@ Add a new logbook when a new source or parser module is added, not a new languag
 
 | Language | ISO | Logbooks |
 | --- | --- | --- |
-| Mooré | `mos` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, conseils-ministres, dataset-build, hf-output-schema |
+| Mooré | `mos` | hplt-mono, du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, conseils-ministres, dataset-build, hf-output-schema |
 | French | `fra` | du-moore-livre-de-lecture, moore-tales, sida-bilingual-book, kade-facilitateur-book, udhr, messages-nouvel-an, raamde-news, expert-translations, conseils-ministres, dataset-build, hf-output-schema |
 
 ## Entry format
