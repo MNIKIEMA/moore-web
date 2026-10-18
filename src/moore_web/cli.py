@@ -148,11 +148,14 @@ def _finalize_aligned(
     comet_batch_size: int = 8,
     drop_duplicate_by_comet_qe: bool = False,
     postprocess: Callable[[list[dict]], list[dict]] | None = None,
+    laser_score_mask: list[bool] | None = None,
 ) -> None:
     """Write aligned corpus, optionally annotating and/or pushing to HF Hub.
 
     ``drop_duplicate_by_comet_qe`` deduplicates after annotation using the
     ``comet_qe`` scores it added, so COMET runs once (needs ``add_comet_qe``).
+    ``laser_score_mask`` selects structurally aligned pairs to score by default;
+    each selected pair's English translation is scored separately when present.
     """
     if drop_duplicate_by_comet_qe and not add_comet_qe:
         raise ValueError("drop_duplicate_by_comet_qe needs add_comet_qe")
@@ -162,7 +165,7 @@ def _finalize_aligned(
     )
     is_hf = out_str.startswith("hf://")
 
-    if needs_annotation or is_hf or postprocess:
+    if needs_annotation or is_hf or postprocess or any(laser_score_mask or []):
         from datasets import Dataset
 
         from moore_web import annotate as _ann
@@ -182,12 +185,35 @@ def _finalize_aligned(
             for row, doc_id in zip(rows, aligned.doc_ids):
                 row["doc_id"] = doc_id
 
+        if laser_score_mask is not None:
+            if len(laser_score_mask) != len(rows):
+                raise ValueError("laser_score_mask must match the number of aligned pairs")
+            for row, compute in zip(rows, laser_score_mask):
+                row["_compute_laser"] = compute
+
         if postprocess:
             rows = postprocess(rows)
+
+        score_indices = []
+        long_index = 0
+        for row in rows:
+            pair_count = 2 if row.get("english") else 1
+            if row.pop("_compute_laser", False):
+                score_indices.extend(range(long_index, long_index + pair_count))
+            long_index += pair_count
 
         rows = flat_rows_to_long(rows, aligned.source)
 
         dataset = Dataset.from_list(rows)
+
+        if score_indices and not add_laser_score:
+            scored = _ann.run_laser(
+                dataset.select(score_indices), src_field="source_text", tgt_field="target_text"
+            )
+            scores = list(dataset["laser_score"])
+            for index, score in zip(score_indices, scored["laser_score"]):
+                scores[index] = score
+            dataset = dataset.remove_columns("laser_score").add_column("laser_score", scores)
 
         if needs_annotation:
             # score_dataset (score_laser.py) reads src_lang/tgt_lang per row
@@ -1293,6 +1319,14 @@ def e2e(
 
         def _write_simple(inc_examples: bool, inc_entries: bool, dest, postprocess=None) -> None:
             p = flatten_simple_parser(pages, include_examples=inc_examples, include_entries=inc_entries)
+            example_pairs = set()
+            if inc_examples:
+                examples_only = (
+                    flatten_simple_parser(pages, include_examples=True, include_entries=False)
+                    if inc_entries
+                    else p
+                )
+                example_pairs = set(zip(examples_only.french, examples_only.moore, examples_only.english))
             typer.echo(f"      FR: {len(p.french)}  MO: {len(p.moore)}  EN: {len(p.english)}  → {dest}")
             a = AlignedCorpus(
                 french=p.french,
@@ -1301,7 +1335,14 @@ def e2e(
                 scores=[None] * len(p.french),
                 source=p.source,
             )
-            _finalize_aligned(a, dest, jsonl, postprocess=postprocess, **_ann_kwargs)
+            _finalize_aligned(
+                a,
+                dest,
+                jsonl,
+                postprocess=postprocess,
+                laser_score_mask=[pair in example_pairs for pair in zip(p.french, p.moore, p.english)],
+                **_ann_kwargs,
+            )
 
         out = output or _default_output(input, f"_aligned{_ext}")
         if entries_output is not None:
@@ -1479,8 +1520,7 @@ def e2e(
                 valid = [p for p in pairs if p.fr_definition and p.mos_definition]
                 fr_texts = [p.fr_definition for p in valid]
                 mo_texts = [p.mos_definition for p in valid]
-                # Definitions are structurally paired (same glossary entry) but not
-                # alignment-scored; use None to signal the score is absent.
+                # Definitions are scored after conversion to language-pair rows.
                 scores = cast(_Scores, [None] * len(fr_texts))
                 label = "digital-postal-glossary-term-definition"
             else:
@@ -1507,7 +1547,13 @@ def e2e(
                 }
             )
             typer.echo(f"      FR: {len(fr_texts)}  MO: {len(mo_texts)}  → {dest}")
-            _finalize_aligned(a, dest, jsonl, **ann)
+            if inc_terms and not inc_definitions:
+                score_mask = [False] * len(fr_texts)
+            elif inc_definitions and not inc_terms:
+                score_mask = [True] * len(fr_texts)
+            else:
+                score_mask = [False] * len(term_pairs) + [True] * len(def_pairs)
+            _finalize_aligned(a, dest, jsonl, laser_score_mask=score_mask, **ann)
 
         out = output or fr_input.with_name(f"digital_aligned{_ext}")
         if definitions_output is not None:

@@ -250,6 +250,11 @@ moore-web e2e -s simple -i dict.pdf -o out.jsonl --split-synonyms --strip-prover
 moore-web e2e -s one-column-dict -i dict.pdf -o out.jsonl
 ```
 
+Dictionary examples receive LASER scores by default, separately for the Mooré–French
+and Mooré–English pairs. Digital glossary definitions (`e2e -s digital --definitions`)
+also receive LASER scores by default. Dictionary entries and glossary terms retain
+`null` scores in these default exports.
+
 **Annotate an existing dataset:**
 
 ```bash
