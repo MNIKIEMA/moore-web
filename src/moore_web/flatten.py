@@ -172,11 +172,9 @@ def flat_rows_to_long(rows: list[dict], source: str) -> list[dict]:
 
         en = row.get("english")
         if en:
-            # The english score isn't computed separately today (english only
-            # occurs for exact-match dictionary entries, which score 1.0 for
-            # the primary pair above); carry the same score value rather than
-            # fabricate a distinct one.
-            long_rows.append(_pair_row(row_id, src_lang, "eng", source_text, en, score, doc_id))
+            # The primary pair's score does not measure similarity to English.
+            # Leave it absent until this language pair is scored separately.
+            long_rows.append(_pair_row(row_id, src_lang, "eng", source_text, en, None, doc_id))
 
     return long_rows
 

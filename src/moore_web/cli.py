@@ -1298,7 +1298,7 @@ def e2e(
                 french=p.french,
                 moore=p.moore,
                 english=p.english,
-                scores=[1.0] * len(p.french),
+                scores=[None] * len(p.french),
                 source=p.source,
             )
             _finalize_aligned(a, dest, jsonl, postprocess=postprocess, **_ann_kwargs)
@@ -1472,8 +1472,8 @@ def e2e(
                 valid = [p for p in pairs if p.fr_term and p.mos_term]
                 fr_texts = [p.fr_term for p in valid]
                 mo_texts = [p.mos_term for p in valid]
-                # Terms are aligned by exact key match → score 1.0 is appropriate.
-                scores = cast(_Scores, [1.0] * len(fr_texts))
+                # Key matching establishes alignment, not a LASER similarity score.
+                scores = cast(_Scores, [None] * len(fr_texts))
                 label = "digital-postal-glossary-term"
             elif inc_definitions and not inc_terms:
                 valid = [p for p in pairs if p.fr_definition and p.mos_definition]
@@ -1488,7 +1488,7 @@ def e2e(
                 def_pairs = [p for p in pairs if p.fr_definition and p.mos_definition]
                 fr_texts = [p.fr_term for p in term_pairs] + [p.fr_definition for p in def_pairs]
                 mo_texts = [p.mos_term for p in term_pairs] + [p.mos_definition for p in def_pairs]
-                scores = cast(_Scores, [1.0] * len(term_pairs) + [None] * len(def_pairs))
+                scores = cast(_Scores, [None] * len(fr_texts))
                 label = "digital-postal-glossary"
             a = AlignedCorpus(
                 french=fr_texts,
