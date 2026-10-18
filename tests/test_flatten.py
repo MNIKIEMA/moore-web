@@ -219,6 +219,8 @@ class TestFlatRowsToLong:
         assert (rows[0]["tgt_lang"], rows[1]["tgt_lang"]) == ("fra", "eng")
         assert rows[1]["source_text"] == "bagre"
         assert rows[1]["target_text"] == "cat"
+        assert rows[0]["laser_score"] == 1.0
+        assert rows[1]["laser_score"] is None
 
     def test_no_english_is_single_row(self):
         rows = flat_rows_to_long([{"french": "a", "moore": "b", "laser_score": 1.0}], "niggli-dictionary-mos-fra-eng")

@@ -4,6 +4,21 @@ Assembles the French–Mooré training dataset from every source: automatic
 outputs in `final_data_hf/`, expert translations, and accepted review-app
 units. Cross-source plumbing, so it has no single parser/source.
 
+## 2026-10-18 (upstream LASER score semantics)
+
+- **Missing LASER scores now mean uncomputed, rather than a fabricated `1.0`.**
+  Default dictionary-entry and glossary-term exports carry `null`; dictionary
+  examples and glossary definitions compute real scores by default. See
+  [the output-schema logbook](hf-output-schema.md#2026-10-18-computed-scores-versus-structural-alignment)
+  for the scoring and English-pair decisions.
+- **The builder already skips thresholds for null values.** No builder or
+  schema change was needed to retain unscored entries and terms. Newly scored
+  examples and definitions will be subject to their configured LASER thresholds
+  on the next build, so retention counts may change.
+- **Published data is unchanged.** Regenerate the affected upstream exports
+  before rebuilding; neither existing files nor Hub datasets were migrated by
+  these code changes. Compare source retention counts when rebuilding.
+
 ## 2026-09-29 (Unicode fixes, frozen splits)
 
 - **Look-alike letters and decomposed accents in the Mooré text**, found while

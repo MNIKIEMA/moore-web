@@ -5,6 +5,30 @@ conseils, niggli-dictionary-mos-fra-eng, digital-postal-glossary*) once the
 pipeline reaches `AlignedCorpus`. Cross-cutting pipeline module, not a single
 parser -- findings here apply regardless of which source produced the rows.
 
+## 2026-10-18 (computed scores versus structural alignment)
+
+- **`laser_score` is a measured similarity, not an alignment-confidence flag.**
+  Dictionary entries and digital glossary terms no longer get a placeholder
+  `1.0` just because they are structurally paired or matched by key. Uncomputed
+  scores remain an explicit `null`; the column is still present.
+- **Dictionary examples and glossary definitions receive LASER scores by
+  default.** This applies to `e2e -s simple` / `one-column-dict` examples and
+  `e2e -s digital --definitions`. Mixed exports score only examples or
+  definitions; dictionary entries and glossary terms retain `null` by default.
+- **An English translation cannot inherit the French–Mooré score.**
+  `flat_rows_to_long` leaves the English pair's score null until it is computed
+  separately. Dictionary examples now score both mos-fra and mos-eng rows with
+  their own language pairs.
+- **Score the final text once.** `_finalize_aligned` carries the selection
+  through lexicon cleanup, then scores the selected long-format rows. An
+  explicit `--add-laser-score` uses the existing full-output annotation pass
+  instead of running a second scoring pass. No threshold is applied by this
+  automatic annotation step.
+- **Validation:** 129 targeted tests passed across CLI scoring, flattening,
+  annotation, and COMET deduplication; scoring regression tests use mocked
+  models. Changes are in commits `52a9fbf` and `d6fda85`. Existing exports have
+  not been regenerated or rescored.
+
 ## 2026-09-16
 
 - **Switched from flat `french`/`moore`/`english` columns to a long-format
