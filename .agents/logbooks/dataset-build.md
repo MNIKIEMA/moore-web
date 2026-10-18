@@ -15,9 +15,33 @@ units. Cross-source plumbing, so it has no single parser/source.
   schema change was needed to retain unscored entries and terms. Newly scored
   examples and definitions will be subject to their configured LASER thresholds
   on the next build, so retention counts may change.
-- **Published data is unchanged.** Regenerate the affected upstream exports
-  before rebuilding; neither existing files nor Hub datasets were migrated by
-  these code changes. Compare source retention counts when rebuilding.
+- **The code changes alone left published data unchanged**; the v1.1.1 release
+  below applied the new semantics to the Hub dataset.
+- **Released `madoss/moore-web-parallel` v1.1.1** (2026-10-18), derived
+  directly from the Hub v1.1.0 rather than rebuilt, because `final_data_hf/`
+  is old (April exports). Script:
+  `rescore_v110.py` (session scratchpad, not kept): load v1.1.0 `mos-fra`, then
+  - `lexicon` (3,631 examples) and `digital-defs` (133 definitions):
+    `laser_score` (`annotate.run_laser`) and `comet_qe`
+    (`annotate.run_comet_qe`, batch 8) recomputed on the published
+    french/moore text, only these 3,764 rows;
+  - `lexicon_entries` (16,545) and `digital-terms` (133): `laser_score`
+    1.0 -> null;
+  - everything else copied; pushed with `push_to_hub(config_name="mos-fra")`.
+  The v1.1.0 scores were already real: LASER within 0.0085, COMET-QE within
+  0.0001 (4 train `lexicon` rows changed at all); no row crossed `laser ≥ 0.5`
+  or `comet_qe ≥ 0.35`, so validation and test keep every row. Cell by cell
+  against v1.1.0: same ids, order, splits and text; only those score cells
+  differ, all in train. Card: `laser_score` field description and a Versions
+  entry. The tag `v1.1.1` was moved twice the same evening (first a release
+  with only the null change, `4abbad3`; then a rebuild with LASER-only
+  rescoring, `4920102`) and finally points to Hub commit `d533553`.
+- **`final_data_hf/` was patched during the earlier attempts** and no longer
+  matches the April exports: `lexicon_entries.jsonl`/`digital-terms.jsonl`
+  have null LASER (originals `*.bak-2026-10-18-laser-1.0`), and
+  `lexicon.jsonl`/`digital-defs.jsonl` have LASER rescored (originals
+  `*.bak-2026-10-18-laser-april`). Rebuilding from them reproduces v1.1.1
+  except for 4 `lexicon` scores (differences of 0.02 or less).
 
 ## 2026-09-29 (Unicode fixes, frozen splits)
 

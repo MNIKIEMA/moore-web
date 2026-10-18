@@ -28,6 +28,21 @@ parser -- findings here apply regardless of which source produced the rows.
   annotation, and COMET deduplication; scoring regression tests use mocked
   models. Changes are in commits `52a9fbf` and `d6fda85`. Existing exports have
   not been regenerated or rescored.
+- **Review follow-ups (PR #46, #47).** `--no-default-laser-score` skips the
+  default scoring, so plain exports run without LASER models. A single-file
+  `--json` export keeps the `AlignedCorpus` format (the default scoring had
+  switched it to long-format rows split per language pair); since that format
+  holds one score per pair, only mos-fra is scored there and English scores
+  need JSONL. The glossary mask is built inside each term/definition branch,
+  and `_finalize_aligned` raises if `flat_rows_to_long`'s row count drifts
+  from the mask positions.
+- **COMET-QE is not part of the default scoring.** Only LASER runs by default
+  on examples and definitions; `comet_qe` needs `--add-comet-qe` (or
+  `--annotate`), which scores every row of the export, entries included.
+- **Published dataset updated in `moore-web-parallel` v1.1.1:** null LASER for
+  entries and terms, LASER and COMET-QE recomputed for examples and
+  definitions only. See
+  [the dataset-build logbook](dataset-build.md#2026-10-18-upstream-laser-score-semantics).
 
 ## 2026-09-16
 
