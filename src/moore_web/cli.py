@@ -134,6 +134,17 @@ def _write_aligned(aligned, out: Path, use_jsonl: bool) -> None:
     typer.echo(f"Wrote {len(aligned.french)} aligned pairs → {out}")
 
 
+def _score_selected(dataset, indices: list[int]):
+    """Return ``dataset`` with LASER scores computed for the rows at ``indices``."""
+    from moore_web import annotate as _ann
+
+    scored = _ann.run_laser(dataset.select(indices), src_field="source_text", tgt_field="target_text")
+    scores = list(dataset["laser_score"])
+    for index, score in zip(indices, scored["laser_score"]):
+        scores[index] = score
+    return dataset.remove_columns("laser_score").add_column("laser_score", scores)
+
+
 def _finalize_aligned(
     aligned,
     out,  # str | Path
@@ -149,6 +160,7 @@ def _finalize_aligned(
     drop_duplicate_by_comet_qe: bool = False,
     postprocess: Callable[[list[dict]], list[dict]] | None = None,
     laser_score_mask: list[bool] | None = None,
+    default_laser_score: bool = True,
 ) -> None:
     """Write aligned corpus, optionally annotating and/or pushing to HF Hub.
 
@@ -156,6 +168,7 @@ def _finalize_aligned(
     ``comet_qe`` scores it added, so COMET runs once (needs ``add_comet_qe``).
     ``laser_score_mask`` selects structurally aligned pairs to score by default;
     each selected pair's English translation is scored separately when present.
+    ``default_laser_score=False`` ignores the mask and leaves those scores null.
     """
     if drop_duplicate_by_comet_qe and not add_comet_qe:
         raise ValueError("drop_duplicate_by_comet_qe needs add_comet_qe")
@@ -164,8 +177,11 @@ def _finalize_aligned(
         [add_lang_id, add_consistency, add_quality_warn, add_len_ratio, add_laser_score, add_comet_qe]
     )
     is_hf = out_str.startswith("hf://")
+    if not default_laser_score:
+        laser_score_mask = None
+    default_scoring = any(laser_score_mask or [])
 
-    if needs_annotation or is_hf or postprocess or any(laser_score_mask or []):
+    if needs_annotation or is_hf or postprocess or (default_scoring and jsonl):
         from datasets import Dataset
 
         from moore_web import annotate as _ann
@@ -207,13 +223,7 @@ def _finalize_aligned(
         dataset = Dataset.from_list(rows)
 
         if score_indices and not add_laser_score:
-            scored = _ann.run_laser(
-                dataset.select(score_indices), src_field="source_text", tgt_field="target_text"
-            )
-            scores = list(dataset["laser_score"])
-            for index, score in zip(score_indices, scored["laser_score"]):
-                scores[index] = score
-            dataset = dataset.remove_columns("laser_score").add_column("laser_score", scores)
+            dataset = _score_selected(dataset, score_indices)
 
         if needs_annotation:
             # score_dataset (score_laser.py) reads src_lang/tgt_lang per row
@@ -253,6 +263,23 @@ def _finalize_aligned(
 
         _ann.save_data(dataset, out_str, private=hf_private)
     else:
+        if default_scoring:
+            # The single-file AlignedCorpus format has one score per pair, so
+            # only the primary pair is scored; English scores need JSONL.
+            from datasets import Dataset
+
+            from moore_web.flatten import flat_rows_to_long
+
+            rows = flat_rows_to_long(
+                [
+                    {"french": f, "moore": m, "laser_score": s}
+                    for f, m, s in zip(aligned.french, aligned.moore, aligned.scores)
+                ],
+                aligned.source,
+            )
+            indices = [i for i, compute in enumerate(laser_score_mask) if compute]
+            scores = _score_selected(Dataset.from_list(rows), indices)["laser_score"]
+            aligned = msgspec.structs.replace(aligned, scores=list(scores))
         _write_aligned(aligned, Path(out_str), jsonl)
 
 
@@ -1100,6 +1127,14 @@ def e2e(
         bool,
         typer.Option("--add-comet-qe", is_flag=True, help="Annotate aligned output with COMET-QE score."),
     ] = False,
+    default_laser_score: Annotated[
+        bool,
+        typer.Option(
+            "--default-laser-score/--no-default-laser-score",
+            help="(simple, digital) LASER-score dictionary examples and glossary definitions; "
+            "--no-default-laser-score leaves their scores null.",
+        ),
+    ] = True,
     comet_batch_size: Annotated[
         int,
         typer.Option(
@@ -1196,6 +1231,7 @@ def e2e(
         # those scores after annotation instead of scoring duplicates first.
         drop_duplicate_by_comet_qe=drop_duplicate and add_comet_qe,
         hf_private=hf_private,
+        default_laser_score=default_laser_score,
     )
 
     from moore_web.align_corpus import align as _align

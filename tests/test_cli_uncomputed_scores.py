@@ -128,3 +128,52 @@ def test_selective_scoring_after_cleanup_runs_once(tmp_path: Path, laser_calls, 
     assert all("_compute_laser" not in row for row in laser_calls[0])
     rows = [json.loads(line) for line in output.with_suffix(".mos-fra.jsonl").read_text().splitlines()]
     assert [row["laser_score"] for row in rows] == ([0.8, 0.8] if explicit_laser else [None, 0.8])
+
+
+def test_selective_scoring_keeps_aligned_corpus_json_format(tmp_path: Path, laser_calls) -> None:
+    aligned = flatten.AlignedCorpus(
+        french=["chat", "Un chat."],
+        moore=["bagre", "Bagre."],
+        english=["cat", "A cat."],
+        scores=[None, None],
+        source="niggli-dictionary-mos-fra-eng",
+    )
+    output = tmp_path / "out.json"
+
+    _finalize_aligned(
+        aligned, output, False, hf_private=False, add_lang_id=False, add_consistency=False,
+        add_quality_warn=False, add_len_ratio=False, add_laser_score=False, add_comet_qe=False,
+        laser_score_mask=[False, True],
+    )  # fmt: skip
+
+    assert [row["target_text"] for row in laser_calls[0]] == ["Un chat."]
+    written = json.loads(output.read_text())
+    assert written["english"] == ["cat", "A cat."]
+    assert written["scores"] == [None, 0.8]
+
+
+def test_no_default_laser_score_skips_scoring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, laser_calls
+) -> None:
+    input_path = tmp_path / "dictionary.pdf"
+    input_path.touch()
+    monkeypatch.setattr(pymupdf, "open", MagicMock())
+    monkeypatch.setattr(one_column_dict_parser, "parse_doc", lambda doc: [])
+    monkeypatch.setattr(
+        flatten,
+        "flatten_simple_parser",
+        lambda pages, include_examples, include_entries: flatten.ParallelText(
+            french=["Un chat."], moore=["Bagre."], english=["A cat."], source="niggli-dictionary-mos-fra-eng"
+        ),
+    )
+    output = tmp_path / "out.jsonl"
+
+    result = CliRunner().invoke(
+        app, ["e2e", "-s", "simple", "-i", str(input_path), "-o", str(output), "--no-default-laser-score"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert laser_calls == []
+    for pair in ("mos-fra", "mos-eng"):
+        rows = [json.loads(line) for line in output.with_suffix(f".{pair}.jsonl").read_text().splitlines()]
+        assert [row["laser_score"] for row in rows] == [None]

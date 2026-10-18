@@ -253,7 +253,9 @@ moore-web e2e -s one-column-dict -i dict.pdf -o out.jsonl
 Dictionary examples receive LASER scores by default, separately for the Mooré–French
 and Mooré–English pairs. Digital glossary definitions (`e2e -s digital --definitions`)
 also receive LASER scores by default. Dictionary entries and glossary terms retain
-`null` scores in these default exports.
+`null` scores in these default exports. Pass `--no-default-laser-score` to skip
+this scoring (no LASER models needed). A single-file `--json` export scores
+only the Mooré–French pair, since that format holds one score per pair.
 
 **Annotate an existing dataset:**
 
