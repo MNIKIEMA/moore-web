@@ -219,6 +219,8 @@ def _finalize_aligned(
             long_index += pair_count
 
         rows = flat_rows_to_long(rows, aligned.source)
+        if len(rows) != long_index:
+            raise ValueError("flat_rows_to_long row count no longer matches laser_score_mask positions")
 
         dataset = Dataset.from_list(rows)
 
@@ -1551,6 +1553,7 @@ def e2e(
                 mo_texts = [p.mos_term for p in valid]
                 # Key matching establishes alignment, not a LASER similarity score.
                 scores = cast(_Scores, [None] * len(fr_texts))
+                score_mask = [False] * len(fr_texts)
                 label = "digital-postal-glossary-term"
             elif inc_definitions and not inc_terms:
                 valid = [p for p in pairs if p.fr_definition and p.mos_definition]
@@ -1558,6 +1561,7 @@ def e2e(
                 mo_texts = [p.mos_definition for p in valid]
                 # Definitions are scored after conversion to language-pair rows.
                 scores = cast(_Scores, [None] * len(fr_texts))
+                score_mask = [True] * len(fr_texts)
                 label = "digital-postal-glossary-term-definition"
             else:
                 term_pairs = [p for p in pairs if p.fr_term and p.mos_term]
@@ -1565,6 +1569,7 @@ def e2e(
                 fr_texts = [p.fr_term for p in term_pairs] + [p.fr_definition for p in def_pairs]
                 mo_texts = [p.mos_term for p in term_pairs] + [p.mos_definition for p in def_pairs]
                 scores = cast(_Scores, [None] * len(fr_texts))
+                score_mask = [False] * len(term_pairs) + [True] * len(def_pairs)
                 label = "digital-postal-glossary"
             a = AlignedCorpus(
                 french=fr_texts,
@@ -1583,12 +1588,6 @@ def e2e(
                 }
             )
             typer.echo(f"      FR: {len(fr_texts)}  MO: {len(mo_texts)}  → {dest}")
-            if inc_terms and not inc_definitions:
-                score_mask = [False] * len(fr_texts)
-            elif inc_definitions and not inc_terms:
-                score_mask = [True] * len(fr_texts)
-            else:
-                score_mask = [False] * len(term_pairs) + [True] * len(def_pairs)
             _finalize_aligned(a, dest, jsonl, laser_score_mask=score_mask, **ann)
 
         out = output or fr_input.with_name(f"digital_aligned{_ext}")

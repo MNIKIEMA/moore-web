@@ -177,3 +177,22 @@ def test_no_default_laser_score_skips_scoring(
     for pair in ("mos-fra", "mos-eng"):
         rows = [json.loads(line) for line in output.with_suffix(f".{pair}.jsonl").read_text().splitlines()]
         assert [row["laser_score"] for row in rows] == [None]
+
+
+def test_selective_scoring_rejects_row_count_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    aligned = flatten.AlignedCorpus(
+        french=["Un chat."],
+        moore=["Bagre."],
+        english=["A cat."],
+        scores=[None],
+        source="niggli-dictionary-mos-fra-eng",
+    )
+    original = flatten.flat_rows_to_long
+    monkeypatch.setattr(flatten, "flat_rows_to_long", lambda rows, source: original(rows, source)[:1])
+
+    with pytest.raises(ValueError, match="row count"):
+        _finalize_aligned(
+            aligned, tmp_path / "out.jsonl", True, hf_private=False, add_lang_id=False, add_consistency=False,
+            add_quality_warn=False, add_len_ratio=False, add_laser_score=False, add_comet_qe=False,
+            laser_score_mask=[True],
+        )  # fmt: skip
