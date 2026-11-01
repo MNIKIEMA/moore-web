@@ -38,7 +38,7 @@ Usage:
         -o data/review/abcburkina-contes_units.jsonl
 
     uv run python scripts/export_review_units.py --source du-moore \
-        --input ../faso-web-docs/du-moore-literacy-series \
+        --input ../faso-web-docs/burkinadoc/du-moore-literacy-series \
         -o data/review/du-moore_units.jsonl
 
     uv run python scripts/export_review_units.py --source moore-tales \
