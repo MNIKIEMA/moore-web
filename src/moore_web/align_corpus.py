@@ -101,7 +101,7 @@ def align(
     Returns:
         :class:`~moore_web.flatten.AlignedCorpus` with equal-length lists.
     """
-    from laser_encoders import LaserEncoderPipeline
+    from nano_laser import LaserEncoderPipeline
 
     if laser_fr is None:
         print("Loading LASER French model…")

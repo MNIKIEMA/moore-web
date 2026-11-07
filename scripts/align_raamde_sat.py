@@ -62,7 +62,7 @@ def main() -> None:
     parser.add_argument("--no-merge", action="store_true", help="Emit one pair per DTW path cell.")
     args = parser.parse_args()
 
-    from laser_encoders import LaserEncoderPipeline
+    from nano_laser import LaserEncoderPipeline
 
     articles = [json.loads(line) for line in Path(args.input).read_text(encoding="utf-8").splitlines() if line]
     articles = [a for a in articles if a["sat"]["fra"] and a["sat"]["mos"]]

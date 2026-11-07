@@ -369,34 +369,34 @@ class TestRunLaser:
         return _MockEncoder
 
     def test_default_column_name(self, small_dataset: Dataset, monkeypatch):
-        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
+        monkeypatch.setattr("nano_laser.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
         assert "laser_score" in result.column_names
 
     def test_custom_output_field(self, small_dataset: Dataset, monkeypatch):
-        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
+        monkeypatch.setattr("nano_laser.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset, output_field="my_laser")
         assert "my_laser" in result.column_names
 
     def test_laser_score_count_matches_rows(self, small_dataset: Dataset, monkeypatch):
-        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
+        monkeypatch.setattr("nano_laser.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
         assert len(result["laser_score"]) == len(small_dataset)
 
     def test_laser_score_range(self, small_dataset: Dataset, monkeypatch):
-        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
+        monkeypatch.setattr("nano_laser.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
         for score in result["laser_score"]:
             assert -1.0 <= score <= 1.0
 
     def test_unit_vectors_give_score_one(self, small_dataset: Dataset, monkeypatch):
-        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
+        monkeypatch.setattr("nano_laser.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
         for score in result["laser_score"]:
             assert score == pytest.approx(1.0, abs=1e-3)
 
     def test_preserves_original_columns(self, small_dataset: Dataset, monkeypatch):
-        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", self._make_mock_encoder())
+        monkeypatch.setattr("nano_laser.LaserEncoderPipeline", self._make_mock_encoder())
         result = run_laser(small_dataset)
         assert "french" in result.column_names
         assert "moore" in result.column_names
@@ -420,7 +420,7 @@ class TestRunLaser:
 
             return _MockEncoder
 
-        monkeypatch.setattr("laser_encoders.LaserEncoderPipeline", _mock_encoder_factory())
+        monkeypatch.setattr("nano_laser.LaserEncoderPipeline", _mock_encoder_factory())
 
         rows = [
             {"id": "a", "src_lang": "mos", "tgt_lang": "fra", "source_text": "bagre", "target_text": "chat"},

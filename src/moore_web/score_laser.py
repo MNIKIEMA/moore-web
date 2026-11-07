@@ -57,7 +57,7 @@ def load_encoders(src_lang: str = "fra", tgt_lang: str = "mos"):
     Returns:
         A ``(laser_src, laser_tgt)`` tuple of ``LaserEncoderPipeline`` instances.
     """
-    from laser_encoders import LaserEncoderPipeline
+    from nano_laser import LaserEncoderPipeline
 
     print(f"Loading LASER {src_lang} model…")
     laser_src = LaserEncoderPipeline(lang=src_lang)
@@ -170,7 +170,7 @@ def _score_dataset_per_row_lang(
 
     def _get_encoder(lang: str):
         if lang not in encoders:
-            from laser_encoders import LaserEncoderPipeline
+            from nano_laser import LaserEncoderPipeline
 
             print(f"Loading LASER {lang} model…")
             encoders[lang] = LaserEncoderPipeline(lang=lang)
