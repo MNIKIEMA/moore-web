@@ -318,7 +318,7 @@ def _align_per_unit(unit_parallels, min_score: float, source: str):
     For sources whose units are already known to correspond, so FastDTW never
     has to guess correspondence across unit boundaries.
     """
-    from laser_encoders import LaserEncoderPipeline
+    from nano_laser import LaserEncoderPipeline
 
     from moore_web.align_corpus import align_from_embeddings as _align_from_embs
     from moore_web.flatten import AlignedCorpus
@@ -1262,7 +1262,7 @@ def e2e(
         # over the whole flattened book — this keeps FastDTW's monotonic
         # path from having to guess correspondence across 45 pages at once.
         typer.echo("[3/3] Aligning per page with LASER + FastDTW…")
-        from laser_encoders import LaserEncoderPipeline
+        from nano_laser import LaserEncoderPipeline
 
         from moore_web.align_corpus import align_from_embeddings as _align_from_embs
 
